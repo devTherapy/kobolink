@@ -27,11 +27,35 @@ describe('SCHEMAS registry', () => {
   })
 
   it('never emits a floating-point number for a *Kobo field', () => {
-    const json = JSON.stringify(jsonSchemas())
-    // Every property whose name ends in Kobo must be "type":"integer".
-    const koboProps = json.match(/"[A-Za-z]*Kobo":\{"type":"[a-z]+"/g) ?? []
-    expect(koboProps.length).toBeGreaterThan(5)
-    for (const prop of koboProps) expect(prop).toMatch(/"type":"integer"$/)
+    // Walk the parsed document: find every property named *Kobo, follow a
+    // $ref or an anyOf-with-null, and require "integer". Key order irrelevant.
+    const seen: string[] = []
+    for (const [name, doc] of Object.entries(jsonSchemas())) {
+      const defs = (doc as { $defs?: Record<string, unknown> }).$defs ?? {}
+      const resolveType = (node: unknown): string | undefined => {
+        if (!node || typeof node !== 'object') return undefined
+        const n = node as { type?: string; $ref?: string; anyOf?: unknown[] }
+        if (n.$ref) return resolveType(defs[n.$ref.replace('#/$defs/', '')])
+        if (n.anyOf) return n.anyOf.map(resolveType).find((t) => t !== 'null')
+        return n.type
+      }
+      const walk = (node: unknown) => {
+        if (!node || typeof node !== 'object') return
+        for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+          if (key === 'properties' && value && typeof value === 'object') {
+            for (const [prop, sub] of Object.entries(value as Record<string, unknown>)) {
+              if (prop.endsWith('Kobo')) {
+                seen.push(`${name}.${prop}`)
+                expect(resolveType(sub), `${name}.${prop}`).toBe('integer')
+              }
+            }
+          }
+          walk(value)
+        }
+      }
+      walk(doc)
+    }
+    expect(seen.length).toBeGreaterThan(10)
   })
 })
 

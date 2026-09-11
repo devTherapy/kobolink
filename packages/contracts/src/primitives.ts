@@ -112,10 +112,12 @@ export const IdempotencyKeySchema = z
 export const IDEMPOTENCY_HEADER = 'idempotency-key' as const
 
 /** Cursor pagination: opaque cursors, bounded page sizes. */
-export const PageQuerySchema = z.object({
-  cursor: z.string().min(1).max(256).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-})
+export const PageQuerySchema = z
+  .object({
+    cursor: z.string().min(1).max(256).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .meta({ id: 'PageQuery', description: 'Cursor pagination query parameters.' })
 export type PageQuery = z.infer<typeof PageQuerySchema>
 
 export function pageOf<T extends z.ZodType>(item: T, id: string) {

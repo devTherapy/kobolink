@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { DashboardEventSchema, DashboardStatsSchema } from './dashboard.js'
+import { IdempotencyKeySchema, PageQuerySchema } from './primitives.js'
 import { ApiErrorSchema, ErrorCodeSchema } from './errors.js'
 import {
   CreateLinkRequestSchema,
@@ -79,6 +80,8 @@ export const SCHEMAS = {
   QrPayload: QrPayloadSchema,
   ErrorCode: ErrorCodeSchema,
   ApiError: ApiErrorSchema,
+  PageQuery: PageQuerySchema,
+  IdempotencyKey: IdempotencyKeySchema,
 } as const satisfies Record<string, z.ZodType>
 
 export type SchemaName = keyof typeof SCHEMAS
@@ -88,8 +91,21 @@ export type SchemaName = keyof typeof SCHEMAS
  * normalising transforms (trim, phone formats) accept the loose input form.
  * Everything else is what the server *emits*: defaults are always present.
  */
+export const REQUEST_SCHEMAS: ReadonlySet<SchemaName> = new Set<SchemaName>([
+  'RegisterRequest',
+  'LoginRequest',
+  'CreateLinkRequest',
+  'UpdateLinkStatusRequest',
+  'InitializeCheckoutRequest',
+  'VerifyCheckoutRequest',
+  'TransferRequest',
+  'TopUpRequest',
+  'PageQuery',
+  'IdempotencyKey',
+])
+
 export function isRequestSchema(name: SchemaName): boolean {
-  return name.endsWith('Request')
+  return REQUEST_SCHEMAS.has(name)
 }
 
 /**

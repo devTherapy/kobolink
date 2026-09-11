@@ -17,8 +17,8 @@ describe('InitializeCheckoutRequestSchema', () => {
     )
   })
 
-  it('rejects a float, a string amount, a bad code and a bad email', () => {
-    expect(InitializeCheckoutRequestSchema.safeParse({ ...good, amountKobo: 18500.0 }).success).toBe(true) // 18500.0 is an integer
+  it('accepts 18500.0 (an integer in JS) but rejects a real float, a string amount, a bad code and a bad email', () => {
+    expect(InitializeCheckoutRequestSchema.safeParse({ ...good, amountKobo: 18500.0 }).success).toBe(true)
     expect(InitializeCheckoutRequestSchema.safeParse({ ...good, amountKobo: 18500.5 }).success).toBe(false)
     expect(InitializeCheckoutRequestSchema.safeParse({ ...good, amountKobo: '1850000' }).success).toBe(false)
     expect(InitializeCheckoutRequestSchema.safeParse({ ...good, code: 'abcdefg0' }).success).toBe(false)
@@ -37,6 +37,18 @@ describe('PaymentSchema', () => {
   it('accepts the fixture and rejects an unknown status', () => {
     expect(PaymentSchema.safeParse(examplePayment()).success).toBe(true)
     expect(PaymentSchema.safeParse(examplePayment({ status: 'refunded' as never })).success).toBe(false)
+  })
+
+  it('a declined payment is a normal outcome that says money did not move', () => {
+    const declined = examplePayment({ status: 'failed', failureReason: 'Card declined by issuer', completedAt: null })
+    expect(declined.moneyMoved).toBe(false)
+    expect(PaymentSchema.safeParse(declined).success).toBe(true)
+  })
+
+  it('refuses a payment whose moneyMoved contradicts its status — the invariant the result screens rely on', () => {
+    expect(PaymentSchema.safeParse(examplePayment({ status: 'failed', moneyMoved: true })).success).toBe(false)
+    expect(PaymentSchema.safeParse(examplePayment({ status: 'success', moneyMoved: false })).success).toBe(false)
+    expect(PaymentSchema.safeParse(examplePayment({ status: 'pending', moneyMoved: true })).success).toBe(false)
   })
 })
 

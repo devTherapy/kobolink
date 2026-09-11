@@ -48,9 +48,9 @@ which every request carries `Authorization: Bearer <token>`).
 | PATCH | `links.status(code)` | merchant | `UpdateLinkStatusRequest` | `PaymentLink` | |
 | GET | `links.payments(code)` | merchant | `PageQuery` | `PaymentListResponse` | `payerEmail` is masked |
 | GET | `links.resolve(code)` | **none** | — | `PublicLinkResponse` | 200 with `state` resolved server-side via `resolveLink()`; `not_found` 404 for a missing or malformed code. Carries only what the checkout renders |
-| POST | `checkout.initialize` | none | `InitializeCheckoutRequest` + `Idempotency-Key` | `InitializeCheckoutResponse` 201 | `link_not_payable` if `resolveLink` ≠ payable; `amount_mismatch` if the link has a fixed amount and it differs; `validation_failed` without a key |
-| POST | `checkout.verify` | none | `VerifyCheckoutRequest` + `Idempotency-Key` | `VerifyCheckoutResponse` | On success posts the ledger entries in one transaction. Simulated gateway: `payerEmail` starting `fail@` → `status: 'failed'`, `failureReason` set, `moneyMoved: false`. Replaying the key returns the original result |
-| GET | `dashboard.stats` | merchant | — | `DashboardStats` | Derived from ledger postings, never counted client-side |
+| POST | `checkout.initialize` | none | `InitializeCheckoutRequest` + `Idempotency-Key` | `InitializeCheckoutResponse` 201 | `link_not_payable` (with `state`) if `resolveLink` ≠ payable; `amount_mismatch` if the link has a fixed amount and it differs; `validation_failed` without a key |
+| POST | `checkout.verify` | none | `VerifyCheckoutRequest` + `Idempotency-Key` | `VerifyCheckoutResponse` | On success posts the ledger entries in one transaction and answers `payment.moneyMoved: true`. A gateway decline is **200**, not an error: `payment.status: 'failed'`, `failureReason` set, `moneyMoved: false`. Simulated gateway: `payerEmail` starting `fail@` declines. Replaying the key returns the original result |
+| GET | `dashboard.stats` | merchant | — | `DashboardStats` | Derived from ledger postings, never counted client-side. `activeLinks` counts links that `resolveLink()` to `payable` at `asOf`, so the strip agrees with the badges in the table |
 | GET | `dashboard.stream` | merchant | `Last-Event-ID` optional | SSE of `DashboardEvent` | `event:` is the `type`; `heartbeat` every `SSE_HEARTBEAT_MS` |
 | GET | `wallet.me` | any user | — | `Wallet` | Phase 2 |
 | GET | `wallet.transactions` | any user | `PageQuery` | `WalletTransactionListResponse` | Phase 2 |
@@ -61,10 +61,14 @@ which every request carries `Authorization: Bearer <token>`).
 
 Every money-moving write (`checkout.initialize`, `checkout.verify`,
 `wallet.transfer`, `wallet.topup`) requires the `Idempotency-Key` header
-(`IdempotencyKeySchema`). The server stores `(key, request hash, response)`.
-A replay with the same key and same body returns the stored response with the
-original status; the same key with a different body is `idempotency_mismatch`.
-Nothing posts twice.
+(`IdempotencyKeySchema`). The server stores `(scope, key, request hash,
+response)`, where `scope` is the authenticated user id for wallet endpoints and
+the endpoint path for the unauthenticated checkout endpoints. A replay with the
+same scope, key and body returns the stored response with the original status;
+the same key with a different body is `idempotency_mismatch`. Nothing posts
+twice. The header itself is described by the `IdempotencyKey` schema; `PageQuery`
+describes the `cursor`/`limit` query parameters. Both are in `SCHEMAS` so the
+generated clients carry them.
 
 ### Money
 
@@ -76,5 +80,12 @@ becomes `number`. Display formatting happens in the client with `formatNaira`.
 
 `links.resolve` returns `state` computed by `resolveLink()` at request time.
 Clients render from `state` and never re-derive it from `expiresAt` or
-`isReusable` — the API is the clock. The four states and the 404 map to the
-checkout page's non-payable screens one to one.
+`isReusable` — the API is the clock. The three non-payable states and the 404
+map to the checkout page's non-payable screens one to one.
+
+### Declines and errors
+
+A gateway decline is a *result*: `Payment { status: 'failed', failureReason,
+moneyMoved: false }` with HTTP 200. `ApiError` is for a request that could not
+be processed: bad input, no session, a link that is not payable, insufficient
+funds. Every result and every money-related error states whether money moved.

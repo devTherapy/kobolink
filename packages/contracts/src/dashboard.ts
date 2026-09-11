@@ -10,9 +10,17 @@ import { IsoDateTimeSchema, KoboSchema } from './primitives.js'
  */
 export const DashboardStatsSchema = z
   .object({
-    totalCollectedKobo: KoboSchema,
-    paymentCount: z.int().min(0),
-    activeLinks: z.int().min(0),
+    /** Sum of successful `link_payment` postings to this merchant. */
+    totalCollectedKobo: KoboSchema.describe('Sum of successful link payments, in kobo.'),
+    /** Number of successful `link_payment` postings to this merchant. */
+    paymentCount: z.int().min(0).describe('Number of successful link payments.'),
+    /**
+     * Number of this merchant's links whose `resolveLink()` at `asOf` is
+     * `payable` — not the count of rows with `status = 'active'`. An expired
+     * or exhausted single-use link shows an Expired / Paid badge in the table
+     * and must not be counted here, or the strip disagrees with the list.
+     */
+    activeLinks: z.int().min(0).describe('Links that resolve to payable at asOf.'),
     asOf: IsoDateTimeSchema,
   })
   .meta({ id: 'DashboardStats' })

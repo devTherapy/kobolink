@@ -1,9 +1,9 @@
 import { customAlphabet } from 'nanoid'
 
 /**
- * Short codes are the document ID of a payment link, so the database enforces
- * uniqueness for us: `links/{code}`. That makes deep-link resolution a single
- * getDoc — no query, no composite index, no pagination.
+ * Short codes are the primary key of a payment link, so the database enforces
+ * uniqueness for us. That makes deep-link resolution a single indexed lookup —
+ * no query, no composite index, no pagination.
  *
  * The alphabet drops the characters people mistranscribe when reading a link
  * off a screen or a printed QR: 0/O, 1/l/I. 54 symbols, 8 characters, so

@@ -14,4 +14,13 @@ describe('errors', () => {
     expect(isApiError({ message: 'x' })).toBe(false)
     expect(ApiErrorSchema.safeParse({ code: 'internal', message: '' }).success).toBe(false)
   })
+
+  it('a link_not_payable error can carry the resolved state, and only a known one', () => {
+    expect(isApiError({ code: 'link_not_payable', message: 'x', state: 'already-paid' })).toBe(true)
+    expect(isApiError({ code: 'link_not_payable', message: 'x', state: 'active' })).toBe(false)
+  })
+
+  it('has no payment_declined code — a gateway decline is a 200 with status failed, never an error', () => {
+    expect(ErrorCodeSchema.options).not.toContain('payment_declined')
+  })
 })

@@ -15,7 +15,10 @@ import {
  * verify. Both are money-moving writes and both carry an Idempotency-Key
  * header; a replayed key returns the original result, never a second posting.
  *
- * The gateway is simulated: a payer email beginning `fail@` declines.
+ * The gateway is simulated: a payer email beginning `fail@` declines. A
+ * decline is a normal outcome, not an API error: `verify` answers 200 with
+ * `payment.status === 'failed'`, `failureReason` set and `moneyMoved: false`.
+ * `ApiError` is for requests that could not be processed at all.
  */
 export const SIMULATED_DECLINE_PREFIX = 'fail@' as const
 
@@ -69,6 +72,16 @@ export const PaymentSchema = z
     completedAt: IsoDateTimeSchema.nullable(),
     /** Present on failure: what went wrong, in words a payer can act on. */
     failureReason: z.string().max(200).nullable(),
+    /**
+     * Whether a ledger posting exists for this payment. Always stated
+     * explicitly so every result screen can say whether money moved.
+     * Invariant: true if and only if `status === 'success'`.
+     */
+    moneyMoved: z.boolean(),
+  })
+  .refine((p) => p.moneyMoved === (p.status === 'success'), {
+    message: 'moneyMoved must be true exactly when status is success',
+    path: ['moneyMoved'],
   })
   .meta({ id: 'Payment' })
 export type Payment = z.infer<typeof PaymentSchema>

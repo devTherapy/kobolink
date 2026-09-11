@@ -63,7 +63,7 @@ export function examplePublicLinkResponse(
 }
 
 export function examplePayment(overrides: Partial<Payment> = {}): Payment {
-  return {
+  const merged: Payment = {
     reference: 'kbl_7hK2mN9pQr',
     code: 'aBcDeFgH',
     amountKobo: 1_850_000,
@@ -74,8 +74,12 @@ export function examplePayment(overrides: Partial<Payment> = {}): Payment {
     createdAt: '2026-06-14T18:20:00.000Z',
     completedAt: '2026-06-14T18:20:04.000Z',
     failureReason: null,
+    moneyMoved: true,
     ...overrides,
   }
+  // Keep the invariant unless the caller is deliberately breaking it.
+  if (overrides.moneyMoved === undefined) merged.moneyMoved = merged.status === 'success'
+  return merged
 }
 
 export function exampleStats(overrides: Partial<DashboardStats> = {}): DashboardStats {

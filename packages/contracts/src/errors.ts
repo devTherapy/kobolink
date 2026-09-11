@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PublicLinkStateSchema } from './links.js'
 
 /**
  * Every non-2xx response has this body. `code` is stable and machine-readable;
@@ -17,7 +18,6 @@ export const ErrorCodeSchema = z
     'link_not_payable',
     'amount_mismatch',
     'insufficient_funds',
-    'payment_declined',
     'internal',
   ])
   .meta({ id: 'ErrorCode' })
@@ -30,6 +30,11 @@ export const ApiErrorSchema = z
     fields: z.record(z.string(), z.array(z.string().min(1))).optional(),
     /** Only on money-moving failures: did any money move? Always answered. */
     moneyMoved: z.boolean().optional(),
+    /**
+     * Only on `link_not_payable`: the state the link resolved to, so a client
+     * that loaded a payable link and lost the race can show the right screen.
+     */
+    state: PublicLinkStateSchema.optional(),
   })
   .meta({ id: 'ApiError' })
 export type ApiError = z.infer<typeof ApiErrorSchema>
@@ -45,7 +50,6 @@ export const HTTP_STATUS_FOR_ERROR: Readonly<Record<ErrorCode, number>> = {
   link_not_payable: 409,
   amount_mismatch: 422,
   insufficient_funds: 422,
-  payment_declined: 402,
   internal: 500,
 }
 
