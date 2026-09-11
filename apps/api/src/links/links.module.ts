@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module.js'
 import { defaultLinkCodeGenerator, LINK_CODE_GENERATOR } from './link-code.generator.js'
 import { LinksController } from './links.controller.js'
 import { LinksService } from './links.service.js'
+import { PublicLinksController } from './public-links.controller.js'
 
 /**
  * Imports `AuthModule` for `SessionGuard`/`MerchantGuard` (it exports both,
@@ -12,10 +13,16 @@ import { LinksService } from './links.service.js'
  * can override just this one provider (`Test.createTestingModule(...)
  * .overrideProvider(LINK_CODE_GENERATOR)`) without touching anything else
  * the module wires up — the collision-retry integration test's seam.
+ *
+ * `PublicLinksController` (B4) is a second controller in this same module,
+ * not a method on `LinksController` — see its own doc comment for why. It
+ * shares `LinksService` with the merchant-facing controller but composes no
+ * guard of its own, so importing `AuthModule` here never puts `SessionGuard`
+ * in its path.
  */
 @Module({
   imports: [AuthModule],
-  controllers: [LinksController],
+  controllers: [LinksController, PublicLinksController],
   providers: [LinksService, { provide: LINK_CODE_GENERATOR, useValue: defaultLinkCodeGenerator }],
 })
 export class LinksModule {}
