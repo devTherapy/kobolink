@@ -78,15 +78,15 @@ no `payments` table with a status column. One `users` table with roles, never a
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | in-review |
-| F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | todo |
+| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | done |
+| F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | in-progress |
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | todo |
 | F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | todo |
 | F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | todo |
 | F5 | Link detail: QR, copy, status toggle with optimistic UI, payments table | F3 | Toggle rolls back visibly when the request fails | todo |
-| F6 | Public checkout `/l/[code]` — **server component**, `generateMetadata`, all non-payable states | F0 | The rendered HTML contains the OG title before any JS runs | todo |
+| F6 | Public checkout `/l/[code]` — **server component**, `generateMetadata`, all non-payable states | F0 | The rendered HTML contains the OG title before any JS runs | in-progress |
 | F7 | SSE client → live dashboard | F3 | A payment in another tab moves the numbers without a reload; the stream survives a network blip | todo |
-| F8 | `/.well-known/apple-app-site-association` + `assetlinks.json` route handlers | F0 | Unit tests assert the exact JSON; served unredirected as `application/json` | todo |
+| F8 | `/.well-known/apple-app-site-association` + `assetlinks.json` route handlers | F0 | Unit tests assert the exact JSON; served unredirected as `application/json` | in-progress |
 | F9 | E2E: create link → pay in a fresh context → dashboard updates | F5 F6 F7 | Green on desktop and mobile Playwright projects | todo |
 
 **Non-negotiables.** `/l/[code]` is server-rendered — a client-rendered checkout
