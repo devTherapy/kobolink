@@ -13,26 +13,37 @@ import { Button } from '@/components/ui/Button'
  * plumbing needed the way `getSession` needs on the server, where there is
  * no browser cookie jar to rely on.
  *
- * Best-effort: even if the network call fails, there is nothing useful left
- * to do with a session the merchant explicitly asked to end other than send
- * them to `/login` anyway — staying on the dashboard with a logout button
- * that silently did nothing is the worse failure mode.
+ * Not best-effort: navigating to `/login` after a *failed* logout used to be
+ * the plan, but it backfires. `/login` itself calls `getSession()`, and a
+ * failed request means the API never cleared the cookie — so `getSession()`
+ * finds it still valid and immediately redirects back to `/dashboard`. Net
+ * result was a flash of `/login` and the merchant silently still signed in,
+ * with no indication anything went wrong. So: only navigate once
+ * `client.auth.logout()` has actually resolved. A failure shows `Button`'s
+ * own `status="error"` state instead and leaves the merchant on the
+ * dashboard, able to retry.
  */
 export function LogoutButton() {
   const router = useRouter()
-  const [isLoading, setIsLoading] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
 
   async function handleLogout() {
-    setIsLoading(true)
+    setStatus('loading')
     try {
       await client.auth.logout()
-    } catch (error) {
-      // Best-effort — see the doc comment above. Logged, not surfaced: the
-      // merchant is being sent to `/login` regardless, and a banner here
-      // would just be noise on the way out the door.
-      console.error(error)
-    } finally {
+      // Bust the dashboard route segment's client-side cache *before*
+      // leaving it — `router.refresh()` targets the current route, so this
+      // has to run while `/dashboard` is still current. Otherwise a browser
+      // Back after logout could serve the cached (still-authenticated-looking)
+      // dashboard from the router cache instead of hitting `DashboardLayout`'s
+      // `getSession()` guard again.
+      router.refresh()
       router.replace('/login')
+      // Deliberately no `setStatus('idle')` on the success path — this
+      // component is about to be unmounted by the navigation above.
+    } catch (error) {
+      console.error(error)
+      setStatus('error')
     }
   }
 
@@ -41,7 +52,8 @@ export function LogoutButton() {
       variant="secondary"
       size="sm"
       surface="surface"
-      status={isLoading ? 'loading' : 'idle'}
+      status={status}
+      errorMessage="Logout failed. Check your connection and try again."
       onClick={() => void handleLogout()}
     >
       Log out

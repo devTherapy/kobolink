@@ -66,7 +66,7 @@ describe('RegisterForm — successful registration', () => {
 })
 
 describe('RegisterForm — local validation', () => {
-  it('rejects a too-short password before ever calling the API', async () => {
+  it('rejects a too-short password before ever calling the API, with human-readable copy', async () => {
     const user = userEvent.setup()
     render(<RegisterForm next={null} />)
 
@@ -74,6 +74,27 @@ describe('RegisterForm — local validation', () => {
     await user.click(screen.getByRole('button', { name: 'Create account' }))
 
     expect(await screen.findByLabelText('Password', { exact: false })).toHaveAttribute('aria-invalid', 'true')
+    // This form is `noValidate` — Zod's own `safeParse` is the only guard
+    // before submission, so its raw v4 message ("Too small: expected string
+    // to have >=10 characters") would otherwise render verbatim right below
+    // the "At least 10 characters." hint. Assert the human copy, not just
+    // that *some* error rendered.
+    expect(screen.getByText('Password must be at least 10 characters.')).toBeInTheDocument()
+    expect(screen.queryByText(/too small|>=10 characters/i)).not.toBeInTheDocument()
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty full name with human-readable copy, not the raw Zod message', async () => {
+    const user = userEvent.setup()
+    render(<RegisterForm next={null} />)
+
+    await user.type(screen.getByLabelText('Email', { exact: false }), 'ngozi@example.com')
+    await user.type(screen.getByLabelText('Password', { exact: false }), 'a-real-password')
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByLabelText('Full name', { exact: false })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Full name is required.')).toBeInTheDocument()
+    expect(screen.queryByText(/too small|>=1 characters/i)).not.toBeInTheDocument()
     expect(replace).not.toHaveBeenCalled()
   })
 })

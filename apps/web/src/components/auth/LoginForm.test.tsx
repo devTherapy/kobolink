@@ -84,6 +84,25 @@ describe('LoginForm — successful sign-in', () => {
   })
 })
 
+describe('LoginForm — local validation', () => {
+  it('rejects an empty password before ever calling the API, with human-readable copy', async () => {
+    const user = userEvent.setup()
+    render(<LoginForm next={null} />)
+
+    await user.type(screen.getByLabelText('Email', { exact: false }), 'ngozi@example.com')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    // This form is `noValidate` — Zod's own `safeParse` is the only guard
+    // before submission, so its raw v4 message ("Too small: expected string
+    // to have >=1 characters") would otherwise render verbatim beside the
+    // field. Assert the human copy, not just that *some* error rendered.
+    expect(await screen.findByLabelText('Password', { exact: false })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Password is required.')).toBeInTheDocument()
+    expect(screen.queryByText(/too small|>=1 characters/i)).not.toBeInTheDocument()
+    expect(replace).not.toHaveBeenCalled()
+  })
+})
+
 describe('LoginForm — validation_failed.fields', () => {
   it('renders a server-side field error beside the matching input', async () => {
     server.use(

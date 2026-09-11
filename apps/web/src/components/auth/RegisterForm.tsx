@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { RegisterRequestSchema, type RegisterRequest } from '@kobolink/contracts'
 import { ApiRequestError, client } from '@/lib/api'
-import { firstFieldErrors, zodIssuesToFields } from '@/lib/zod-errors'
+import { firstFieldErrors, humanFieldErrors } from '@/lib/zod-errors'
 import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
 
@@ -36,7 +36,10 @@ export function RegisterForm({ next }: { next: string | null }) {
       client: 'web',
     })
     if (!result.success) {
-      setFieldErrors(firstFieldErrors(zodIssuesToFields(result.error)))
+      // See `LoginForm`'s identical call: this form is `noValidate` too, so
+      // `humanFieldErrors` is what stands between an empty/short field and
+      // Zod's raw schema-author message.
+      setFieldErrors(humanFieldErrors(result.error))
       return null
     }
     setFieldErrors({})
@@ -65,12 +68,22 @@ export function RegisterForm({ next }: { next: string | null }) {
           }
           return
         case 'conflict':
-          // README: a taken email is `conflict` — beside the email field,
-          // the same as a `validation_failed.fields.email` would render.
-          setFieldErrors((current) => ({
-            ...current,
-            email: error.error.fields?.email?.[0] ?? error.error.message,
-          }))
+          // The real API's `conflict` (email OR phone already registered)
+          // carries no `fields` — pinning it to the email input regardless
+          // would mislabel a phone conflict as an email problem. Only pin
+          // it to a field when the response actually names one; otherwise
+          // show it as a form-level error, since it could be either.
+          {
+            const conflictEmail = error.error.fields?.email?.[0]
+            const conflictPhone = error.error.fields?.phone?.[0]
+            if (conflictEmail !== undefined) {
+              setFieldErrors((current) => ({ ...current, email: conflictEmail }))
+            } else if (conflictPhone !== undefined) {
+              setFieldErrors((current) => ({ ...current, phone: conflictPhone }))
+            } else {
+              setFormError(error.error.message)
+            }
+          }
           return
         case 'rate_limited': {
           const retryWindow =

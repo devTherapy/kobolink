@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { LoginRequestSchema } from '@kobolink/contracts'
 import { ApiRequestError, client } from '@/lib/api'
-import { firstFieldErrors, zodIssuesToFields } from '@/lib/zod-errors'
+import { firstFieldErrors, humanFieldErrors } from '@/lib/zod-errors'
 import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
 
@@ -31,7 +31,11 @@ export function LoginForm({ next }: { next: string | null }) {
   function validate(): { email: string; password: string } | null {
     const result = LoginRequestSchema.safeParse({ email, password, client: 'web' })
     if (!result.success) {
-      setFieldErrors(firstFieldErrors(zodIssuesToFields(result.error)))
+      // Zod's own default messages are schema-author copy ("Too small:
+      // expected string to have >=1 characters"), not something to show a
+      // merchant on a `noValidate` form where this is the only guard before
+      // submission — `humanFieldErrors` rewrites them into actual prose.
+      setFieldErrors(humanFieldErrors(result.error))
       return null
     }
     setFieldErrors({})
