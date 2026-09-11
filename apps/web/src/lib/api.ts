@@ -1,21 +1,28 @@
 import {
   API,
   DashboardStatsSchema,
+  IDEMPOTENCY_HEADER,
+  InitializeCheckoutResponseSchema,
   LinkCodeSchema,
   LinkListResponseSchema,
   MeResponseSchema,
   PaymentLinkSchema,
   PaymentListResponseSchema,
   PublicLinkResponseSchema,
+  VerifyCheckoutResponseSchema,
   isApiError,
   type ApiError,
   type DashboardStats,
+  type InitializeCheckoutRequest,
+  type InitializeCheckoutResponse,
   type LinkListResponse,
   type MeResponse,
   type PageQuery,
   type PaymentLink,
   type PaymentListResponse,
   type PublicLinkResponse,
+  type VerifyCheckoutRequest,
+  type VerifyCheckoutResponse,
 } from '@kobolink/contracts'
 import type { ZodType } from 'zod'
 
@@ -158,9 +165,15 @@ export const client = {
       requireValidLinkCode(code)
       return await request<PaymentLink>(PaymentLinkSchema, API.links.item(code))
     },
+    // `cache: 'no-store'` — this is the call F6's server component makes at
+    // request time. README: "the API is the clock"; a link a merchant just
+    // disabled must never be masked by Next's fetch cache reusing a stale
+    // `payable` response for the next visitor of the same code.
     resolve: async (code: string) => {
       requireValidLinkCode(code)
-      return await request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code))
+      return await request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code), {
+        cache: 'no-store',
+      })
     },
     payments: async (code: string, query?: PageQuery) => {
       requireValidLinkCode(code)
@@ -171,5 +184,26 @@ export const client = {
   },
   dashboard: {
     stats: () => request<DashboardStats>(DashboardStatsSchema, API.dashboard.stats),
+  },
+  // Both endpoints are money-moving writes: every call carries its own
+  // caller-chosen `Idempotency-Key` (README: "a replayed key returns the
+  // original result, never posts twice"). F6's PayForm mints one key per
+  // logical attempt at each of these two calls — never one key reused across
+  // both — and reuses `verify`'s key argument (a fresh key, same `reference`)
+  // to re-check a reference after a transport error, which the mock's
+  // per-reference memo (not the idempotency-key memo) answers idempotently.
+  checkout: {
+    initialize: (body: InitializeCheckoutRequest, idempotencyKey: string) =>
+      request<InitializeCheckoutResponse>(InitializeCheckoutResponseSchema, API.checkout.initialize, {
+        method: 'POST',
+        body,
+        headers: { [IDEMPOTENCY_HEADER]: idempotencyKey },
+      }),
+    verify: (body: VerifyCheckoutRequest, idempotencyKey: string) =>
+      request<VerifyCheckoutResponse>(VerifyCheckoutResponseSchema, API.checkout.verify, {
+        method: 'POST',
+        body,
+        headers: { [IDEMPOTENCY_HEADER]: idempotencyKey },
+      }),
   },
 }

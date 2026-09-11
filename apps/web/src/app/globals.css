@@ -31,6 +31,12 @@
   --color-border:       #E5E2DB;
   --color-border-soft:  #EFEDE8;
 
+  /* The public checkout (§4.3, §11) sits on a warmer ground than the
+     merchant surfaces — Persuade vs Operate. It is the tightest contrast
+     case in the set: ink-3 clears it at 4.60:1, everything darker clears it
+     by more. See F6's PR description for the full computed table. */
+  --color-checkout-ground: #F1EEE8;
+
   --color-success:      #0B7A44;
   --color-success-tint: #E3F2E9;
   --color-warning:      #8A5A00;
