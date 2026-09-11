@@ -123,7 +123,7 @@ They are deliberately not the same design and neither is the web page.
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| X0 | Monorepo (npm workspaces), five CI jobs, hooks, agent definitions | — | A failing test fails a PR | todo |
+| X0 | Monorepo (npm workspaces), five CI jobs, hooks, agent definitions | — | A failing test fails a PR | in-progress |
 | X1 | `packages/contracts` — domain types, Zod schemas, money/code/status | X0 | Both apps import it; changing a shape breaks the other side's typecheck | todo |
 | X2 | Integration: wire web to the real API, mobile to the real API | Wave 2 | MSW handlers deleted from the e2e path; the real journey passes | todo |
 | X3 | Hosting, `pay.folusayo.com`, association smoke test | X2 | `scripts/smoke-associations.sh` green against the real domain, including Apple's CDN copy | todo |

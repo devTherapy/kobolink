@@ -16,7 +16,7 @@ node_major=$(node -p 'process.versions.node.split(".")[0]')
 docker info >/dev/null 2>&1 || warn "Docker is not running. Testcontainers needs it for the API integration tests."
 
 chmod +x .claude/hooks/*.sh 2>/dev/null || true
-[ -f .env.local ] || { cp salvage/env.example .env.local 2>/dev/null && say "Created .env.local from the template — fill it in when X3 arrives."; }
+[ -f .env.local ] || { cp .env.example .env.local 2>/dev/null && say "Created .env.local from .env.example — fill it in when X3 arrives."; }
 
 if [ ! -d .git ]; then
   say "Initialising the repository"

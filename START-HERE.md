@@ -45,8 +45,8 @@ tar -xzf ~/Downloads/kobolink-repo.tar.gz --strip-components=1
 CLAUDE_CODE_RETRY_WATCHDOG=1 claude --permission-mode auto
 ```
 
-`bootstrap.sh` checks your tools, makes the repo, pushes it to GitHub and turns
-on branch protection. Then paste the prompt from **`RUN.md`** and walk away.
+`bootstrap.sh` checks your tools, makes the repo and pushes it to GitHub. There
+is no branch protection; the orchestrator's merge rule is the gate. Then paste the prompt from **`RUN.md`** and walk away.
 
 That prompt sets a `/goal` — *every row in PLAN.md is done or blocked* — and
 hands the work to the orchestrator, which loops: find what's ready, dispatch the
@@ -97,7 +97,7 @@ CLAUDE_CODE_RETRY_WATCHDOG=1 claude --permission-mode auto --continue
 | `guard-commit.sh` | Commits on `main`; commits while typecheck or lint is red |
 | `keep-going.sh` | The agent stopping while `PLAN.md` still has work |
 | `permissions.deny` | Force pushes, `--admin` merges, `sudo`, repo deletion, reading `.env` and keys |
-| Branch protection | Anything reaching `main` outside a PR |
+| The merge rule | Nothing merges without five green checks and a reviewer PASS (no GitHub branch protection, by choice) |
 | The reviewer | Merging a broken non-negotiable, an unmet acceptance condition, or a test that cannot fail |
 
 ## The one thing worth knowing before you walk away

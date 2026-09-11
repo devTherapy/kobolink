@@ -11,3 +11,7 @@ playwright-report/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+dist/
+.claude/.keepgoing
+.claude/settings.local.json
+.claude/worktrees/
