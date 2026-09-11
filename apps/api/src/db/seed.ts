@@ -2,8 +2,9 @@ import { hash } from '@node-rs/argon2'
 import { isValidLinkCode } from '@kobolink/contracts'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { Pool } from 'pg'
+import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { Pool } from 'pg'
 import * as schema from './schema/index.js'
 
 /**
@@ -79,27 +80,81 @@ async function findMerchant(db: SeedDb): Promise<typeof schema.users.$inferSelec
   return existing
 }
 
-async function createMerchant(db: SeedDb, passwordHash: string): Promise<typeof schema.users.$inferSelect> {
-  const [created] = await db
-    .insert(schema.users)
-    .values({
-      role: 'merchant',
-      email: SEED_MERCHANT_EMAIL,
-      phone: SEED_MERCHANT_PHONE,
-      passwordHash,
-      displayName: SEED_MERCHANT_DISPLAY_NAME,
-    })
-    // A concurrent seed run could lose the race between findMerchant and
-    // this insert; falling back to a re-select on conflict keeps the
-    // function idempotent under that race too, not only on a second
-    // sequential run.
-    .onConflictDoNothing({ target: schema.users.email })
-    .returning()
-  if (created !== undefined) return created
+/** The subset of `pg`'s `DatabaseError` shape this file reads — `code` and `constraint` are set by Postgres itself for a unique-violation error, not invented by the driver. */
+interface PossiblePgError {
+  code?: string
+  constraint?: string
+  cause?: unknown
+}
 
-  const existing = await findMerchant(db)
-  if (existing === undefined) throw new Error('seed: merchant user find-or-create produced no row')
-  return existing
+/**
+ * `drizzle-orm`'s node-postgres driver never throws `pg`'s own
+ * `DatabaseError` directly — it wraps it in a `DrizzleQueryError` whose
+ * `message` is a generic "Failed query: ..." and whose `.cause` is the
+ * real driver error carrying `code`/`constraint`. Unwrap `.cause`
+ * (recursively — a future drizzle version or a differently-wrapped error
+ * could nest it one level deeper) until something has a `code`, rather
+ * than reading `code`/`constraint` straight off whatever was thrown.
+ */
+function asPgError(error: unknown): PossiblePgError | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const candidate = error as PossiblePgError
+  if (typeof candidate.code === 'string') return candidate
+  return asPgError(candidate.cause)
+}
+
+function isUniqueViolation(error: unknown, constraintName: string): boolean {
+  const pgError = asPgError(error)
+  return pgError?.code === '23505' && pgError.constraint === constraintName
+}
+
+/**
+ * Round 2 review finding: the previous version relied on
+ * `.onConflictDoNothing({ target: schema.users.email })` to make a
+ * concurrent double-insert idempotent, on the assumption that any conflict
+ * this insert could hit was an email conflict. `users` also has a unique
+ * `phone`, and Postgres's `ON CONFLICT (email) DO NOTHING` only ever
+ * catches a conflict on the *email* index — a violation of the phone
+ * index (an unrelated, pre-existing user already holding
+ * `SEED_MERCHANT_PHONE`, however that happened) still throws a raw
+ * `DatabaseError` straight out of the insert. Catching the error directly
+ * and inspecting *which* constraint fired — instead of leaning on
+ * `ON CONFLICT` to guess for us — lets an email conflict (a real,
+ * harmless race with another `seed()` call) resolve exactly as before,
+ * while turning a phone conflict into a clear, actionable error message
+ * instead of an opaque driver crash.
+ */
+async function createMerchant(db: SeedDb, passwordHash: string): Promise<typeof schema.users.$inferSelect> {
+  try {
+    const [created] = await db
+      .insert(schema.users)
+      .values({
+        role: 'merchant',
+        email: SEED_MERCHANT_EMAIL,
+        phone: SEED_MERCHANT_PHONE,
+        passwordHash,
+        displayName: SEED_MERCHANT_DISPLAY_NAME,
+      })
+      .returning()
+    if (created === undefined) throw new Error('seed: merchant insert returned no row')
+    return created
+  } catch (error) {
+    if (isUniqueViolation(error, 'users_email_unique')) {
+      // Lost a race with a concurrent seed run that inserted the same
+      // merchant between findMerchant's select (in seed(), below) and
+      // this insert — not a real problem, just look the row up.
+      const existing = await findMerchant(db)
+      if (existing === undefined) throw new Error('seed: merchant user find-or-create produced no row')
+      return existing
+    }
+    if (isUniqueViolation(error, 'users_phone_unique')) {
+      throw new Error(
+        `seed: cannot create the merchant — phone ${SEED_MERCHANT_PHONE} is already used by a different, unrelated user`,
+        { cause: error },
+      )
+    }
+    throw error
+  }
 }
 
 async function findOrCreateMerchantReceivable(
@@ -228,7 +283,13 @@ async function main(): Promise<void> {
   }
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
+// realpathSync, not a bare pathToFileURL(process.argv[1]) — Node resolves
+// import.meta.url to the module's real, symlink-resolved path, so an
+// invocation path that crosses a symlink (macOS's /tmp -> /private/tmp
+// being the canonical example) would otherwise never match and main()
+// would silently not run.
+const isMain =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
 if (isMain) {
   main().catch((error: unknown) => {
     console.error(error)

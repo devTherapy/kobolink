@@ -1,5 +1,5 @@
 {
-  "id": "3a26f8d0-ab42-4200-aca4-8eea4658cb14",
+  "id": "3e55919c-c4d8-466c-8c75-eada968fae65",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -496,7 +496,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "postings_idempotency_scope_key_nullability_matches": {
+          "name": "postings_idempotency_scope_key_nullability_matches",
+          "value": "(\"postings\".\"idempotency_scope\" is null) = (\"postings\".\"idempotency_key\" is null)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.sessions": {

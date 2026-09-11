@@ -61,6 +61,33 @@ describe('db seed (real Postgres via Testcontainers)', () => {
     expect(externalFunding.rows[0]?.owner_user_id).toBeNull()
   })
 
+  it('reports a clear error instead of crashing when the seed phone collides with a different, unrelated user', async () => {
+    const activeDb = getDb()
+    const activePool = getPool()
+
+    // A user that has nothing to do with the seed's merchant, but happens
+    // to already hold the exact phone number the seed script always uses.
+    const collidingUserId = 'seed-round2-phone-collision-test-user'
+    await activePool.query(
+      `insert into users (id, role, email, phone, password_hash, display_name)
+       values ($1, 'customer', $2, '+2348031234567', 'not-a-real-hash', 'Unrelated Person')`,
+      [collidingUserId, 'unrelated-phone-collision@example.test'],
+    )
+
+    try {
+      await expect(seed(activeDb, TEST_MERCHANT_PASSWORD)).rejects.toThrow(
+        /already used by a different, unrelated user/,
+      )
+
+      const merchants = await activePool.query(`select 1 from users where email = $1`, [SEED_MERCHANT_EMAIL])
+      expect(merchants.rows).toHaveLength(0)
+    } finally {
+      // Leave the database as this test found it — the next test seeds
+      // the real merchant with this exact phone number.
+      await activePool.query(`delete from users where id = $1`, [collidingUserId])
+    }
+  })
+
   it('with a password, running the seed twice leaves exactly one merchant (with a real argon2id hash), one merchant_receivable account, the same two links, and still one external_funding account', async () => {
     const activeDb = getDb()
     const activePool = getPool()

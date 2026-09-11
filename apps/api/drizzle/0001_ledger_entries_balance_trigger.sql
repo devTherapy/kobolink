@@ -23,7 +23,9 @@
 -- `AFTER INSERT` only, not `INSERT OR UPDATE OR DELETE`: once mutation is
 -- impossible, a trigger still watching for it is dead code that only
 -- invites the two invariants to quietly drift out of sync with each
--- other.
+-- other. It is also not the whole guarantee against a *new*, later
+-- transaction reopening an old posting with a fresh balanced pair —
+-- 0003_ledger_entries_posting_same_transaction.sql closes that separately.
 
 CREATE OR REPLACE FUNCTION check_posting_balance() RETURNS trigger AS $$
 DECLARE

@@ -1,4 +1,4 @@
--- Hand-written reverse of 0000_mean_catseye.sql.
+-- Hand-written reverse of 0000_legal_mantis.sql.
 --
 -- drizzle-kit has no native "down" migration, so this file — and its
 -- sibling for every future migration — is the documented mechanism: one

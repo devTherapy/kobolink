@@ -25,7 +25,27 @@ const migrationsFolder = path.resolve(here, '../drizzle')
  * every UPDATE and DELETE on `ledger_entries` and `postings` outright —
  * this file is the proof, covering exactly the three review-listed cases
  * (move an entry between postings, delete an entry, edit an amount) plus
- * the `postings` side of the same trigger function.
+ * the `postings` side of the same trigger function, plus (round 2)
+ * `TRUNCATE` on both tables — a statement row-level triggers never see at
+ * all, so 0002 also registers a `FOR EACH STATEMENT` pair specifically for
+ * it.
+ *
+ * Every "setup" insert of a posting that will receive entries happens
+ * inside the *same* transaction as those entries, and commits before the
+ * mutation under test begins a new one. That is not incidental style here
+ * — `0003_ledger_entries_posting_same_transaction.sql` (round 2) means a
+ * posting created via an earlier, separately-committed statement could no
+ * longer receive entries at all, so setup that used to be able to run
+ * outside any explicit transaction no longer can.
+ *
+ * Every "expect this to be rejected" assertion is wrapped so the
+ * transaction is rolled back in a `finally`, not just after a successful
+ * assertion — a wrong expectation (this file had one, first time round: a
+ * regex that didn't match the trigger's actual message) throws from
+ * `expect(...).rejects.toThrow(...)` itself, and skipping the rollback on
+ * that path leaves the pooled connection stuck "in a transaction that is
+ * aborted" for whatever test borrows it next — a confusing cascade of
+ * unrelated failures for what was really one wrong regex.
  */
 describe('ledger_entries / postings append-only trigger (real Postgres via Testcontainers)', () => {
   let container: StartedPostgreSqlContainer | undefined
@@ -52,13 +72,13 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
   it('rejects moving an entry from one posting to another — the exact reproduction the review reported', async () => {
     const client = await getPool().connect()
     try {
+      await client.query('begin')
       const walletA = await insertWalletAccount(client)
       const walletB = await insertWalletAccount(client)
       const postingA = await insertPosting(client)
       const postingB = await insertPosting(client)
 
       const entryToMove = randomUUID()
-      await client.query('begin')
       await client.query(
         `insert into ledger_entries (id, posting_id, account_id, amount_kobo) values
            ($1, $3, $4, 50000),
@@ -71,16 +91,19 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
            ($2, $3, $5, -70000)`,
         [randomUUID(), randomUUID(), postingB, walletB, getExternalFundingAccountId()],
       )
-      await client.query('commit') // both postings balanced and durable before the mutation under test
+      await client.query('commit') // both postings, and their entries, balanced and durable before the mutation under test
 
       await client.query('begin')
-      await expect(
-        client.query(`update ledger_entries set posting_id = $1, amount_kobo = 0 where id = $2`, [
-          postingB,
-          entryToMove,
-        ]),
-      ).rejects.toThrow(/append-only/)
-      await client.query('rollback')
+      try {
+        await expect(
+          client.query(`update ledger_entries set posting_id = $1, amount_kobo = 0 where id = $2`, [
+            postingB,
+            entryToMove,
+          ]),
+        ).rejects.toThrow(/append-only/)
+      } finally {
+        await client.query('rollback')
+      }
     } finally {
       client.release()
     }
@@ -89,11 +112,11 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
   it('rejects deleting an entry out of an otherwise-balanced posting', async () => {
     const client = await getPool().connect()
     try {
+      await client.query('begin')
       const walletAccountId = await insertWalletAccount(client)
       const postingId = await insertPosting(client)
       const entryId = randomUUID()
 
-      await client.query('begin')
       await client.query(
         `insert into ledger_entries (id, posting_id, account_id, amount_kobo) values
            ($1, $3, $4, 50000),
@@ -103,23 +126,26 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
       await client.query('commit')
 
       await client.query('begin')
-      await expect(client.query(`delete from ledger_entries where id = $1`, [entryId])).rejects.toThrow(
-        /append-only/,
-      )
-      await client.query('rollback')
+      try {
+        await expect(client.query(`delete from ledger_entries where id = $1`, [entryId])).rejects.toThrow(
+          /append-only/,
+        )
+      } finally {
+        await client.query('rollback')
+      }
     } finally {
       client.release()
     }
   })
 
-  it('rejects updating an entry\'s amount in place', async () => {
+  it("rejects updating an entry's amount in place", async () => {
     const client = await getPool().connect()
     try {
+      await client.query('begin')
       const walletAccountId = await insertWalletAccount(client)
       const postingId = await insertPosting(client)
       const entryId = randomUUID()
 
-      await client.query('begin')
       await client.query(
         `insert into ledger_entries (id, posting_id, account_id, amount_kobo) values
            ($1, $3, $4, 50000),
@@ -129,10 +155,13 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
       await client.query('commit')
 
       await client.query('begin')
-      await expect(client.query(`update ledger_entries set amount_kobo = 1 where id = $1`, [entryId])).rejects.toThrow(
-        /append-only/,
-      )
-      await client.query('rollback')
+      try {
+        await expect(
+          client.query(`update ledger_entries set amount_kobo = 1 where id = $1`, [entryId]),
+        ).rejects.toThrow(/append-only/)
+      } finally {
+        await client.query('rollback')
+      }
     } finally {
       client.release()
     }
@@ -141,12 +170,39 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
   it('rejects updating and deleting a posting row itself, not only its entries', async () => {
     const client = await getPool().connect()
     try {
+      // No explicit transaction needed here: 0002's trigger fires on
+      // UPDATE/DELETE of `postings` directly, unrelated to
+      // 0003 (which only governs INSERTs into `ledger_entries`) — the
+      // posting is never asked to receive an entry in this test.
       const postingId = await insertPosting(client)
 
       await expect(
         client.query(`update postings set reference = $1 where id = $2`, [`changed-${randomUUID()}`, postingId]),
       ).rejects.toThrow(/append-only/)
       await expect(client.query(`delete from postings where id = $1`, [postingId])).rejects.toThrow(/append-only/)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('rejects TRUNCATE on ledger_entries and postings — row-level triggers alone do not fire for TRUNCATE', async () => {
+    const client = await getPool().connect()
+    try {
+      // Round 2 review finding: `FOR EACH ROW` triggers (the ones above)
+      // never fire for TRUNCATE at all — only `FOR EACH STATEMENT`
+      // triggers do. Without those, TRUNCATE would have silently bypassed
+      // every invariant this file otherwise proves.
+      await expect(client.query('truncate ledger_entries')).rejects.toThrow(/append-only.*truncate/i)
+
+      // `TRUNCATE postings` *alone* is refused by Postgres itself before
+      // any trigger runs — a plain TRUNCATE never implicitly follows a
+      // foreign key the way DELETE does, and ledger_entries.posting_id
+      // references postings.id, so this is Postgres's own protection, not
+      // this migration's. CASCADE (or listing both tables together, as
+      // the third case below does) is what actually reaches the trigger.
+      await expect(client.query('truncate postings')).rejects.toThrow(/foreign key/i)
+      await expect(client.query('truncate postings cascade')).rejects.toThrow(/append-only.*truncate/i)
+      await expect(client.query('truncate ledger_entries, postings')).rejects.toThrow(/append-only.*truncate/i)
     } finally {
       client.release()
     }

@@ -51,7 +51,8 @@ CREATE TABLE "postings" (
 	"idempotency_scope" varchar(128),
 	"idempotency_key" varchar(128),
 	"metadata" jsonb,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "postings_idempotency_scope_key_nullability_matches" CHECK (("postings"."idempotency_scope" is null) = ("postings"."idempotency_key" is null))
 );
 --> statement-breakpoint
 CREATE TABLE "sessions" (

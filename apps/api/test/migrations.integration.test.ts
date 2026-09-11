@@ -22,12 +22,17 @@ const EXPECTED_TABLES = [
   'users',
 ].sort(byName)
 
-// The two trigger functions from the hand-written custom migrations
-// (0001's deferred balance check, 0002's append-only rejection). Neither
-// comes from a declarative pgTable() — drizzle-kit has no way to diff a
-// trigger — so nothing but this migration (and this assertion) knows they
-// should exist, or should stop existing on the way down.
-const EXPECTED_FUNCTIONS = ['check_posting_balance', 'reject_ledger_mutation'].sort(byName)
+// The trigger functions from the hand-written custom migrations (0001's
+// deferred balance check, 0002's append-only/truncate rejection, 0003's
+// same-transaction-posting check). None come from a declarative pgTable()
+// — drizzle-kit has no way to diff a trigger — so nothing but these
+// migrations (and this assertion) knows they should exist, or should stop
+// existing on the way down.
+const EXPECTED_FUNCTIONS = [
+  'check_posting_balance',
+  'reject_ledger_mutation',
+  'check_posting_is_current_transaction',
+].sort(byName)
 
 const EXPECTED_ENUM_TYPES = ['ledger_account_kind', 'link_status', 'posting_kind', 'user_role'].sort(byName)
 
