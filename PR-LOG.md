@@ -9,3 +9,4 @@ here. Read top to bottom to follow how the implementation was built.
 | 2 | X1 | packages/contracts — domain types, Zod schemas, money, codes, status | https://github.com/devTherapy/kobolink/pull/3 | 2026-09-11 |
 | 3 | B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, /api/health | https://github.com/devTherapy/kobolink/pull/6 | 2026-09-11 |
 | 4 | F0 | Next.js app, design tokens, MSW harness, RTL setup | https://github.com/devTherapy/kobolink/pull/5 | 2026-09-11 |
+| 5 | B1 | Schema + migrations, down-migration mechanism, seed | https://github.com/devTherapy/kobolink/pull/7 | 2026-09-11 |
