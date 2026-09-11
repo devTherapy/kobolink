@@ -25,7 +25,9 @@ describe('buildAasa', () => {
   })
 
   it('serialises to JSON Apple will accept', () => {
-    expect(() => JSON.parse(JSON.stringify(aasa))).not.toThrow()
+    expect(() => {
+      JSON.parse(JSON.stringify(aasa))
+    }).not.toThrow()
   })
 })
 

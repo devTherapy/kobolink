@@ -18,7 +18,14 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    // TypeScript's own "**/*" include globs silently skip dot-directories
+    // (https://www.typescriptlang.org/tsconfig#include) unless a pattern
+    // names them explicitly — the exact ".well-known trap" this repo's docs
+    // warn about, but in tsc/ESLint's project service rather than a host's
+    // deploy step. Without this line `tsc --noEmit` reports success having
+    // silently never looked at the route handlers under src/app/.well-known.
+    "src/app/.well-known/**/*.ts"
   ],
   "exclude": ["node_modules", ".next", "dist"]
 }

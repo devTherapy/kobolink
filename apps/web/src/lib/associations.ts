@@ -1,3 +1,5 @@
+import { CLAIMED_PATH_PATTERN } from '@kobolink/contracts'
+
 /**
  * The two association documents that make a URL open a native app.
  *
@@ -9,8 +11,11 @@
  *     working perfectly in local dev.
  */
 
-/** The path patterns the mobile apps are allowed to claim. */
-export const CLAIMED_PATH = '/l/*'
+/**
+ * The path pattern the mobile apps are allowed to claim — the single URL
+ * contract in `packages/contracts`, not a re-declared literal.
+ */
+export const CLAIMED_PATH = CLAIMED_PATH_PATTERN
 
 export interface AasaOptions {
   /** "<TEAM_ID>.<bundle id>", e.g. ABCDE12345.com.folusayo.kobolink */
