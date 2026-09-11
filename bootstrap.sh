@@ -35,22 +35,10 @@ fi
 
 if ! git remote get-url origin >/dev/null 2>&1; then
   say "Creating the GitHub repository"
-  gh repo create kobolink --private --source=. --push
+  gh repo create kobolink --public --source=. --push
 else
   say "Remote already configured: $(git remote get-url origin)"
 fi
-
-say "Enabling branch protection on main"
-owner_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api -X PUT "repos/$owner_repo/branches/main/protection" \
-  -H "Accept: application/vnd.github+json" \
-  -f 'required_status_checks[strict]=true' \
-  -F 'required_status_checks[contexts][]=' \
-  -F 'enforce_admins=false' \
-  -F 'required_pull_request_reviews=' \
-  -F 'restrictions=' >/dev/null 2>&1 \
-  && say "Branch protection on: main is PR-only" \
-  || warn "Could not set branch protection (private repos need a paid plan). The commit hook still blocks direct commits to main."
 
 cat <<'MSG'
 
