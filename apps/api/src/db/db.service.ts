@@ -19,7 +19,22 @@ export class DbService implements OnModuleDestroy {
   readonly db: Database
 
   constructor(config: ConfigService) {
-    this.pool = new Pool({ connectionString: config.getOrThrow<string>('DATABASE_URL') })
+    this.pool = new Pool({
+      connectionString: config.getOrThrow<string>('DATABASE_URL'),
+      // Fail fast against a blackholed host instead of hanging the request
+      // (and the process) indefinitely.
+      connectionTimeoutMillis: 5_000,
+      // Applied server-side to every query on connections from this pool.
+      statement_timeout: 5_000,
+      // Client-side backstop for the case the server itself never answers.
+      query_timeout: 5_000,
+    })
+    // A pooled client's socket can error while idle (a Postgres restart, a
+    // failover, an idle-connection reset). `pg` re-emits that on the pool;
+    // with no listener it is an uncaught error that crashes the process.
+    this.pool.on('error', (error: Error) => {
+      this.logger.error(`idle client error: ${error.message}`, error.stack)
+    })
     this.db = drizzle(this.pool, { schema })
   }
 

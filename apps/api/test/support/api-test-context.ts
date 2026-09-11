@@ -10,15 +10,18 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool } from 'pg'
 import supertest, { type Agent } from 'supertest'
 import { AppModule } from '../../src/app.module.js'
-import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter.js'
+import { configureApp } from '../../src/configure-app.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 /**
  * `drizzle-kit generate` (config: `../../drizzle.config.ts`) writes here.
- * B0 ships with nothing to generate — there is no table yet, only the
- * wiring — so the folder does not exist until B1 adds the domain schema.
- * `applyMigrations` below treats that as "nothing to apply" rather than an
- * error, so this harness needs no changes once B1 lands.
+ * It is committed — currently as a valid *empty* migration set
+ * (`drizzle/meta/_journal.json` with zero entries), since B0 has no domain
+ * schema yet, only the wiring. `applyMigrations` below still guards with
+ * `existsSync` for robustness (a clean checkout before the first
+ * `drizzle-kit generate` ever ran, or the folder deleted by hand) — it is
+ * not, and was never meant to be, "waiting for B1"; B1 lands real tables by
+ * adding entries to the same folder, with no change needed here.
  */
 const migrationsFolder = path.resolve(here, '../../drizzle')
 
@@ -42,8 +45,8 @@ async function applyMigrations(connectionString: string): Promise<void> {
 
 /**
  * Starts one real Postgres container, applies whatever migrations exist,
- * boots the full Nest app against it (the same `AppModule`, filters and
- * prefix `main.ts` uses), and hands back a Supertest agent. Call
+ * boots the full Nest app against it (the same `AppModule` and
+ * `configureApp` `main.ts` uses), and hands back a Supertest agent. Call
  * `teardown()` from `afterAll` so the container always stops, pass or fail.
  *
  * One container per call — call this once per test *file* (`beforeAll`), not
@@ -52,6 +55,7 @@ async function applyMigrations(connectionString: string): Promise<void> {
 export async function startApiTestContext(): Promise<ApiTestContext> {
   const container: StartedPostgreSqlContainer = await new PostgreSqlContainer('postgres:17-alpine').start()
   const connectionString = container.getConnectionUri()
+  let app: INestApplication | undefined
 
   try {
     await applyMigrations(connectionString)
@@ -63,21 +67,26 @@ export async function startApiTestContext(): Promise<ApiTestContext> {
     process.env.DATABASE_URL = connectionString
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
-    const app = moduleRef.createNestApplication()
-    app.setGlobalPrefix('api')
-    app.useGlobalFilters(new HttpExceptionFilter())
+    app = moduleRef.createNestApplication()
+    configureApp(app)
     await app.init()
 
+    const startedApp = app
     return {
-      app,
-      request: supertest(app.getHttpServer() as Server),
+      app: startedApp,
+      request: supertest(startedApp.getHttpServer() as Server),
       connectionString,
       teardown: async () => {
-        await app.close()
+        await startedApp.close()
         await container.stop()
       },
     }
   } catch (error) {
+    // `Test.createTestingModule(...).compile()` already instantiates every
+    // provider (DbService's constructor — and its `pg.Pool` — included), so
+    // a failure in `app.init()` after that still leaves a real pool open
+    // unless it is closed here too, not just the container stopped.
+    if (app !== undefined) await app.close()
     await container.stop()
     throw error
   }

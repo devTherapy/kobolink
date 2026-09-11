@@ -16,5 +16,11 @@ export default defineConfig({
   test: {
     include: ['src/**/*.spec.ts'],
     environment: 'node',
+    // Explicit rather than relying on some other import incidentally
+    // side-loading it first: `Reflect.getMetadata`/`defineMetadata` do not
+    // exist on the platform `Reflect` object at all until this package
+    // patches it in, and swc's decorator-metadata output calls them
+    // directly, the same as `tsc`'s does.
+    setupFiles: ['reflect-metadata'],
   },
 })

@@ -1,3 +1,5 @@
+import { ServiceUnavailableException } from '@nestjs/common'
+import { PATH_METADATA } from '@nestjs/common/constants'
 import { describe, expect, it, vi } from 'vitest'
 import { API } from '@kobolink/contracts'
 import { HealthController } from './health.controller.js'
@@ -12,14 +14,17 @@ describe('HealthController', () => {
     expect(ping).toHaveBeenCalledOnce()
   })
 
-  it('propagates a database failure instead of answering ok', async () => {
+  it('answers 503 (not a bare 500) when the database round-trip fails', async () => {
     const ping = vi.fn<DbService['ping']>().mockRejectedValue(new Error('connection refused'))
     const controller = new HealthController({ ping } as unknown as DbService)
 
-    await expect(controller.check()).rejects.toThrow('connection refused')
+    await expect(controller.check()).rejects.toBeInstanceOf(ServiceUnavailableException)
   })
 
-  it('is mounted at the path the contract names, once the global /api prefix is applied', () => {
-    expect(`/api/health`).toBe(API.health)
+  it('is actually mounted at the path the contract names — reads the route metadata off the class, so a change to either side breaks this', () => {
+    // @Get() on the method contributes '' (empty); the full path is the
+    // global prefix set in main.ts ('api') plus @Controller('health')'s path.
+    const controllerPath = Reflect.getMetadata(PATH_METADATA, HealthController) as string
+    expect(`/api/${controllerPath}`).toBe(API.health)
   })
 })
