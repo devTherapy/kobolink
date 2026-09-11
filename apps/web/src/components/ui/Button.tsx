@@ -1,8 +1,15 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from 'react'
+import { useId } from 'react'
 import { cn } from './cn'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
+/** Which page surface the button sits on, so the error ring's `ring-offset`
+ * colour matches instead of always assuming `--color-ground`. A literal
+ * union (not an arbitrary CSS-variable prop) because Tailwind's build-time
+ * scanner needs the complete class name present in source — a class string
+ * assembled at runtime from an interpolated variable never gets generated. */
+export type ButtonSurface = 'ground' | 'surface'
 
 /**
  * `loading` and `error` are mutually exclusive outcomes of the same async
@@ -28,11 +35,26 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
   lg: 'h-12 px-5 text-[16px]',
 }
 
+const RING_OFFSET_CLASSES: Record<ButtonSurface, string> = {
+  ground: 'ring-offset-(--color-ground)',
+  surface: 'ring-offset-(--color-surface)',
+}
+
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant
   size?: ButtonSize
   /** Defaults to `'idle'`. See the type doc above for why this isn't two booleans. */
   status?: ButtonStatus
+  /** Defaults to `'ground'`. Set to `'surface'` for a button on a white card/panel. */
+  surface?: ButtonSurface
+  /**
+   * What failed, announced via `aria-describedby` — `status="error"` is
+   * otherwise a colour-only ring, invisible to a screen reader. Defaults to
+   * a generic message so the error state is never silent even if the caller
+   * doesn't pass one; passing a specific one (e.g. "Payment failed — no
+   * charge was made") is strongly preferred.
+   */
+  errorMessage?: string
   children: ReactNode
 }
 
@@ -41,51 +63,86 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * default (base classes) · hover (`hover:`) · focus (`focus-visible:`,
  * matches the global ring token) · active (`active:`) · disabled (native
  * `disabled` attribute — blocks clicks and assistive tech for free) ·
- * loading (`status="loading"` → `aria-busy`, `data-loading`, inert) · error
- * (`status="error"` → `data-error`, a danger-toned ring the caller clears on
- * the next attempt).
+ * loading (`aria-disabled` + `aria-busy`, NOT native `disabled` — a natively
+ * disabled element can't hold focus, so a button disabled out from under a
+ * mid-click keyboard user drops focus to `<body>`; clicks are blocked by a
+ * JS guard instead, and the button stays real, focusable, and Tab-reachable)
+ * · error (`status="error"` → `data-error`, a danger-toned ring PLUS
+ * `aria-describedby` naming what failed — a ring alone conveys nothing to
+ * assistive tech or a colour-blind user).
  */
 export function Button({
   variant = 'primary',
   size = 'md',
   status = 'idle',
+  surface = 'ground',
   type = 'button',
   disabled,
+  errorMessage,
   className,
   children,
+  onClick,
   ...rest
 }: ButtonProps) {
   const isLoading = status === 'loading'
   const isError = status === 'error'
-  const isDisabled = disabled === true || isLoading
+  const errorId = useId()
+
+  function handleClick(event: MouseEvent<HTMLButtonElement>) {
+    if (isLoading) {
+      event.preventDefault()
+      return
+    }
+    onClick?.(event)
+  }
 
   return (
-    <button
-      type={type}
-      disabled={isDisabled}
-      aria-busy={isLoading || undefined}
-      data-loading={isLoading || undefined}
-      data-error={isError || undefined}
-      className={cn(
-        'relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-(--radius-input) border font-medium transition-colors',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)',
-        'disabled:pointer-events-none disabled:opacity-50',
-        isError && 'ring-2 ring-(--color-danger) ring-offset-2 ring-offset-(--color-ground)',
-        VARIANT_CLASSES[variant],
-        SIZE_CLASSES[size],
-        className,
-      )}
-      {...rest}
-    >
-      {/* The label stays in the layout (just hidden) while loading, so the
-          button doesn't change width when the spinner appears. */}
-      <span className={cn('inline-flex items-center gap-2', isLoading && 'invisible')}>{children}</span>
-      {isLoading ? (
-        <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-          <Spinner />
+    <>
+      <button
+        type={type}
+        disabled={disabled}
+        aria-disabled={isLoading || undefined}
+        aria-busy={isLoading || undefined}
+        aria-describedby={isError ? errorId : undefined}
+        data-loading={isLoading || undefined}
+        data-error={isError || undefined}
+        onClick={handleClick}
+        className={cn(
+          'relative inline-flex touch-manipulation select-none items-center justify-center gap-2 whitespace-nowrap rounded-(--radius-input) border font-medium transition-colors',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)',
+          'disabled:pointer-events-none disabled:opacity-50',
+          isLoading && 'pointer-events-none cursor-wait',
+          isError && cn('ring-2 ring-(--color-danger) ring-offset-2', RING_OFFSET_CLASSES[surface]),
+          VARIANT_CLASSES[variant],
+          SIZE_CLASSES[size],
+          className,
+        )}
+        {...rest}
+      >
+        {/* The label stays in the layout and in the accessibility tree while
+            loading — `opacity-0`, not `invisible` (`visibility:hidden`),
+            which would drop it, and the button's own accessible name,
+            entirely. Only its *visual* presence is hidden, so the button
+            doesn't change width when the spinner appears. */}
+        <span className={cn('inline-flex items-center gap-2', isLoading && 'opacity-0')}>{children}</span>
+        {isLoading ? (
+          <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+            <Spinner />
+          </span>
+        ) : null}
+      </button>
+      {/* Rendered as the button's *sibling*, not its child: a `sr-only`
+          element is still in the accessibility tree (unlike `aria-hidden`),
+          so nesting it inside the button would merge its text into the
+          button's accessible NAME ("RetryPayment failed…"), not just its
+          description. `aria-describedby` can point anywhere in the
+          document, so this stays out of the name computation entirely. */}
+      {isError ? (
+        <span id={errorId} className="sr-only">
+          {errorMessage ?? 'This action failed. Try again.'}
         </span>
       ) : null}
-    </button>
+    </>
   )
 }
 

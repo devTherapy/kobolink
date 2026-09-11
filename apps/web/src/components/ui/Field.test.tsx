@@ -55,11 +55,11 @@ describe('Field', () => {
     expect(input.className).toMatch(/focus-visible:outline/)
   })
 
-  it('carries hover and active classes for their CSS states', () => {
+  it('carries the exact hover and active border classes for their CSS states', () => {
     render(<TextField />)
     const input = screen.getByLabelText('Title')
-    expect(input.className).toMatch(/hover:/)
-    expect(input.className).toMatch(/active:/)
+    expect(input.className).toMatch(/hover:border-\(--color-ink-2\)/)
+    expect(input.className).toMatch(/active:border-\(--color-brand\)/)
   })
 
   it('blocks typing and reports disabled (disabled state)', async () => {
@@ -73,31 +73,37 @@ describe('Field', () => {
     expect(input).toHaveValue('')
   })
 
-  it('blocks typing and reports busy while loading (loading state)', async () => {
+  it('blocks typing and reports busy while loading, on the input itself (loading state)', async () => {
     const user = userEvent.setup()
     render(<TextField loading />)
 
     const input = screen.getByLabelText('Title')
     expect(input).toBeDisabled()
     expect(input).toHaveAttribute('data-loading', 'true')
+    expect(input).toHaveAttribute('aria-busy', 'true')
 
     await user.type(input, 'x')
     expect(input).toHaveValue('')
   })
 
-  it('gives loading a skeleton-shaped look distinct from plain disabled', () => {
+  it('gives loading a visible skeleton shape distinct from plain disabled, not a transparent-on-transparent fill', () => {
     render(<TextField disabled />)
     // Only `data-loading` (not `:disabled`) drives the skeleton look, so a
     // merely-disabled field — nothing in flight — never gets it.
     expect(screen.getByLabelText('Title')).not.toHaveAttribute('data-loading')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
 
     render(<TextField loading />)
     const loading = screen.getAllByLabelText('Title').at(-1)
     expect(loading).toHaveAttribute('data-loading', 'true')
-    // Skeleton-shaped, not just dimmed: a pulsing muted fill with the value
-    // hidden, wired via CSS off that attribute.
-    expect(loading?.className).toMatch(/data-loading:.*animate-pulse/)
+    // The input's own (possibly stale) text is hidden…
     expect(loading?.className).toMatch(/data-loading:text-transparent/)
+    // …but a real, visible, pulsing skeleton line is drawn over it — not a
+    // fill-on-fill trick that reads as a blank rectangle.
+    const skeleton = screen.getByRole('status')
+    expect(skeleton).toHaveAttribute('aria-busy', 'true')
+    expect(skeleton.className).toMatch(/animate-pulse/)
+    expect(skeleton.className).toMatch(/color-skeleton-fill/)
   })
 
   it('wires aria-invalid and aria-describedby to the inline error (error state)', () => {
@@ -112,6 +118,27 @@ describe('Field', () => {
     const error = screen.getByRole('alert')
     expect(error).toHaveTextContent('Title is required')
     expect(describedBy).toContain(error.id)
+  })
+
+  it('never emits hover/active classes alongside the error border, so pointer states cannot cover it (error state)', () => {
+    // jsdom doesn't apply `:hover`/`:active` pseudo-classes, so the cascade
+    // itself can't be exercised here — Tailwind emits variant utilities
+    // after plain ones, so `hover:border-ink-2`/`active:border-brand` would
+    // outrank a same-specificity `border-danger` the instant the pointer
+    // entered the field. The fix is to never emit those classes at all on
+    // an invalid field, which this asserts directly on the class list.
+    render(<TextField error="Title is required" />)
+    const invalid = screen.getByLabelText('Title', { exact: false })
+    expect(invalid.className).toMatch(/border-\(--color-danger\)/)
+    expect(invalid.className).not.toMatch(/hover:border/)
+    expect(invalid.className).not.toMatch(/active:border/)
+
+    // A valid field keeps both, proving this is error-gated, not removed
+    // outright.
+    render(<TextField />)
+    const valid = screen.getAllByLabelText('Title', { exact: false }).at(-1)!
+    expect(valid.className).toMatch(/hover:border/)
+    expect(valid.className).toMatch(/active:border/)
   })
 
   it('prefers the error over the hint when both are given, so aria-describedby never dangles', () => {
@@ -186,6 +213,37 @@ describe('Field (amount variant)', () => {
 
     expect(input).toHaveValue('abc')
     expect(onChangeKobo).toHaveBeenLastCalledWith(null)
+  })
+
+  it('does not wipe an unparseable intermediate value ("10.") when the parent ignores null commits', async () => {
+    const user = userEvent.setup()
+
+    // A caller that only commits *validated* amounts — e.g. validating on
+    // submit, not every keystroke — never updates its own state (and so
+    // never changes the `valueKobo` prop) on an intermediate `null`.
+    function IgnoresNullHarness() {
+      const [kobo, setKobo] = useState<number | null>(null)
+      return (
+        <Field
+          variant="amount"
+          label="Amount"
+          valueKobo={kobo}
+          onChangeKobo={(next) => {
+            if (next !== null) setKobo(next)
+          }}
+        />
+      )
+    }
+    render(<IgnoresNullHarness />)
+
+    const input = screen.getByLabelText('Amount')
+    await user.type(input, '10.')
+
+    // "10" committed (kobo=1000); the trailing "." doesn't parse, so the
+    // parent's state — and the `valueKobo` prop it echoes back — never
+    // moves past 1000. The field must not "correct" its own live text back
+    // to "10.00" just because the prop didn't follow the latest keystroke.
+    expect(input).toHaveValue('10.')
   })
 
   it('resyncs the displayed text when valueKobo changes from outside the field', () => {

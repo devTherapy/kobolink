@@ -1,8 +1,19 @@
 import type { ReactNode } from 'react'
+import type { displayStatus } from '@kobolink/contracts'
 import { cn } from './cn'
 
 export type PillTone = 'success' | 'warning' | 'danger' | 'neutral'
-export type PillStatus = 'Active' | 'Disabled' | 'Expired' | 'Paid' | 'Pending' | 'Failed'
+/**
+ * The four link statuses (`Active`/`Disabled`/`Expired`/`Paid`) are derived
+ * from contracts' `displayStatus` return type, not retyped here — a status
+ * `displayStatus` stops returning (or a new one it starts returning) is then
+ * a type error at this line, not a badge silently missing its tone.
+ * `Pending`/`Failed` are payment-row statuses with no Title-Case contracts
+ * export to derive from (`PaymentStatus` is the lowercase wire enum used for
+ * the API, a different shape for a different purpose); they stay
+ * `Pill`-owned until a display-status helper exists for payments too.
+ */
+export type PillStatus = ReturnType<typeof displayStatus> | 'Pending' | 'Failed'
 
 const TONE_CLASSES: Record<PillTone, string> = {
   success: 'bg-(--color-success-tint) text-(--color-success)',

@@ -9,14 +9,14 @@ describe('Pill', () => {
     expect(pill.className).toMatch(/color-danger/)
   })
 
-  it('renders every tone without throwing', () => {
-    const tones = ['success', 'warning', 'danger', 'neutral'] as const
-    for (const tone of tones) {
-      render(<Pill tone={tone}>{tone}</Pill>)
-    }
-    for (const tone of tones) {
-      expect(screen.getByText(tone)).toBeInTheDocument()
-    }
+  it.each([
+    ['success', 'color-success'],
+    ['warning', 'color-warning'],
+    ['danger', 'color-danger'],
+    ['neutral', 'color-ink-2'],
+  ] as const)('gives the %s tone a distinguishing %s class, not just a differently-labelled pill', (tone, expectedClassFragment) => {
+    render(<Pill tone={tone}>{tone}</Pill>)
+    expect(screen.getByText(tone).className).toMatch(new RegExp(expectedClassFragment))
   })
 })
 

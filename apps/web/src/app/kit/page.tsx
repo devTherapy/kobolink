@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { formatNaira } from '@kobolink/contracts'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -17,14 +18,16 @@ const SECTION_LABEL = 'text-[13px] font-medium text-(--color-ink-3)'
 
 // Static demo fixtures — hoisted to module scope rather than rebuilt on
 // every render of `KitPage` (`rendering-hoist-jsx`/`js-cache-function-results`
-// spirit: nothing here depends on props or request data).
-const TABLE_COLUMNS: TableColumn<{ id: string; title: string; amount: string }>[] = [
+// spirit: nothing here depends on props or request data). Amounts are kobo,
+// formatted via `formatNaira` in `render` — never a pre-formatted string —
+// so the showcase demonstrates the real money rule, not a shortcut around it.
+const TABLE_COLUMNS: TableColumn<{ id: string; title: string; amountKobo: number }>[] = [
   { key: 'title', header: 'Title', render: (row) => row.title },
-  { key: 'amount', header: 'Amount', align: 'right', numeric: true, render: (row) => row.amount },
+  { key: 'amount', header: 'Amount', align: 'right', numeric: true, render: (row) => formatNaira(row.amountKobo) },
 ]
 const TABLE_ROWS = [
-  { id: '1', title: 'Ankara Two-Piece Set', amount: '₦18,500' },
-  { id: '2', title: 'Aso-oke Gele', amount: '₦9,500' },
+  { id: '1', title: 'Ankara Two-Piece Set', amountKobo: 1_850_000 },
+  { id: '2', title: 'Aso-oke Gele', amountKobo: 950_000 },
 ]
 const STATUSES: PillStatus[] = ['Active', 'Disabled', 'Expired', 'Paid', 'Pending', 'Failed']
 
@@ -161,7 +164,7 @@ export default function KitPage() {
           <Card>
             <p className={SECTION_LABEL}>Adebayo Stores</p>
             <h3 className="text-[19px] font-semibold text-(--color-ink)">Ankara Two-Piece Set</h3>
-            <p className="tabular mt-1 text-[23px] font-semibold text-(--color-ink)">₦18,500</p>
+            <p className="tabular mt-1 text-[23px] font-semibold text-(--color-ink)">{formatNaira(1_850_000)}</p>
           </Card>
           <Card as="article" padding="none">
             <div className="p-4">
@@ -218,7 +221,11 @@ export default function KitPage() {
                 rows={[]}
                 rowKey={(row) => row.id}
                 emptyState={
+                  // h3: nested under this page's own "Table" <h2>, so the
+                  // demo's heading doesn't sit at the same level as its
+                  // section label.
                   <EmptyState
+                    as="h3"
                     icon={<LinkIcon />}
                     title="No links yet"
                     body="Create your first payment link to see it here."
@@ -232,7 +239,10 @@ export default function KitPage() {
 
       <Section title="EmptyState">
         <Card padding="none">
+          {/* h3 here too, for the same reason as the Table section's empty
+              slot above — nested under this page's own "EmptyState" <h2>. */}
           <EmptyState
+            as="h3"
             icon={<LinkIcon />}
             title="No links yet"
             body="Create your first payment link to start getting paid."

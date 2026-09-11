@@ -12,6 +12,13 @@ export interface EmptyStateProps {
    * loading, or error state; the caller owns that entirely.
    */
   action?: ReactNode
+  /**
+   * Heading level for `title`, so it fits the surrounding page's outline
+   * instead of always claiming `h3` — a fixed level was wrong for a
+   * component meant to be dropped anywhere from a dashboard's own top-level
+   * empty area (`h2`, this default) to a spot nested a level deeper.
+   */
+  as?: 'h2' | 'h3' | 'h4'
   className?: string
 }
 
@@ -23,7 +30,7 @@ export interface EmptyStateProps {
  * its own. Whatever is passed as `action` (a Button) carries its own full
  * seven-state set independently of this wrapper.
  */
-export function EmptyState({ icon, title, body, action, className }: EmptyStateProps) {
+export function EmptyState({ icon, title, body, action, as: Heading = 'h2', className }: EmptyStateProps) {
   return (
     <div className={cn('flex flex-col items-center gap-3 px-6 py-12 text-center', className)}>
       {icon ? (
@@ -39,7 +46,7 @@ export function EmptyState({ icon, title, body, action, className }: EmptyStateP
         </div>
       ) : null}
       <div className="flex flex-col gap-1">
-        <h3 className="text-[16px] font-semibold text-(--color-ink)">{title}</h3>
+        <Heading className="text-[16px] font-semibold text-(--color-ink)">{title}</Heading>
         {body ? <p className="max-w-sm text-[14px] text-(--color-ink-2)">{body}</p> : null}
       </div>
       {action ? <div className="mt-1">{action}</div> : null}

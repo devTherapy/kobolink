@@ -1,6 +1,9 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import { cn } from './cn'
 import { Skeleton } from './Skeleton'
+
+/** Matches any element that already owns its own click/keyboard activation. */
+const INTERACTIVE_DESCENDANT_SELECTOR = 'button, a, input, select, textarea, [role="button"], [role="link"]'
 
 export interface TableColumn<T> {
   key: string
@@ -15,7 +18,14 @@ export interface TableProps<T> {
   columns: TableColumn<T>[]
   rows: T[]
   rowKey: (row: T) => string
-  /** Sticky header, for a table taller than its scroll container. */
+  /**
+   * Sticky header, for a table taller than its scroll container. Has no
+   * effect while `Table` is wrapped by its own `overflow-x-auto` div and
+   * that div's height is unconstrained (the default) — the container never
+   * scrolls vertically, so `position: sticky` never has anything to stick
+   * against. Give the wrapping `className` a bounded height
+   * (e.g. `max-h-96 overflow-y-auto`) for this to do anything.
+   */
   sticky?: boolean
   loading?: boolean
   loadingRowCount?: number
@@ -88,7 +98,7 @@ function renderBody<T>({
         key={rowKey(row)}
         row={row}
         columns={columns}
-        onRowClick={onRowClick && !disabled ? onRowClick : undefined}
+        onRowClick={onRowClick}
         disabled={disabled}
       />
     )
@@ -165,55 +175,74 @@ interface TableRowProps<T> {
 }
 
 /**
- * A `<tr>` can't be a `<button>`, so a clickable row trades table-row
- * semantics for `role="button"` plus keyboard handling — the same tradeoff
- * GitHub's and Linear's own row-as-link tables make. `aria-disabled` (not
- * the native `disabled` attribute, which `<tr>` doesn't support) plus
- * dropping the click handler blocks the disabled case the same way a real
- * disabled control would. A row with no `onRowClick` renders as a plain,
- * non-interactive row: no hover, focus, active or disabled styling, because
- * none of those states apply to something nothing can activate.
+ * `role="button"` on the `<tr>` was tried and reverted: it replaces the row's
+ * entire accessible role, so a screen reader stops presenting `cell`
+ * children at all, and a real control rendered inside one of those cells
+ * (F5 puts an actions menu in a payments row) becomes a button nested inside
+ * a button — invalid, and dropped from the accessibility tree by most
+ * screen readers.
+ *
+ * Instead the row stays a plain `<tr>`/`<td>` (real `row`/`cell` roles,
+ * verified in the test below), and the row's primary action is a real
+ * `<button>` occupying the first cell — keyboard/screen-reader users tab to
+ * and activate *that*, the same way a table with a "linkified" first column
+ * works elsewhere. The `<tr>` keeps a plain `onClick` only as a mouse
+ * convenience ("click anywhere in the row"), guarded so a click that
+ * originated inside any interactive descendant (that first-cell button, or
+ * a future action in another cell) does not also fire the row handler —
+ * otherwise every click on the primary button would activate `onRowClick`
+ * twice, once via the button and once via bubbling to the row.
  */
 function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
-  const clickable = Boolean(onRowClick)
+  const clickable = Boolean(onRowClick) && !disabled
 
-  function activate() {
+  function handleRowClick(event: MouseEvent<HTMLTableRowElement>) {
+    const target = event.target as HTMLElement
+    if (target.closest(INTERACTIVE_DESCENDANT_SELECTOR)) return
     onRowClick?.(row)
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLTableRowElement>) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      activate()
-    }
   }
 
   return (
     <tr
-      tabIndex={clickable ? 0 : undefined}
-      role={clickable ? 'button' : undefined}
-      aria-disabled={disabled || undefined}
-      onClick={clickable ? activate : undefined}
-      onKeyDown={clickable ? handleKeyDown : undefined}
+      onClick={clickable ? handleRowClick : undefined}
       className={cn(
         'border-b border-(--color-border-soft) last:border-0',
-        clickable &&
-          'touch-manipulation cursor-pointer hover:bg-(--color-border-soft) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--color-brand) active:bg-(--color-border)',
-        disabled && 'cursor-not-allowed opacity-50',
+        clickable && 'hover:bg-(--color-border-soft) active:bg-(--color-border)',
+        disabled && 'opacity-50',
       )}
     >
-      {columns.map((column) => (
-        <td
-          key={column.key}
-          className={cn(
-            'px-4 py-3 text-(--color-ink)',
-            column.numeric && 'tabular',
-            column.align === 'right' ? 'text-right' : 'text-left',
-          )}
-        >
-          {column.render(row)}
-        </td>
-      ))}
+      {columns.map((column, index) => {
+        const isPrimaryAction = index === 0 && Boolean(onRowClick)
+        return (
+          <td
+            key={column.key}
+            className={cn(
+              'min-w-0 break-words text-(--color-ink)',
+              isPrimaryAction ? 'p-0' : 'px-4 py-3',
+              column.numeric && 'tabular',
+              column.align === 'right' ? 'text-right' : 'text-left',
+            )}
+          >
+            {isPrimaryAction ? (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onRowClick?.(row)}
+                className={cn(
+                  'w-full touch-manipulation px-4 py-3 text-left outline-none',
+                  'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--color-brand)',
+                  'disabled:cursor-not-allowed',
+                  !disabled && 'cursor-pointer',
+                )}
+              >
+                {column.render(row)}
+              </button>
+            ) : (
+              column.render(row)
+            )}
+          </td>
+        )
+      })}
     </tr>
   )
 }

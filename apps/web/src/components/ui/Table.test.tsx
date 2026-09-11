@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { formatNaira } from '@kobolink/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import type { TableColumn } from './Table'
 import { Table } from './Table'
@@ -15,9 +16,11 @@ const rows: Row[] = [
   { id: 'b', title: 'Aso-oke gele', amountKobo: 950_000 },
 ]
 
+// `formatNaira`, never a raw `₦${kobo}` template — kobo isn't naira, and a
+// bare template literal would print "₦1850000" for what is actually ₦18,500.
 const columns: TableColumn<Row>[] = [
   { key: 'title', header: 'Title', render: (row) => row.title },
-  { key: 'amount', header: 'Amount', align: 'right', numeric: true, render: (row) => `₦${row.amountKobo}` },
+  { key: 'amount', header: 'Amount', align: 'right', numeric: true, render: (row) => formatNaira(row.amountKobo) },
 ]
 
 describe('Table', () => {
@@ -32,7 +35,7 @@ describe('Table', () => {
 
   it('marks numeric columns tabular', () => {
     render(<Table columns={columns} rows={rows} rowKey={(row) => row.id} emptyState="No rows" />)
-    const cell = screen.getByText('₦1850000')
+    const cell = screen.getByText(formatNaira(1_850_000))
     expect(cell.className).toMatch(/tabular/)
   })
 
@@ -86,31 +89,54 @@ describe('Table', () => {
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
 
-  it('makes a row activatable by click and by keyboard when onRowClick is given (hover/focus/active state)', async () => {
+  it('makes the first cell a real button when onRowClick is given, activatable by click and keyboard (hover/focus/active state)', async () => {
     const user = userEvent.setup()
     const onRowClick = vi.fn()
     render(<Table columns={columns} rows={rows} rowKey={(row) => row.id} emptyState="No rows" onRowClick={onRowClick} />)
 
-    const firstRow = screen.getByText('Ankara set').closest('tr')
-    expect(firstRow).toHaveAttribute('role', 'button')
-    expect(firstRow?.className).toMatch(/hover:/)
-    expect(firstRow?.className).toMatch(/focus-visible:outline/)
-    expect(firstRow?.className).toMatch(/active:/)
+    const firstRow = screen.getByText('Ankara set').closest('tr')!
+    // Row semantics stay real: `row`/`cell` roles are exactly what a plain
+    // <tr>/<td> already provide (implicit, no `role` attribute needed), not
+    // something the click handler removes.
+    expect(screen.getAllByRole('row')).toContain(firstRow)
+    expect(within(firstRow).getAllByRole('cell')).toHaveLength(columns.length)
+    expect(firstRow.className).toMatch(/hover:bg-\(--color-border-soft\)/)
+    expect(firstRow.className).toMatch(/active:bg-\(--color-border\)/)
 
-    await user.click(within(firstRow!).getByText('Ankara set'))
+    const actionButton = within(firstRow).getByRole('button', { name: 'Ankara set' })
+    expect(actionButton.className).toMatch(/focus-visible:outline/)
+
+    await user.click(actionButton)
     expect(onRowClick).toHaveBeenCalledWith(rows[0])
 
-    firstRow?.focus()
-    expect(firstRow).toHaveFocus()
+    actionButton.focus()
+    expect(actionButton).toHaveFocus()
     await user.keyboard('{Enter}')
     expect(onRowClick).toHaveBeenCalledTimes(2)
   })
 
+  it('does not double-fire when a nested interactive element inside a row handles its own click', async () => {
+    const user = userEvent.setup()
+    const onRowClick = vi.fn()
+    const onAction = vi.fn()
+    const columnsWithAction: TableColumn<Row>[] = [
+      ...columns,
+      { key: 'actions', header: 'Actions', render: () => <button type="button" onClick={onAction}>Copy</button> },
+    ]
+    render(
+      <Table columns={columnsWithAction} rows={rows} rowKey={(row) => row.id} emptyState="No rows" onRowClick={onRowClick} />,
+    )
+
+    const firstRow = screen.getByText('Ankara set').closest('tr')!
+    await user.click(within(firstRow).getByRole('button', { name: 'Copy' }))
+    expect(onAction).toHaveBeenCalledTimes(1)
+    expect(onRowClick).not.toHaveBeenCalled()
+  })
+
   it('leaves a row with no onRowClick fully non-interactive', () => {
     render(<Table columns={columns} rows={rows} rowKey={(row) => row.id} emptyState="No rows" />)
-    const firstRow = screen.getByText('Ankara set').closest('tr')
-    expect(firstRow).not.toHaveAttribute('role')
-    expect(firstRow).not.toHaveAttribute('tabindex')
+    const firstRow = screen.getByText('Ankara set').closest('tr')!
+    expect(within(firstRow).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('blocks activation on a disabled row (disabled state)', async () => {
@@ -127,15 +153,15 @@ describe('Table', () => {
       />,
     )
 
-    const disabledRow = screen.getByText('Ankara set').closest('tr')
-    expect(disabledRow).toHaveAttribute('aria-disabled', 'true')
-    expect(disabledRow).not.toHaveAttribute('role')
+    const disabledButton = screen.getByRole('button', { name: 'Ankara set' })
+    expect(disabledButton).toBeDisabled()
 
-    await user.click(within(disabledRow!).getByText('Ankara set'))
+    await user.click(disabledButton)
     expect(onRowClick).not.toHaveBeenCalled()
 
-    const enabledRow = screen.getByText('Aso-oke gele').closest('tr')
-    await user.click(within(enabledRow!).getByText('Aso-oke gele'))
+    const enabledButton = screen.getByRole('button', { name: 'Aso-oke gele' })
+    expect(enabledButton).not.toBeDisabled()
+    await user.click(enabledButton)
     expect(onRowClick).toHaveBeenCalledWith(rows[1])
   })
 })

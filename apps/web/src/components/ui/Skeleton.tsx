@@ -10,7 +10,11 @@ export type SkeletonProps =
   | ({ shape: 'line'; width?: string } & SkeletonBaseProps)
   | ({ shape: 'table-row'; columns: number } & SkeletonBaseProps)
 
-const SHIMMER = 'motion-safe:animate-pulse rounded bg-(--color-border-soft)'
+// `--color-skeleton-fill` (not `--color-border-soft`, which is ~1.1:1 against
+// white/ground and reads as invisible): calibrated to clear the 3:1 WCAG
+// non-text-contrast floor on both surfaces (3.68:1 on white, 3.38:1 on
+// `--color-ground`), so the shape is legible even with motion disabled.
+const SHIMMER = 'motion-safe:animate-pulse rounded bg-(--color-skeleton-fill)'
 
 /**
  * Loading is a skeleton shaped like the content it stands in for, never a

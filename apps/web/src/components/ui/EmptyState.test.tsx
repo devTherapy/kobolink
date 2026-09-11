@@ -5,11 +5,17 @@ import { Button } from './Button'
 import { EmptyState } from './EmptyState'
 
 describe('EmptyState', () => {
-  it('renders a title that teaches what is missing', () => {
+  it('renders a title that teaches what is missing, as an h2 by default', () => {
     render(<EmptyState title="No links yet" body="Create your first payment link to get started." />)
 
-    expect(screen.getByRole('heading', { name: 'No links yet' })).toBeInTheDocument()
+    const heading = screen.getByRole('heading', { name: 'No links yet', level: 2 })
+    expect(heading).toBeInTheDocument()
     expect(screen.getByText('Create your first payment link to get started.')).toBeInTheDocument()
+  })
+
+  it('fits a deeper outline via the as prop, for a caller nesting it under its own heading', () => {
+    render(<EmptyState as="h3" title="No links yet" />)
+    expect(screen.getByRole('heading', { name: 'No links yet', level: 3 })).toBeInTheDocument()
   })
 
   it('renders a composed action that keeps its own full state set', async () => {

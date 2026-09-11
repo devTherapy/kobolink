@@ -21,26 +21,60 @@ export function TextFieldExample() {
     <>
       <Field
         label="Title"
+        name="title"
+        autoComplete="off"
         value={title}
         onChange={setTitle}
         hint="Shown to the payer"
-        placeholder="e.g. Ankara Two-Piece Set"
+        placeholder="e.g. Ankara Two-Piece Set…"
       />
-      <Field label="Required field" value={requiredValue} onChange={setRequiredValue} required />
-      <Field label="Disabled field" value={disabledValue} onChange={() => undefined} disabled />
-      <Field label="Loading field" value={loadingValue} onChange={setLoadingValue} loading hint="Fetching a default…" />
+      <Field
+        label="Required field"
+        name="required-field"
+        autoComplete="off"
+        value={requiredValue}
+        onChange={setRequiredValue}
+        required
+      />
+      <Field
+        label="Disabled field"
+        name="disabled-field"
+        autoComplete="off"
+        value={disabledValue}
+        onChange={() => undefined}
+        disabled
+      />
+      <Field
+        label="Loading field"
+        name="loading-field"
+        autoComplete="off"
+        value={loadingValue}
+        onChange={setLoadingValue}
+        loading
+        hint="Fetching a default…"
+      />
       <Field
         label="Email"
+        name="email"
         type="email"
         autoComplete="email"
         value={email}
         onChange={setEmail}
         error="Enter a valid email address."
       />
-      <Field variant="amount" label="Amount" valueKobo={amount} onChangeKobo={setAmount} />
+      <Field
+        variant="amount"
+        label="Amount"
+        name="amount"
+        autoComplete="off"
+        valueKobo={amount}
+        onChangeKobo={setAmount}
+      />
       <Field
         variant="amount"
         label="Amount (empty)"
+        name="amount-empty"
+        autoComplete="off"
         valueKobo={amountEmpty}
         onChangeKobo={setAmountEmpty}
         hint="Leave blank to let the payer choose"
