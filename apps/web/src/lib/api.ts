@@ -1,21 +1,28 @@
 import {
   API,
   DashboardStatsSchema,
+  IDEMPOTENCY_HEADER,
+  InitializeCheckoutResponseSchema,
   LinkCodeSchema,
   LinkListResponseSchema,
   MeResponseSchema,
   PaymentLinkSchema,
   PaymentListResponseSchema,
   PublicLinkResponseSchema,
+  VerifyCheckoutResponseSchema,
   isApiError,
   type ApiError,
   type DashboardStats,
+  type InitializeCheckoutRequest,
+  type InitializeCheckoutResponse,
   type LinkListResponse,
   type MeResponse,
   type PageQuery,
   type PaymentLink,
   type PaymentListResponse,
   type PublicLinkResponse,
+  type VerifyCheckoutRequest,
+  type VerifyCheckoutResponse,
 } from '@kobolink/contracts'
 import type { ZodType } from 'zod'
 
@@ -75,16 +82,27 @@ function requireValidLinkCode(code: string): void {
 }
 
 /**
- * The app's own origin, so `fetch` always receives an absolute URL —
- * required outside the browser (SSR, this file's callers under Vitest/Node).
- * `INTERNAL_ORIGIN` is a server-only escape hatch: F6's `/l/[code]` fetches
- * this client from a server component, where `window` does not exist and a
- * hardcoded `localhost:3000` would be wrong in every deployed environment.
- * Deployment must set it to wherever this Next.js process can reach itself.
+ * The origin `fetch` resolves every path against, so a caller (including
+ * this file's own SSR/server-component callers, where `window` does not
+ * exist) always issues an absolute URL.
+ *
+ * In the browser this is simply the page's own origin: `/api/*` there goes
+ * through `next.config.ts`'s rewrite to `apps/api`, which is what keeps
+ * cookies first-party and avoids a CORS story.
+ *
+ * On the server it is `API_ORIGIN` directly — the same variable
+ * `next.config.ts`'s rewrite already reads, not a second `INTERNAL_ORIGIN`
+ * self-origin. F6's `/l/[code]` calls this client from a server component at
+ * request time; resolving to this Next.js process's own origin there would
+ * mean a self-fetch back into the rewrite just to reach `apps/api` a hop
+ * later — extra latency, and a self-connection that is not guaranteed to
+ * even be reachable in every deployment shape (a serverless function cannot
+ * always fetch itself). Going straight to `API_ORIGIN` is both fewer hops
+ * and one less thing that can be wrong.
  */
 function origin(): string {
   if (typeof window !== 'undefined') return window.location.origin
-  return process.env.INTERNAL_ORIGIN ?? 'http://localhost:3000'
+  return process.env.API_ORIGIN ?? 'http://localhost:3001'
 }
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
@@ -158,9 +176,15 @@ export const client = {
       requireValidLinkCode(code)
       return await request<PaymentLink>(PaymentLinkSchema, API.links.item(code))
     },
+    // `cache: 'no-store'` — this is the call F6's server component makes at
+    // request time. README: "the API is the clock"; a link a merchant just
+    // disabled must never be masked by Next's fetch cache reusing a stale
+    // `payable` response for the next visitor of the same code.
     resolve: async (code: string) => {
       requireValidLinkCode(code)
-      return await request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code))
+      return await request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code), {
+        cache: 'no-store',
+      })
     },
     payments: async (code: string, query?: PageQuery) => {
       requireValidLinkCode(code)
@@ -171,5 +195,26 @@ export const client = {
   },
   dashboard: {
     stats: () => request<DashboardStats>(DashboardStatsSchema, API.dashboard.stats),
+  },
+  // Both endpoints are money-moving writes: every call carries its own
+  // caller-chosen `Idempotency-Key` (README: "a replayed key returns the
+  // original result, never posts twice"). F6's PayForm mints one key per
+  // logical attempt at each of these two calls — never one key reused across
+  // both — and reuses `verify`'s key argument (a fresh key, same `reference`)
+  // to re-check a reference after a transport error, which the mock's
+  // per-reference memo (not the idempotency-key memo) answers idempotently.
+  checkout: {
+    initialize: (body: InitializeCheckoutRequest, idempotencyKey: string) =>
+      request<InitializeCheckoutResponse>(InitializeCheckoutResponseSchema, API.checkout.initialize, {
+        method: 'POST',
+        body,
+        headers: { [IDEMPOTENCY_HEADER]: idempotencyKey },
+      }),
+    verify: (body: VerifyCheckoutRequest, idempotencyKey: string) =>
+      request<VerifyCheckoutResponse>(VerifyCheckoutResponseSchema, API.checkout.verify, {
+        method: 'POST',
+        body,
+        headers: { [IDEMPOTENCY_HEADER]: idempotencyKey },
+      }),
   },
 }
