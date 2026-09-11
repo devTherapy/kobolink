@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module.js'
 import { NotFoundModule } from './common/not-found.module.js'
 import { DbModule } from './db/db.module.js'
 import { HealthModule } from './health/health.module.js'
+import { LinksModule } from './links/links.module.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // `.env.local`/`.env` are documented in both `apps/api/.env.example` and
@@ -31,6 +32,7 @@ const repoRoot = path.resolve(here, '../../..')
     DbModule,
     HealthModule,
     AuthModule,
+    LinksModule,
     // Every real feature module goes above this line — NotFoundModule's
     // catch-all route must stay last so it never shadows a real one.
     NotFoundModule,
