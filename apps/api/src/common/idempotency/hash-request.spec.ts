@@ -37,4 +37,18 @@ describe('hashRequestBody', () => {
   it('produces a 64-character lowercase hex sha256 digest', () => {
     expect(hashRequestBody({ a: 1 })).toMatch(/^[0-9a-f]{64}$/)
   })
+
+  it('a missing top-level body does not throw, and hashes the same as an explicit null', () => {
+    expect(() => hashRequestBody(undefined)).not.toThrow()
+    expect(hashRequestBody(undefined)).toBe(hashRequestBody(null))
+  })
+
+  it('an undefined-valued key is dropped, matching JSON.stringify — not rendered as the text "undefined"', () => {
+    expect(hashRequestBody({ a: 1, b: undefined })).toBe(hashRequestBody({ a: 1 }))
+    expect(hashRequestBody({ a: 1, b: undefined })).not.toBe(hashRequestBody({ a: 1, b: 'undefined' }))
+  })
+
+  it('an undefined array element becomes null, matching JSON.stringify — not rendered as the text "undefined"', () => {
+    expect(hashRequestBody([1, undefined, 3])).toBe(hashRequestBody([1, null, 3]))
+  })
 })

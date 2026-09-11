@@ -1,12 +1,13 @@
--- Hand-written reverse of 0000_fuzzy_lila_cheney.sql.
+-- Hand-written reverse of 0000_mean_catseye.sql.
 --
 -- drizzle-kit has no native "down" migration, so this file — and its
 -- sibling for every future migration — is the documented mechanism: one
 -- `<tag>.down.sql` next to each `<tag>.sql`, applied by
 -- `src/db/migrate-down.ts` in exactly reverse order, most recent first.
--- Indexes are dropped for free with their table; only tables and the enum
--- types they reference need an explicit statement here. Order matters —
--- drop the tables that hold a foreign key before the tables they reference.
+-- Indexes and CHECK constraints are dropped for free with their table; only
+-- tables and the enum types they reference need an explicit statement here.
+-- Order matters — drop the tables that hold a foreign key before the
+-- tables they reference.
 
 DROP TABLE IF EXISTS "ledger_entries";
 --> statement-breakpoint

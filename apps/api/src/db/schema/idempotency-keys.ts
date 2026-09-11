@@ -24,7 +24,8 @@ export const idempotencyKeys = pgTable(
     requestHash: varchar('request_hash', { length: 64 }).notNull(),
     responseStatus: integer('response_status').notNull(),
     responseBody: jsonb('response_body').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    // mode: 'date' — see src/db/iso-timestamp.ts.
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.scope, table.key] })],
 )

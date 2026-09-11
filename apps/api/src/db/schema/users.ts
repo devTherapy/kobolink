@@ -26,7 +26,11 @@ export const users = pgTable(
     phone: varchar('phone', { length: 20 }),
     passwordHash: text('password_hash').notNull(),
     displayName: varchar('display_name', { length: 80 }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    // `mode: 'date'`, not `'string'` — see src/db/iso-timestamp.ts for why:
+    // node-postgres already hands back a real `Date`, and only `toIso()`
+    // from that file, not the driver's raw text, satisfies the contract's
+    // `IsoDateTimeSchema`.
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex('users_email_unique').on(table.email),

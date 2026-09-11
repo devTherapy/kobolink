@@ -1,6 +1,6 @@
 {
-  "id": "3a26f8d0-ab42-4200-aca4-8eea4658cb14",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "48085895-7177-417e-848c-9c7f0287aa45",
+  "prevId": "2ee57bdd-52c6-49c4-b5c6-bed2653170dd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -112,9 +112,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "ledger_accounts_owner_kind_unique": {
           "name": "ledger_accounts_owner_kind_unique",
@@ -133,10 +133,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"ledger_accounts\".\"owner_user_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"ledger_accounts\".\"owner_user_id\" is not null",
+          "concurrently": false
         },
         "ledger_accounts_external_funding_singleton": {
           "name": "ledger_accounts_external_funding_singleton",
@@ -149,25 +149,25 @@
             }
           ],
           "isUnique": true,
-          "where": "\"ledger_accounts\".\"kind\" = 'external_funding'",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"ledger_accounts\".\"kind\" = 'external_funding'",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "ledger_accounts_owner_user_id_users_id_fk": {
           "name": "ledger_accounts_owner_user_id_users_id_fk",
           "tableFrom": "ledger_accounts",
-          "tableTo": "users",
           "columnsFrom": [
             "owner_user_id"
           ],
+          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -233,9 +233,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "ledger_entries_posting_idx": {
           "name": "ledger_entries_posting_idx",
@@ -248,37 +248,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "ledger_entries_posting_id_postings_id_fk": {
           "name": "ledger_entries_posting_id_postings_id_fk",
           "tableFrom": "ledger_entries",
-          "tableTo": "postings",
           "columnsFrom": [
             "posting_id"
           ],
+          "tableTo": "postings",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "ledger_entries_account_id_ledger_accounts_id_fk": {
           "name": "ledger_entries_account_id_ledger_accounts_id_fk",
           "tableFrom": "ledger_entries",
-          "tableTo": "ledger_accounts",
           "columnsFrom": [
             "account_id"
           ],
+          "tableTo": "ledger_accounts",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -367,30 +367,30 @@
             },
             {
               "expression": "\"created_at\" desc",
-              "asc": true,
               "isExpression": true,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "links_merchant_user_id_users_id_fk": {
           "name": "links_merchant_user_id_users_id_fk",
           "tableFrom": "links",
-          "tableTo": "users",
           "columnsFrom": [
             "merchant_user_id"
           ],
+          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -465,9 +465,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "postings_idempotency_scope_key_unique": {
           "name": "postings_idempotency_scope_key_unique",
@@ -486,10 +486,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"postings\".\"idempotency_key\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"postings\".\"idempotency_key\" is not null",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -559,9 +559,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "sessions_token_hash_unique": {
           "name": "sessions_token_hash_unique",
@@ -574,24 +574,24 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "sessions_user_id_users_id_fk": {
           "name": "sessions_user_id_users_id_fk",
           "tableFrom": "sessions",
-          "tableTo": "users",
           "columnsFrom": [
             "user_id"
           ],
+          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -661,9 +661,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "users_phone_unique": {
           "name": "users_phone_unique",
@@ -676,10 +676,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"users\".\"phone\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"users\".\"phone\" is not null",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -727,10 +727,10 @@
     }
   },
   "schemas": {},
+  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

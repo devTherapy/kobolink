@@ -17,7 +17,9 @@ CREATE TABLE "ledger_accounts" (
 	"owner_user_id" varchar(64),
 	"kind" "ledger_account_kind" NOT NULL,
 	"currency" varchar(3) DEFAULT 'NGN' NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "ledger_accounts_external_funding_ownerless" CHECK (("ledger_accounts"."kind" = 'external_funding') = ("ledger_accounts"."owner_user_id" is null)),
+	CONSTRAINT "ledger_accounts_currency_ngn" CHECK ("ledger_accounts"."currency" = 'NGN')
 );
 --> statement-breakpoint
 CREATE TABLE "ledger_entries" (
@@ -25,7 +27,8 @@ CREATE TABLE "ledger_entries" (
 	"posting_id" varchar(64) NOT NULL,
 	"account_id" varchar(64) NOT NULL,
 	"amount_kobo" bigint NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "ledger_entries_amount_kobo_nonzero" CHECK ("ledger_entries"."amount_kobo" <> 0)
 );
 --> statement-breakpoint
 CREATE TABLE "links" (
@@ -37,13 +40,15 @@ CREATE TABLE "links" (
 	"status" "link_status" DEFAULT 'active' NOT NULL,
 	"is_reusable" boolean DEFAULT false NOT NULL,
 	"expires_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "links_amount_kobo_positive" CHECK ("links"."amount_kobo" is null or "links"."amount_kobo" > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "postings" (
 	"id" varchar(64) PRIMARY KEY NOT NULL,
 	"kind" "posting_kind" NOT NULL,
 	"reference" varchar(64) NOT NULL,
+	"idempotency_scope" varchar(128),
 	"idempotency_key" varchar(128),
 	"metadata" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -81,6 +86,7 @@ CREATE INDEX "ledger_entries_account_idx" ON "ledger_entries" USING btree ("acco
 CREATE INDEX "ledger_entries_posting_idx" ON "ledger_entries" USING btree ("posting_id");--> statement-breakpoint
 CREATE INDEX "links_merchant_created_idx" ON "links" USING btree ("merchant_user_id","created_at" desc);--> statement-breakpoint
 CREATE UNIQUE INDEX "postings_reference_unique" ON "postings" USING btree ("reference");--> statement-breakpoint
+CREATE UNIQUE INDEX "postings_idempotency_scope_key_unique" ON "postings" USING btree ("idempotency_scope","idempotency_key") WHERE "postings"."idempotency_key" is not null;--> statement-breakpoint
 CREATE INDEX "sessions_user_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "sessions_token_hash_unique" ON "sessions" USING btree ("token_hash");--> statement-breakpoint
 CREATE UNIQUE INDEX "users_email_unique" ON "users" USING btree ("email");--> statement-breakpoint

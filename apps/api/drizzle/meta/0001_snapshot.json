@@ -1,6 +1,6 @@
 {
-  "id": "be9494ae-4004-4092-97b5-6464a80e4d88",
-  "prevId": "badfc49e-e2cf-4414-93fe-7c2d3d11f37f",
+  "id": "2ee57bdd-52c6-49c4-b5c6-bed2653170dd",
+  "prevId": "3a26f8d0-ab42-4200-aca4-8eea4658cb14",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -173,7 +173,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "ledger_accounts_external_funding_ownerless": {
+          "name": "ledger_accounts_external_funding_ownerless",
+          "value": "(\"ledger_accounts\".\"kind\" = 'external_funding') = (\"ledger_accounts\".\"owner_user_id\" is null)"
+        },
+        "ledger_accounts_currency_ngn": {
+          "name": "ledger_accounts_currency_ngn",
+          "value": "\"ledger_accounts\".\"currency\" = 'NGN'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.ledger_entries": {
@@ -275,7 +284,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "ledger_entries_amount_kobo_nonzero": {
+          "name": "ledger_entries_amount_kobo_nonzero",
+          "value": "\"ledger_entries\".\"amount_kobo\" <> 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.links": {
@@ -382,7 +396,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "links_amount_kobo_positive": {
+          "name": "links_amount_kobo_positive",
+          "value": "\"links\".\"amount_kobo\" is null or \"links\".\"amount_kobo\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.postings": {
@@ -407,6 +426,12 @@
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true
+        },
+        "idempotency_scope": {
+          "name": "idempotency_scope",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false
         },
         "idempotency_key": {
           "name": "idempotency_key",
@@ -442,6 +467,28 @@
           "isUnique": true,
           "with": {},
           "method": "btree",
+          "concurrently": false
+        },
+        "postings_idempotency_scope_key_unique": {
+          "name": "postings_idempotency_scope_key_unique",
+          "columns": [
+            {
+              "expression": "idempotency_scope",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"postings\".\"idempotency_key\" is not null",
           "concurrently": false
         }
       },

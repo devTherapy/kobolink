@@ -12,20 +12,29 @@
 -- write for that posting is in place — an ordinary multi-row INSERT inside
 -- one transaction (which is how B5 will always write a posting) never sees
 -- a false failure on entry 1 of 2 because entry 2 hasn't landed yet.
+--
+-- This check alone is not the whole guarantee: re-summing only the
+-- posting(s) touched by the statement that fired it is exactly right for
+-- INSERT but wrong for UPDATE/DELETE (moving a row to a different posting,
+-- or deleting it, would leave the posting it left unchecked — see
+-- 0002_ledger_entries_append_only.sql's header for the concrete
+-- reproduction). That migration closes the gap by rejecting UPDATE/DELETE
+-- on this table outright, which is also why this trigger fires
+-- `AFTER INSERT` only, not `INSERT OR UPDATE OR DELETE`: once mutation is
+-- impossible, a trigger still watching for it is dead code that only
+-- invites the two invariants to quietly drift out of sync with each
+-- other.
 
 CREATE OR REPLACE FUNCTION check_posting_balance() RETURNS trigger AS $$
 DECLARE
-  affected_posting_id varchar(64);
   balance bigint;
 BEGIN
-  affected_posting_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.posting_id ELSE NEW.posting_id END;
-
   SELECT coalesce(sum(amount_kobo), 0) INTO balance
   FROM ledger_entries
-  WHERE posting_id = affected_posting_id;
+  WHERE posting_id = NEW.posting_id;
 
   IF balance <> 0 THEN
-    RAISE EXCEPTION 'ledger_entries for posting % do not balance to zero (sum = %)', affected_posting_id, balance
+    RAISE EXCEPTION 'ledger_entries for posting % do not balance to zero (sum = %)', NEW.posting_id, balance
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;
 
@@ -34,6 +43,6 @@ END;
 $$ LANGUAGE plpgsql;
 --> statement-breakpoint
 CREATE CONSTRAINT TRIGGER ledger_entries_balance_check
-  AFTER INSERT OR UPDATE OR DELETE ON ledger_entries
+  AFTER INSERT ON ledger_entries
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION check_posting_balance();

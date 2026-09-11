@@ -1,5 +1,5 @@
-import { desc } from 'drizzle-orm'
-import { bigint, boolean, index, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
+import { desc, sql } from 'drizzle-orm'
+import { bigint, boolean, check, index, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
 import { linkStatusEnum } from './enums.js'
 import { users } from './users.js'
 
@@ -20,9 +20,14 @@ import { users } from './users.js'
  *
  * `amountKobo` is nullable: null means the payer names the amount at
  * checkout (`CreateLinkRequestSchema.amountKobo` is `.nullable()`), same
- * `bigint`-column/`number`-mode choice as `ledger_entries.amount_kobo` and
- * for the same reason — this is a signed money value, contracts bound it as
- * an integer, never a float.
+ * `bigint`-column/`number`-mode choice as `ledger_entries.amount_kobo` (see
+ * that file for the precision caveat — irrelevant here, since a link's
+ * amount is already bounded by `AmountKoboSchema` the same way a single
+ * ledger entry is) and for the same reason — this is a money value,
+ * contracts bound it as an integer, never a float. `createdAt`/`expiresAt`
+ * are `mode: 'date'`, not `'string'` — see src/db/iso-timestamp.ts; a row
+ * read straight off this table only round-trips `PaymentLink`/`PublicLink`
+ * exactly once both of those are mapped through `toIso()`.
  */
 export const links = pgTable(
   'links',
@@ -36,8 +41,11 @@ export const links = pgTable(
     amountKobo: bigint('amount_kobo', { mode: 'number' }),
     status: linkStatusEnum('status').notNull().default('active'),
     isReusable: boolean('is_reusable').notNull().default(false),
-    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
-  (table) => [index('links_merchant_created_idx').on(table.merchantUserId, desc(table.createdAt))],
+  (table) => [
+    index('links_merchant_created_idx').on(table.merchantUserId, desc(table.createdAt)),
+    check('links_amount_kobo_positive', sql`${table.amountKobo} is null or ${table.amountKobo} > 0`),
+  ],
 )
