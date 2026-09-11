@@ -38,6 +38,16 @@
   --color-danger:       #B62F1C;
   --color-danger-tint:  #FBE9E6;
 
+  /* Added during F1 review round 1: `--color-border-soft` (#EFEDE8) reads at
+     ~1.1:1 against both white and the ground — invisible as a skeleton fill,
+     not merely "subtle". This token is the shape a `Skeleton` (and a loading
+     `Field`'s overlay line) pulses in, calibrated to clear the 3:1 WCAG
+     non-text-contrast floor on both surfaces: 3.68:1 on white, 3.38:1 on
+     `--color-ground`. Not reused for borders/dividers — those stay on the
+     existing border tokens; this one exists so a loading placeholder is
+     visible as a shape, not a blank rectangle. */
+  --color-skeleton-fill: #7C8695;
+
   --radius-input: 8px;
   --radius-card: 12px;
 
