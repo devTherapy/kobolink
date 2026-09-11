@@ -1,1 +1,20 @@
-{"version":"7","dialect":"postgresql","entries":[]}
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789129983879,
+      "tag": "0000_fuzzy_lila_cheney",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789130005789,
+      "tag": "0001_ledger_entries_balance_trigger",
+      "breakpoints": true
+    }
+  ]
+}
