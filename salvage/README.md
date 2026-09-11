@@ -4,7 +4,9 @@ Code from the Firebase-era build that survived the move to Postgres + NestJS
 **unchanged**. It has been typechecked, linted and tested; the association
 handlers were served live and curled.
 
-Delete this folder once the orchestrator has placed everything.
+Delete this folder once the frontend agent has placed the `web/` files (F0,
+F8). `contracts/`, `scripts/` and `env.example` were placed by X0 and X1 and
+removed from here.
 
 | File | Goes to | Why it survived |
 |---|---|---|

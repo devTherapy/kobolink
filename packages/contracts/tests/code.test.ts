@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CODE_LENGTH, isValidLinkCode, newLinkCode, newPaymentReference } from '@/lib/code'
+import { CODE_LENGTH, isValidLinkCode, newLinkCode, newPaymentReference } from '../src/index.js'
 
 describe('newLinkCode', () => {
   it('is the declared length and passes its own validator', () => {
