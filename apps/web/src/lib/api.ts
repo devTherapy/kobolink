@@ -1,5 +1,6 @@
 import {
   API,
+  AuthResponseSchema,
   DashboardStatsSchema,
   IDEMPOTENCY_HEADER,
   InitializeCheckoutResponseSchema,
@@ -12,19 +13,22 @@ import {
   VerifyCheckoutResponseSchema,
   isApiError,
   type ApiError,
+  type AuthResponse,
   type DashboardStats,
   type InitializeCheckoutRequest,
   type InitializeCheckoutResponse,
   type LinkListResponse,
+  type LoginRequest,
   type MeResponse,
   type PageQuery,
   type PaymentLink,
   type PaymentListResponse,
   type PublicLinkResponse,
+  type RegisterRequest,
   type VerifyCheckoutRequest,
   type VerifyCheckoutResponse,
 } from '@kobolink/contracts'
-import type { ZodType } from 'zod'
+import { z, type ZodType } from 'zod'
 
 /**
  * Thrown for every non-2xx response. Carries the parsed `ApiError` body so a
@@ -46,14 +50,29 @@ export class ApiRequestError extends Error {
   readonly status: number
   readonly error: ApiError
   readonly transport: boolean
+  /**
+   * Parsed from the response's `Retry-After` header (seconds) when present —
+   * meaningful only alongside `error.code === 'rate_limited'`. `null` when
+   * the header is absent, or is the HTTP-date form rather than a plain
+   * integer of seconds — this client only needs the seconds form for the
+   * login rate limiter, so the date form is deliberately not parsed.
+   */
+  readonly retryAfterSeconds: number | null
 
-  constructor(status: number, error: ApiError, transport = false) {
+  constructor(status: number, error: ApiError, transport = false, retryAfterSeconds: number | null = null) {
     super(error.message)
     this.name = 'ApiRequestError'
     this.status = status
     this.error = error
     this.transport = transport
+    this.retryAfterSeconds = retryAfterSeconds
   }
+}
+
+function parseRetryAfterSeconds(value: string | null): number | null {
+  if (value === null) return null
+  const seconds = Number(value)
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : null
 }
 
 /**
@@ -144,12 +163,26 @@ async function request<T>(schema: ZodType<T>, path: string, options: RequestOpti
   }
 
   if (!response.ok) {
-    if (isApiError(json)) throw new ApiRequestError(response.status, json, false)
-    throw new ApiRequestError(response.status, transportError(response.status, response.statusText), true)
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'))
+    if (isApiError(json)) throw new ApiRequestError(response.status, json, false, retryAfterSeconds)
+    throw new ApiRequestError(
+      response.status,
+      transportError(response.status, response.statusText),
+      true,
+      retryAfterSeconds,
+    )
   }
 
   return schema.parse(json)
 }
+
+/**
+ * `POST /api/auth/logout` answers 204 with no body — `text.length === 0`
+ * above leaves `json` as `undefined`, and `z.void()` is the one schema in
+ * this file that accepts that on purpose, rather than reaching for a
+ * contract schema no endpoint here actually returns.
+ */
+const VoidSchema = z.void()
 
 function pageQuery(query?: PageQuery): Record<string, string | number | undefined> {
   return { cursor: query?.cursor, limit: query?.limit }
@@ -162,7 +195,25 @@ function pageQuery(query?: PageQuery): Record<string, string | number | undefine
  */
 export const client = {
   auth: {
-    me: () => request<MeResponse>(MeResponseSchema, API.auth.me),
+    register: (body: RegisterRequest) =>
+      request<AuthResponse>(AuthResponseSchema, API.auth.register, { method: 'POST', body }),
+    login: (body: LoginRequest) =>
+      request<AuthResponse>(AuthResponseSchema, API.auth.login, { method: 'POST', body }),
+    // `init?.headers` exists for `src/lib/session.ts`'s server-side
+    // `getSession()`: a Server Component/route handler/middleware fetch has
+    // no browser behind it, so the httpOnly session cookie only reaches the
+    // API if the caller forwards it by hand as a `Cookie` header. A
+    // browser's own client-side call (there is none of those for `me` in
+    // this PR — see the header's server-rendered session, and
+    // `LogoutButton`'s plain `client.auth.logout()`) would simply omit
+    // `init` and rely on the browser's real cookie jar instead.
+    me: (init?: { headers?: HeadersInit }) =>
+      request<MeResponse>(MeResponseSchema, API.auth.me, { ...(init?.headers ? { headers: init.headers } : {}) }),
+    logout: (init?: { headers?: HeadersInit }) =>
+      request<void>(VoidSchema, API.auth.logout, {
+        method: 'POST',
+        ...(init?.headers ? { headers: init.headers } : {}),
+      }),
   },
   links: {
     list: (query?: PageQuery) =>

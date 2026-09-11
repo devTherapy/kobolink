@@ -29,6 +29,7 @@ import {
   type PaymentLink,
   type SchemaName,
 } from '@kobolink/contracts'
+import { zodIssuesToFields } from '@/lib/zod-errors'
 import {
   checkoutSessions,
   computeDashboardStats,
@@ -78,8 +79,8 @@ function buildError(code: ErrorCode, message: string, extra: Partial<ApiError> =
   return { status: HTTP_STATUS_FOR_ERROR[code], body }
 }
 
-function toResponse(result: JsonResult): JsonResponse {
-  return HttpResponse.json(result.body as JsonBodyType, { status: result.status })
+function toResponse(result: JsonResult, headers?: HeadersInit): JsonResponse {
+  return HttpResponse.json(result.body as JsonBodyType, { status: result.status, ...(headers ? { headers } : {}) })
 }
 
 function respond<Name extends SchemaName>(name: Name, body: unknown, status = 200): JsonResponse {
@@ -153,6 +154,69 @@ function codeParam(params: PathParams<string>): string {
   return typeof value === 'string' ? value : ''
 }
 
+// ---- auth mock plumbing ----------------------------------------------------
+// F2's slice of the mock "backend": a session cookie set on register/login
+// success, cleared on logout, and read back on `auth.me`. Mirrors
+// `SESSION_COOKIE_NAME` from `apps/api/src/auth/session-cookie.ts` so a real
+// browser in `npm run dev` (MSW's `msw/browser` worker, real `Set-Cookie`
+// semantics) behaves the same shape as the Vitest/jsdom suite, which reads
+// the `Cookie` request header directly rather than relying on a fetch
+// implementation's own cookie-jar behaviour.
+
+// Exported so tests can build a `Cookie` header that matches this mock's own
+// rules (a signed-in session, or a deliberately stale/revoked one) instead of
+// re-guessing the cookie name and sentinel value by hand.
+export const MOCK_SESSION_COOKIE_NAME = 'kobolink_session'
+export const MOCK_SESSION_TOKEN = 'mock-session-token'
+/** A cookie value `auth.me` always treats as expired/revoked — the seam
+ *  the dashboard layout's "stale cookie" redirect test uses. */
+export const REVOKED_SESSION_TOKEN = 'revoked-session-token'
+
+function setSessionCookie(): string {
+  return `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}; Path=/; HttpOnly; SameSite=Lax`
+}
+
+function clearSessionCookie(): string {
+  return `${MOCK_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+}
+
+/** Returns the cookie's value, or `null` when the request carries no such cookie at all. */
+function readSessionCookie(request: Request): string | null {
+  const header = request.headers.get('cookie')
+  if (!header) return null
+  for (const part of header.split(';')) {
+    const [rawName, ...rawValue] = part.trim().split('=')
+    if (rawName === MOCK_SESSION_COOKIE_NAME) return decodeURIComponent(rawValue.join('='))
+  }
+  return null
+}
+
+/** `respond('AuthResponse', ...)` plus the `Set-Cookie` a real register/login also sends. */
+function respondWithSession<Name extends SchemaName>(name: Name, body: unknown, status = 200): JsonResponse {
+  return toResponse(buildSuccess(name, body, status), { 'set-cookie': setSessionCookie() })
+}
+
+// ---- auth test seams --------------------------------------------------------
+// Same convention as `isSimulatedDecline`'s `fail@` prefix for checkout: a
+// magic input value that always produces one specific outcome, so F2's
+// screens (and their tests) can exercise every branch of the auth contract
+// against this mock without a real user store behind it.
+
+/** README: "unauthenticated for wrong password *and* unknown user (same message)" — one seam for both. */
+function isSimulatedBadPassword(password: string): boolean {
+  return password === 'wrong-password'
+}
+
+const SIMULATED_RETRY_AFTER_SECONDS = 30
+
+function isSimulatedRateLimit(email: string): boolean {
+  return email.startsWith('ratelimited@')
+}
+
+function isSimulatedEmailConflict(email: string): boolean {
+  return email.startsWith('taken@')
+}
+
 export const handlers = [
   // ---- health -------------------------------------------------------------
   // No schema exists for this shape in packages/contracts (SCHEMAS has no
@@ -163,14 +227,29 @@ export const handlers = [
   // ---- auth -----------------------------------------------------------------
   http.post(API.auth.register, async ({ request }) => {
     const parsed = RegisterRequestSchema.safeParse(await readJson(request))
-    if (!parsed.success) return errorResponse('validation_failed', 'Could not register with that input.')
+    if (!parsed.success) {
+      return errorResponse('validation_failed', 'Could not register with that input.', {
+        fields: zodIssuesToFields(parsed.error),
+      })
+    }
+
+    // Test seam, same shape as `isSimulatedDecline`'s `fail@` convention for
+    // checkout: an email starting with this prefix always looks "already
+    // taken" so F2's screens (and their tests) can exercise `conflict`
+    // beside the email field without a real user store behind this mock.
+    if (isSimulatedEmailConflict(parsed.data.email)) {
+      return errorResponse('conflict', 'An account with that email address already exists.', {
+        fields: { email: ['An account with that email address already exists.'] },
+      })
+    }
+
     const user = exampleUser({
       email: parsed.data.email,
       displayName: parsed.data.displayName,
       phone: parsed.data.phone ?? null,
       role: parsed.data.role,
     })
-    return respond(
+    return respondWithSession(
       'AuthResponse',
       {
         user,
@@ -183,17 +262,45 @@ export const handlers = [
 
   http.post(API.auth.login, async ({ request }) => {
     const parsed = LoginRequestSchema.safeParse(await readJson(request))
-    if (!parsed.success) return errorResponse('validation_failed', 'Could not sign in with that input.')
-    return respond('AuthResponse', {
+    if (!parsed.success) {
+      return errorResponse('validation_failed', 'Could not sign in with that input.', {
+        fields: zodIssuesToFields(parsed.error),
+      })
+    }
+
+    // Test seam: this exact password always looks wrong. README:
+    // "unauthenticated for wrong password *and* unknown user (same
+    // message)" — one seam covers both, since the mock cannot tell them
+    // apart any more honestly than the real API is willing to.
+    if (isSimulatedBadPassword(parsed.data.password)) {
+      return errorResponse('unauthenticated', 'The email or password you entered is incorrect.')
+    }
+
+    // Test seam: this email prefix always looks rate-limited, with a fixed
+    // `Retry-After` window — README: "rate_limited after repeated failures
+    // per email and per IP."
+    if (isSimulatedRateLimit(parsed.data.email)) {
+      return toResponse(buildError('rate_limited', 'Too many attempts. Please wait before trying again.'), {
+        'retry-after': String(SIMULATED_RETRY_AFTER_SECONDS),
+      })
+    }
+
+    return respondWithSession('AuthResponse', {
       user: exampleUser({ email: parsed.data.email }),
       session: { id: 'ses_9f8h2Kd3Lm1', expiresAt: '2026-06-22T12:00:00.000Z' },
       ...(parsed.data.client === 'mobile' ? { token: 'a'.repeat(48) } : {}),
     })
   }),
 
-  http.post(API.auth.logout, () => new HttpResponse(null, { status: 204 })),
+  http.post(API.auth.logout, () => new HttpResponse(null, { status: 204, headers: { 'set-cookie': clearSessionCookie() } })),
 
-  http.get(API.auth.me, () => respond('MeResponse', { user: exampleUser() })),
+  http.get(API.auth.me, ({ request }) => {
+    const cookie = readSessionCookie(request)
+    if (cookie === null || cookie === REVOKED_SESSION_TOKEN) {
+      return errorResponse('unauthenticated', 'Your session has expired. Please sign in again.')
+    }
+    return respond('MeResponse', { user: exampleUser() })
+  }),
 
   // ---- links ------------------------------------------------------------
   http.post(API.links.collection, async ({ request }) => {
