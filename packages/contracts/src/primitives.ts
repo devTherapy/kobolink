@@ -55,23 +55,40 @@ export const IsoDateTimeSchema = z
   .iso.datetime({ offset: true })
   .meta({ id: 'IsoDateTime', description: 'RFC 3339 timestamp with offset.' })
 
-export const EmailSchema = z.email().max(254).toLowerCase().trim()
+/** Trim and lowercase first, then validate — a trailing space from a mobile keyboard is not an invalid address. */
+export const EmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.email().max(254))
+  .meta({ id: 'Email', description: 'Lowercased email address.' })
+
+const NG_MOBILE_E164 = /^\+234[789][01]\d{8}$/
+
+/** Bring 0803..., 234803..., +234 803 ... to +234803...; anything else is returned as-is and fails the format check. */
+function normaliseNigerianMobile(raw: string): string {
+  const digits = raw.replace(/[\s-]/g, '')
+  if (/^\+234\d{10}$/.test(digits)) return digits
+  if (/^234\d{10}$/.test(digits)) return `+${digits}`
+  if (/^0\d{10}$/.test(digits)) return `+234${digits.slice(1)}`
+  return digits
+}
 
 /**
  * Nigerian mobile numbers, normalised to E.164 (+234XXXXXXXXXX). Accepts
- * 0803..., 234803... and +234803... on input.
+ * 0803..., 234803... and +234803... on input; the wire form is always E.164,
+ * which is what the JSON Schema describes.
  */
 export const PhoneSchema = z
   .string()
   .trim()
-  .transform((raw) => raw.replace(/[\s-]/g, ''))
-  .pipe(z.string().regex(/^(?:\+?234|0)[789][01]\d{8}$/, 'not a Nigerian mobile number'))
-  .transform((digits) => {
-    if (digits.startsWith('+234')) return digits
-    if (digits.startsWith('234')) return `+${digits}`
-    return `+234${digits.slice(1)}`
+  .transform(normaliseNigerianMobile)
+  .pipe(z.string().regex(NG_MOBILE_E164, 'not a Nigerian mobile number'))
+  .meta({
+    id: 'Phone',
+    description: 'Nigerian mobile number in E.164 form, +234XXXXXXXXXX.',
+    pattern: NG_MOBILE_E164.source,
   })
-  .meta({ id: 'Phone', description: 'Nigerian mobile number in E.164 form, +234XXXXXXXXXX.' })
 
 export const CurrencySchema = z.literal('NGN').meta({ id: 'Currency' })
 

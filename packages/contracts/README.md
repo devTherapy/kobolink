@@ -31,15 +31,15 @@ import { CreateLinkRequestSchema, type PaymentLink, formatNaira, API } from '@ko
 
 All paths are under `/api` on the same origin as the web app. Bodies are JSON.
 Every non-2xx response body is an `ApiError`; `HTTP_STATUS_FOR_ERROR` gives the
-status for each code. Auth is a session cookie for web (`?client=web`, the
-default) or a bearer token for mobile (`?client=mobile`, then
-`Authorization: Bearer <token>`).
+status for each code. Auth is a session cookie for web (`client: 'web'` in the login/register
+body, the default) or a bearer token for mobile (`client: 'mobile'`, after
+which every request carries `Authorization: Bearer <token>`).
 
 | Method | Path (`API.*`) | Auth | Request | Response | Notes |
 |---|---|---|---|---|---|
 | GET | `health` | none | — | `{ status: 'ok' }` | |
-| POST | `auth.register` | none | `RegisterRequest` + `?client=` | `AuthResponse` 201 | `conflict` on a taken email |
-| POST | `auth.login` | none | `LoginRequest` + `?client=` | `AuthResponse` | `unauthenticated` for wrong password *and* unknown user (same message); `rate_limited` after repeated failures per email and per IP |
+| POST | `auth.register` | none | `RegisterRequest` | `AuthResponse` 201 | `conflict` on a taken email |
+| POST | `auth.login` | none | `LoginRequest` | `AuthResponse` | `unauthenticated` for wrong password *and* unknown user (same message); `rate_limited` after repeated failures per email and per IP |
 | POST | `auth.logout` | session | — | 204 | Revokes the session row; the cookie/token is dead afterwards |
 | GET | `auth.me` | session | — | `MeResponse` | `unauthenticated` when expired or revoked |
 | POST | `links.collection` | merchant | `CreateLinkRequest` | `PaymentLink` 201 | Server generates the code and retries on collision; the client never supplies one |

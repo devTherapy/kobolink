@@ -68,7 +68,8 @@ export const LinkListResponseSchema = pageOf(PaymentLinkSchema, 'LinkListRespons
 export type LinkListResponse = z.infer<typeof LinkListResponseSchema>
 
 /**
- * The public view served to a stranger by `GET /api/links/:code`. It carries
+ * The public view served to a stranger by `GET /api/links/:code/public`
+ * (`API.links.resolve`). It carries
  * only what the checkout page renders. Nothing private may be added here:
  * no merchant id, no email, no counters beyond what the state needs.
  */

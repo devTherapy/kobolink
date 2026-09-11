@@ -22,6 +22,7 @@ import {
 } from './payments.js'
 import {
   AuthResponseSchema,
+  ClientKindSchema,
   LoginRequestSchema,
   MeResponseSchema,
   RegisterRequestSchema,
@@ -46,6 +47,7 @@ import {
  */
 export const SCHEMAS = {
   UserRole: UserRoleSchema,
+  ClientKind: ClientKindSchema,
   User: UserSchema,
   RegisterRequest: RegisterRequestSchema,
   LoginRequest: LoginRequestSchema,
@@ -82,6 +84,15 @@ export const SCHEMAS = {
 export type SchemaName = keyof typeof SCHEMAS
 
 /**
+ * Request shapes are what a client *sends*: defaults are optional there, and
+ * normalising transforms (trim, phone formats) accept the loose input form.
+ * Everything else is what the server *emits*: defaults are always present.
+ */
+export function isRequestSchema(name: SchemaName): boolean {
+  return name.endsWith('Request')
+}
+
+/**
  * JSON Schema (draft 2020-12) for every named shape, with `$ref`s between
  * them. This is the input to the OpenAPI document; it is exported here so
  * the document and the runtime validators cannot disagree.
@@ -89,7 +100,10 @@ export type SchemaName = keyof typeof SCHEMAS
 export function jsonSchemas(): Record<SchemaName, unknown> {
   const out = {} as Record<SchemaName, unknown>
   for (const name of Object.keys(SCHEMAS) as SchemaName[]) {
-    out[name] = z.toJSONSchema(SCHEMAS[name], { io: 'output', unrepresentable: 'any' })
+    out[name] = z.toJSONSchema(SCHEMAS[name], {
+      io: isRequestSchema(name) ? 'input' : 'output',
+      unrepresentable: 'any',
+    })
   }
   return out
 }

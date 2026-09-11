@@ -21,6 +21,15 @@ export const UserSchema = z
   .meta({ id: 'User' })
 export type User = z.infer<typeof UserSchema>
 
+/**
+ * Which kind of client is signing in. `web` receives the session as an
+ * httpOnly cookie and no `token`. `mobile` receives a bearer token in
+ * `AuthResponse.token` and stores it in the Keychain /
+ * EncryptedSharedPreferences — never plain storage.
+ */
+export const ClientKindSchema = z.enum(['web', 'mobile']).meta({ id: 'ClientKind' })
+export type ClientKind = z.infer<typeof ClientKindSchema>
+
 /** Passwords are hashed with argon2id server-side; the contract only bounds length. */
 export const PasswordSchema = z.string().min(10).max(200)
 
@@ -31,6 +40,7 @@ export const RegisterRequestSchema = z
     password: PasswordSchema,
     displayName: DisplayNameSchema,
     role: UserRoleSchema.default('merchant'),
+    client: ClientKindSchema.default('web'),
   })
   .meta({ id: 'RegisterRequest' })
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>
@@ -39,17 +49,10 @@ export const LoginRequestSchema = z
   .object({
     email: EmailSchema,
     password: z.string().min(1).max(200),
+    client: ClientKindSchema.default('web'),
   })
   .meta({ id: 'LoginRequest' })
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
-
-/**
- * Web receives the session as an httpOnly cookie and `token` is absent.
- * Mobile asks for a bearer token (`client: 'mobile'`) and stores it in the
- * Keychain / EncryptedSharedPreferences — never plain storage.
- */
-export const ClientKindSchema = z.enum(['web', 'mobile']).meta({ id: 'ClientKind' })
-export type ClientKind = z.infer<typeof ClientKindSchema>
 
 export const AuthResponseSchema = z
   .object({
@@ -58,7 +61,7 @@ export const AuthResponseSchema = z
       id: IdSchema,
       expiresAt: IsoDateTimeSchema,
     }),
-    /** Present only for `client: 'mobile'`. */
+    /** Present only when the request carried `client: 'mobile'`. */
     token: z.string().min(32).optional(),
   })
   .meta({ id: 'AuthResponse' })
