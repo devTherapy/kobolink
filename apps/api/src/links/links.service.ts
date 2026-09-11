@@ -6,8 +6,10 @@ import type {
   PageQuery,
   PaymentLink,
   PaymentListResponse,
+  PublicLinkResponse,
   User,
 } from '@kobolink/contracts'
+import { resolveLink, toPublicLink, toPublicLinkState } from '@kobolink/contracts'
 import { and, desc, eq, gt, inArray, lt, or, type SQL, sql } from 'drizzle-orm'
 import { ApiErrorException } from '../common/errors/api-error.exception.js'
 import { DbService } from '../db/db.service.js'
@@ -123,6 +125,47 @@ export class LinksService {
     if (row === undefined) return undefined
     const stats = await this.computeLinkStats(code, user.id)
     return toPaymentLink(row, user.displayName, stats.paymentCount, stats.totalPaidKobo)
+  }
+
+  /**
+   * `GET /api/links/:code/public` (`PublicLinksController`) — PLAN.md's B4
+   * row. Unlike every other method here, this is not merchant-scoped: it is
+   * called by a stranger, so it looks the row up by code alone (joining
+   * `users` for `merchantName`, since there is no `CurrentUser` to borrow it
+   * from the way `getByCode`/`list` do) and returns `undefined` only for "no
+   * such code" — a malformed code never reaches this far, `LinkCodeParamPipe`
+   * already turned that into `not_found` before the controller called in.
+   *
+   * The four payable states are computed by `resolveLink()`
+   * (`packages/contracts/src/status.ts`), the single source of truth shared
+   * with the web checkout and both mobile apps, over the same `PaymentLink`
+   * shape `toPaymentLink` already builds — `resolveLink`'s `not-found` branch
+   * is unreachable here (the row was just fetched), so `toPublicLinkState`
+   * cannot return `null`; the `undefined` fallback exists only so a future
+   * change to `resolveLink` fails loudly here instead of serialising a
+   * broken body. `toPublicLink` is what strips `merchantId`, the raw
+   * `status` column and the payment counters before this ever answers a
+   * request — see `PublicLinkSchema`'s own doc comment for why none of that
+   * may leak to an unauthenticated caller.
+   */
+  async resolvePublic(code: string): Promise<PublicLinkResponse | undefined> {
+    const [row] = await this.db.db
+      .select({ link: schema.links, merchantName: schema.users.displayName })
+      .from(schema.links)
+      .innerJoin(schema.users, eq(schema.users.id, schema.links.merchantUserId))
+      .where(eq(schema.links.code, code))
+      .limit(1)
+    if (row === undefined) return undefined
+
+    const stats = await this.computeLinkStats(code, row.link.merchantUserId)
+    const paymentLink = toPaymentLink(row.link, row.merchantName, stats.paymentCount, stats.totalPaidKobo)
+
+    const resolution = resolveLink(paymentLink)
+    const state = toPublicLinkState(resolution)
+    if (state === null) {
+      throw new Error(`links: resolveLink for an existing row (${code}) produced 'not-found'`)
+    }
+    return { state, link: toPublicLink(paymentLink) }
   }
 
   async updateStatus(user: User, code: string, status: LinkStatus): Promise<PaymentLink | undefined> {
