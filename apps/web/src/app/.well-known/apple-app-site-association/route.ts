@@ -1,18 +1,28 @@
-import { buildAasa } from '@/lib/associations'
+import { buildAasa, validateAppId } from '@/lib/associations'
 
 // Rendered per request so the Team ID comes from the environment, and cached
 // hard at the edge afterwards — Apple's CDN fetches this at most daily.
 export const dynamic = 'force-dynamic'
 
+function unavailable(error: string) {
+  // Better a loud 503 than a 200 carrying a wrong or placeholder Team ID,
+  // which would be cached by Apple's CDN for up to 24 hours with no way to
+  // invalidate it.
+  return new Response(JSON.stringify({ error }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 export function GET() {
   const appId = process.env.APPLE_APP_ID
   if (!appId) {
-    // Better a loud 503 than a 200 carrying a placeholder Team ID, which would
-    // be cached by Apple's CDN for up to 24 hours with no way to invalidate it.
-    return new Response(
-      JSON.stringify({ error: 'APPLE_APP_ID is not configured' }),
-      { status: 503, headers: { 'content-type': 'application/json' } },
-    )
+    return unavailable('APPLE_APP_ID is not configured')
+  }
+
+  const validationError = validateAppId(appId)
+  if (validationError) {
+    return unavailable(validationError)
   }
 
   return new Response(JSON.stringify(buildAasa({ appId })), {
