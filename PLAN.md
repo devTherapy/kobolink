@@ -58,7 +58,7 @@ edits `packages/contracts` directly.
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | in-review |
+| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | done |
 | B1 | Schema + migrations: `users`, `sessions`, `ledger_accounts`, `ledger_entries`, `links`, `idempotency_keys` | B0 | `drizzle-kit` migration runs clean up and down; a seed script populates a merchant | in-review |
 | B2 | Auth: register, login, logout, session guard, argon2id, login rate limit | B1 | Integration tests cover wrong password, unknown user, expired session, revoked session, rate limit trip | todo |
 | B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | todo |
@@ -78,7 +78,7 @@ no `payments` table with a status column. One `users` table with roles, never a
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | in-progress |
+| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | in-review |
 | F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | todo |
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | todo |
 | F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | todo |
