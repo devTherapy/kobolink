@@ -274,6 +274,110 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
     }
   })
 
+  it('concurrent first-time payments across 8 distinct links/merchants: getOrCreateAccount race never surfaces as a 500 — all succeed with exactly one balanced posting each', async () => {
+    // Every one of these is the *first ever* payment for its own merchant,
+    // and all 8 additionally race to create the singleton `external_funding`
+    // account (there is only ever one, across every merchant) — the exact
+    // shape of the race `getOrCreateAccount` has to recover from. Firing
+    // these with `Promise.all`, not sequential `await`s, is what actually
+    // exercises the race: sequential calls never see a concurrent insert.
+    const LINK_COUNT = 8
+    const references: string[] = []
+    const merchantIds: string[] = []
+    for (let i = 0; i < LINK_COUNT; i++) {
+      const merchant = await registerMerchant(getCtx(), `verify-concurrent-accounts-${i}@example.test`)
+      merchantIds.push(merchant.userId)
+      const code = await createLink(merchant.cookie, { amountKobo: 500_000, isReusable: true })
+      references.push(await initialize(code, 500_000, `payer-${i}@example.test`))
+    }
+
+    const responses = await Promise.all(references.map((reference) => verify(reference)))
+
+    for (const response of responses) {
+      expect(response.status).toBe(200)
+      const body = VerifyCheckoutResponseSchema.parse(response.body)
+      expect(body.payment.status).toBe('success')
+      expect(body.payment.moneyMoved).toBe(true)
+    }
+
+    const db = pool()
+    try {
+      // Exactly one `external_funding` row ever exists, no matter how many
+      // transactions raced to create it — the losers recovered the
+      // winner's row instead of erroring (or, pre-fix, instead of leaving
+      // one race unrecovered and duplicating the singleton).
+      const externalAccounts = await db.query<{ count: number }>(
+        `select count(*)::int as count from ledger_accounts where kind = 'external_funding'`,
+      )
+      expect(externalAccounts.rows[0]?.count).toBe(1)
+
+      // Scoped to *this test's* merchants — earlier tests in this file
+      // create their own `merchant_receivable` rows too, so a bare, unscoped
+      // count here would be a false negative against the rest of the suite,
+      // not a real assertion about this race.
+      const merchantAccounts = await db.query<{ count: number }>(
+        `select count(*)::int as count from ledger_accounts where kind = 'merchant_receivable' and owner_user_id = any($1::text[])`,
+        [merchantIds],
+      )
+      expect(merchantAccounts.rows[0]?.count).toBe(LINK_COUNT)
+
+      for (const reference of references) {
+        const entries = await db.query<{ amount_kobo: string }>(
+          `select e.amount_kobo from ledger_entries e join postings p on p.id = e.posting_id where p.reference = $1`,
+          [reference],
+        )
+        expect(entries.rows).toHaveLength(2)
+        const sum = entries.rows.reduce((total, row) => total + Number(row.amount_kobo), 0)
+        expect(sum).toBe(0)
+      }
+    } finally {
+      await db.end()
+    }
+  })
+
+  it('concurrent verify calls reusing the same Idempotency-Key for two different references on the same link: one succeeds, the other is a clean idempotency_mismatch, never a raw 500', async () => {
+    const merchant = await registerMerchant(getCtx(), 'verify-concurrent-idem-race@example.test')
+    const code = await createLink(merchant.cookie, { amountKobo: 500_000, isReusable: true })
+    const firstReference = await initialize(code, 500_000, 'racer-one@example.test')
+    const secondReference = await initialize(code, 500_000, 'racer-two@example.test')
+    const key = idempotencyKey()
+
+    // Both calls pass `IdempotencyService.lookup` before either has
+    // committed (no row exists yet for `key`), lock two *different*
+    // `checkout_sessions` rows — so the `FOR UPDATE` above never serialises
+    // them — and then race the `postings` insert on the same
+    // `(idempotencyScope, idempotencyKey)`. Fired with `Promise.all`, not
+    // sequential `await`s, so the race is real.
+    const [first, second] = await Promise.all([verify(firstReference, key), verify(secondReference, key)])
+
+    const statuses = [first.status, second.status].sort((a, b) => a - b)
+    expect(statuses).toEqual([200, 422])
+
+    const success = first.status === 200 ? first : second
+    const mismatch = first.status === 422 ? first : second
+    const successBody = VerifyCheckoutResponseSchema.parse(success.body)
+    expect(successBody.payment.status).toBe('success')
+    expect(successBody.payment.moneyMoved).toBe(true)
+    expect(ApiErrorSchema.parse(mismatch.body).code).toBe('idempotency_mismatch')
+
+    const db = pool()
+    try {
+      // Only the winner's posting survives — the loser's transaction rolled
+      // back in full, including its own `checkout_sessions` claim, so it
+      // never left a half-decided reference behind either.
+      const postings = await db.query<{ count: number }>(`select count(*)::int as count from postings where idempotency_key = $1`, [
+        key,
+      ])
+      expect(postings.rows[0]?.count).toBe(1)
+      const idempotencyRows = await db.query<{ count: number }>(`select count(*)::int as count from idempotency_keys where key = $1`, [
+        key,
+      ])
+      expect(idempotencyRows.rows[0]?.count).toBe(1)
+    } finally {
+      await db.end()
+    }
+  })
+
   function getCtx(): ApiTestContext {
     if (ctx === undefined) throw new Error('beforeAll did not produce a context — see its own failure above')
     return ctx

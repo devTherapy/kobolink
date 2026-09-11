@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import {
   API,
   type ApiError,
@@ -9,7 +9,6 @@ import {
   isSimulatedDecline,
   type LedgerAccountKind,
   maskEmail,
-  newPaymentReference,
   resolveLink,
   toPublicLinkState,
   type VerifyCheckoutRequest,
@@ -24,11 +23,14 @@ import { isUniqueViolation } from '../db/pg-error.js'
 import * as schema from '../db/schema/index.js'
 import { LinksService } from '../links/links.service.js'
 import { rowToPayment, type PostingLinkPaymentMetadata } from './payment-mapper.js'
+import { PAYMENT_REFERENCE_GENERATOR, type PaymentReferenceGenerator } from './payment-reference.generator.js'
 
 /** `checkout_sessions.reference` is the primary key; a collision is this constraint firing on insert. */
 const CHECKOUT_SESSIONS_PKEY_CONSTRAINT = 'checkout_sessions_pkey'
 /** Same reasoning as `LinksService`'s `MAX_CODE_ATTEMPTS` — bounds a vanishingly unlikely retry loop, nothing more. */
 const MAX_REFERENCE_ATTEMPTS = 8
+/** `postings`' `(idempotency_scope, idempotency_key)` unique index — see that table's own doc comment. */
+const POSTINGS_IDEMPOTENCY_SCOPE_KEY_CONSTRAINT = 'postings_idempotency_scope_key_unique'
 
 interface DecideResult<T> {
   status: number
@@ -58,6 +60,7 @@ export class PaymentsService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly linksService: LinksService,
+    @Inject(PAYMENT_REFERENCE_GENERATOR) private readonly generateReference: PaymentReferenceGenerator,
   ) {}
 
   async initialize(dto: InitializeCheckoutRequest, idempotencyKey: string): Promise<InitializeCheckoutResponse> {
@@ -100,7 +103,7 @@ export class PaymentsService {
       return this.errorResult('amount_mismatch', 'That amount does not match this link.')
     }
 
-    const reference = await this.insertCheckoutSession(tx, {
+    const session = await this.insertCheckoutSession(tx, {
       linkCode: resolved.link.code,
       amountKobo: dto.amountKobo,
       payerName: dto.payerName,
@@ -108,12 +111,16 @@ export class PaymentsService {
     })
 
     const body = InitializeCheckoutResponseSchema.parse({
-      reference,
+      reference: session.reference,
       code: resolved.link.code,
       amountKobo: dto.amountKobo,
       currency: 'NGN',
       status: 'pending',
-      createdAt: new Date().toISOString(),
+      // Read back from the row rather than `new Date().toISOString()` so
+      // this can never drift from `checkout_sessions.created_at`'s own
+      // `default(now())`, which is what a replay of this same request
+      // would later read back too.
+      createdAt: session.createdAt.toISOString(),
     })
     return { status: 201, body }
   }
@@ -178,17 +185,45 @@ export class PaymentsService {
       failureReason,
     }
 
-    const [postingRow] = await tx
-      .insert(schema.postings)
-      .values({
-        kind: 'link_payment',
-        reference: dto.reference,
-        idempotencyScope: API.checkout.verify,
-        idempotencyKey,
-        metadata,
-      })
-      .returning()
-    if (postingRow === undefined) throw new Error('payments: posting insert returned no row')
+    // Two concurrent `verify` calls that reuse the same Idempotency-Key for
+    // two different `reference`s both pass `IdempotencyService.lookup` (no
+    // committed row yet) and lock two different `checkout_sessions` rows —
+    // the `FOR UPDATE` above only serialises same-reference or same-link
+    // calls, so it does nothing here — and then race this insert on the
+    // same `(idempotencyScope, idempotencyKey)`. The loser hits
+    // `postings_idempotency_scope_key_unique`; per
+    // `packages/contracts/README.md`'s idempotency section ("the same key
+    // with a different body is idempotency_mismatch"), that is exactly what
+    // this is — a second request presenting the same key with a different
+    // body (a different `reference`) — so it resolves the same way an
+    // ordinary replay mismatch does: thrown directly, not returned as a
+    // normal `DecideResult`, so `IdempotencyService.run`'s wrapping
+    // transaction rolls back this loser's work in full and never caches an
+    // outcome for it.
+    let postingRow: typeof schema.postings.$inferSelect
+    try {
+      const [row] = await tx
+        .insert(schema.postings)
+        .values({
+          kind: 'link_payment',
+          reference: dto.reference,
+          idempotencyScope: API.checkout.verify,
+          idempotencyKey,
+          metadata,
+        })
+        .returning()
+      if (row === undefined) throw new Error('payments: posting insert returned no row')
+      postingRow = row
+    } catch (error) {
+      if (isUniqueViolation(error, POSTINGS_IDEMPOTENCY_SCOPE_KEY_CONSTRAINT)) {
+        throw new ApiErrorException({
+          code: 'idempotency_mismatch',
+          message: 'This Idempotency-Key was already used with a different request.',
+          moneyMoved: false,
+        })
+      }
+      throw error
+    }
 
     if (status === 'success') {
       const merchantAccount = await this.getOrCreateAccount(tx, 'merchant_receivable', resolved.merchantUserId)
@@ -232,12 +267,24 @@ export class PaymentsService {
   private async insertCheckoutSession(
     tx: DbTransaction,
     session: { linkCode: string; amountKobo: number; payerName: string; payerEmail: string },
-  ): Promise<string> {
+  ): Promise<typeof schema.checkoutSessions.$inferSelect> {
     for (let attempt = 0; attempt < MAX_REFERENCE_ATTEMPTS; attempt++) {
-      const reference = newPaymentReference()
+      const reference = this.generateReference()
       try {
-        await tx.insert(schema.checkoutSessions).values({ reference, ...session })
-        return reference
+        // A `checkout_sessions_pkey` collision on a plain `tx.insert` would
+        // abort the whole outer transaction (Postgres `25P02`, "current
+        // transaction is aborted") — the `continue` below would then retry
+        // on a dead transaction and fail immediately, never actually
+        // retrying. Running the insert inside a nested `tx.transaction`
+        // issues a real `SAVEPOINT`/`ROLLBACK TO SAVEPOINT`
+        // (`drizzle-orm/node-postgres`'s `NodePgTransaction.transaction`),
+        // so only this attempt rolls back and the outer `tx` — and the next
+        // loop iteration's insert — stays live.
+        const [row] = await tx.transaction(async (savepoint) => {
+          return savepoint.insert(schema.checkoutSessions).values({ reference, ...session }).returning()
+        })
+        if (row === undefined) throw new Error('payments: checkout session insert returned no row')
+        return row
       } catch (error) {
         if (isUniqueViolation(error, CHECKOUT_SESSIONS_PKEY_CONSTRAINT)) continue
         throw error
@@ -251,8 +298,19 @@ export class PaymentsService {
    * looked up (and, the first time this merchant is ever paid, created) by
    * `(kind, ownerUserId)`; `external_funding` — the simulated gateway's
    * singleton source/sink, `ownerUserId: null` — by `kind` alone. Either
-   * unique index can still lose a create race to a concurrent transaction;
-   * the catch re-reads and returns the winner's row rather than erroring.
+   * unique index can still lose a create race to a concurrent transaction
+   * (e.g. two distinct first-time payments to the same merchant, or the
+   * very first payment anywhere racing to create the `external_funding`
+   * singleton); the catch re-reads and returns the winner's row rather than
+   * erroring.
+   *
+   * The insert runs inside a nested `tx.transaction`, which
+   * `drizzle-orm/node-postgres` implements as a real `SAVEPOINT`/`ROLLBACK
+   * TO SAVEPOINT` — a lost race only rolls back this savepoint, not the
+   * outer `tx`. A plain `tx.insert` here would instead abort the whole
+   * outer transaction on the unique-violation (Postgres `25P02`), and the
+   * `findAccount` re-read below would fail immediately on the same dead
+   * transaction instead of recovering the winner's row.
    */
   private async getOrCreateAccount(
     tx: DbTransaction,
@@ -262,12 +320,17 @@ export class PaymentsService {
     const existing = await this.findAccount(tx, kind, ownerUserId)
     if (existing !== undefined) return existing
 
+    const constraint = ownerUserId === null ? 'ledger_accounts_external_funding_singleton' : 'ledger_accounts_owner_kind_unique'
     try {
-      const [row] = await tx.insert(schema.ledgerAccounts).values({ kind, ownerUserId }).returning({ id: schema.ledgerAccounts.id })
-      if (row === undefined) throw new Error('payments: ledger account insert returned no row')
-      return row
+      return await tx.transaction(async (savepoint) => {
+        const [row] = await savepoint
+          .insert(schema.ledgerAccounts)
+          .values({ kind, ownerUserId })
+          .returning({ id: schema.ledgerAccounts.id })
+        if (row === undefined) throw new Error('payments: ledger account insert returned no row')
+        return row
+      })
     } catch (error) {
-      const constraint = ownerUserId === null ? 'ledger_accounts_external_funding_singleton' : 'ledger_accounts_owner_kind_unique'
       if (isUniqueViolation(error, constraint)) {
         const raced = await this.findAccount(tx, kind, ownerUserId)
         if (raced !== undefined) return raced
