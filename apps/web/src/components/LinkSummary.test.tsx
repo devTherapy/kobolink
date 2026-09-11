@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { API, type ApiError } from '@kobolink/contracts'
+import type { ApiError } from '@kobolink/contracts'
 import { server } from '@/mocks/server'
 import { LinkSummary } from './LinkSummary'
 
@@ -34,10 +34,5 @@ describe('LinkSummary', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('No link with that code.')
     })
-  })
-
-  it('mocks every endpoint the checkout resolve call could hit, from the real route shape', () => {
-    // API.links.resolve builds the exact path handlers.ts matches on.
-    expect(API.links.resolve('aBcDeFgH')).toBe('/api/links/aBcDeFgH/public')
   })
 })

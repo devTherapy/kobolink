@@ -45,9 +45,17 @@ function transportError(status: number, statusText: string): ApiError {
   return { code: 'internal', message: `Request failed with status ${status} ${statusText}`.trim() }
 }
 
-/** The app's own origin, so `fetch` always receives an absolute URL — required outside the browser (SSR, this file's callers under Vitest/Node). */
+/**
+ * The app's own origin, so `fetch` always receives an absolute URL —
+ * required outside the browser (SSR, this file's callers under Vitest/Node).
+ * `INTERNAL_ORIGIN` is a server-only escape hatch: F6's `/l/[code]` fetches
+ * this client from a server component, where `window` does not exist and a
+ * hardcoded `localhost:3000` would be wrong in every deployed environment.
+ * Deployment must set it to wherever this Next.js process can reach itself.
+ */
 function origin(): string {
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+  if (typeof window !== 'undefined') return window.location.origin
+  return process.env.INTERNAL_ORIGIN ?? 'http://localhost:3000'
 }
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
@@ -62,17 +70,31 @@ async function request<T>(schema: ZodType<T>, path: string, options: RequestOpti
     if (value !== undefined) url.searchParams.set(key, String(value))
   }
 
+  // `new Headers(headers)` — not `{ ...headers }` — so a caller passing a
+  // `Headers` instance or a `[key, value][]` tuple array (both valid
+  // `HeadersInit`, both invisible to object-spread) still comes through.
+  // F6's idempotent checkout calls send `Idempotency-Key` this way.
+  const requestHeaders = new Headers(headers)
+  if (body !== undefined && !requestHeaders.has('content-type')) {
+    requestHeaders.set('content-type', 'application/json')
+  }
+
   const response = await fetch(url, {
     ...init,
-    headers: {
-      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...headers,
-    },
+    headers: requestHeaders,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   })
 
   const text = await response.text()
-  const json: unknown = text.length > 0 ? JSON.parse(text) : undefined
+  // A non-2xx response is not guaranteed to be JSON at all — a proxy's HTML
+  // 502, a server that isn't running yet. Parsing must not throw before the
+  // `!response.ok` branch gets a chance to fall through to `transportError`.
+  let json: unknown
+  try {
+    json = text.length > 0 ? JSON.parse(text) : undefined
+  } catch {
+    json = undefined
+  }
 
   if (!response.ok) {
     const apiError = isApiError(json) ? json : transportError(response.status, response.statusText)

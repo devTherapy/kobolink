@@ -8,7 +8,13 @@ import type { NextConfig } from 'next'
  * is what makes `npm run dev` match that shape.
  *
  * When `NEXT_PUBLIC_API_MOCKING=enabled`, MSW's service worker intercepts
- * `/api/*` in the browser before it ever reaches this rewrite.
+ * `/api/*` requests the *browser* makes before they reach this rewrite — a
+ * client component's `fetch`, not a server component's. A server component
+ * (SSR, route handlers) never goes through the browser's service worker, so
+ * it still hits this rewrite and therefore the real `apps/api`, mocking flag
+ * or not. Mocking a server-side fetch is `msw/node` wired into
+ * `instrumentation.ts`, deliberately not done in this PR — see the PR
+ * description.
  */
 const nextConfig: NextConfig = {
   rewrites() {

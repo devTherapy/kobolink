@@ -14,7 +14,7 @@ export default function HomePage() {
       </p>
       <Link
         href="/dashboard"
-        className="rounded-(--radius-input) bg-(--color-brand) px-4 py-2 text-[14px] font-medium text-white hover:bg-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-(--color-brand)"
+        className="inline-flex min-h-11 items-center justify-center rounded-(--radius-input) bg-(--color-brand) px-5 text-[14px] font-medium text-white hover:bg-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-(--color-brand)"
       >
         Go to Dashboard
       </Link>
