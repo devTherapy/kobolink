@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { IDEMPOTENCY_HEADER, exampleLink, newLinkCode } from '@kobolink/contracts'
+import { MOCK_SESSION_COOKIE_NAME, MOCK_SESSION_TOKEN } from './handlers'
 import { INITIAL_WALLET_BALANCE_KOBO, linkStore } from './state'
 
 /**
@@ -313,6 +314,106 @@ describe('wallet.transfer: overdraft is rejected, not posted', () => {
 
     const { json: wallet } = await getJson('/api/wallet')
     expect(wallet).toMatchObject({ balanceKobo: INITIAL_WALLET_BALANCE_KOBO - 2_000_000 })
+  })
+})
+
+describe('auth: register', () => {
+  it('rejects a taken email with conflict, fields beside email', async () => {
+    const { status, json } = await postJson('/api/auth/register', {
+      email: 'taken@example.com',
+      password: 'a-real-password',
+      displayName: 'Ngozi Okafor',
+    })
+    expect(status).toBe(409)
+    expect(json).toMatchObject({ code: 'conflict' })
+    const fields = (json as { fields?: Record<string, string[]> }).fields
+    expect(Array.isArray(fields?.email)).toBe(true)
+    expect(fields?.email?.length).toBeGreaterThan(0)
+  })
+
+  it('answers validation_failed.fields for a malformed request, not a generic message-only body', async () => {
+    const { status, json } = await postJson('/api/auth/register', {
+      email: 'not-an-email',
+      password: 'short',
+      displayName: '',
+    })
+    expect(status).toBe(400)
+    const body = json as { code: string; fields?: Record<string, string[]> }
+    expect(body.code).toBe('validation_failed')
+    expect(body.fields?.email).toBeTruthy()
+    expect(body.fields?.password).toBeTruthy()
+  })
+
+  it('sets a session cookie on success', async () => {
+    const response = await fetch(`${ORIGIN}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'new@example.com', password: 'a-real-password', displayName: 'Ngozi Okafor' }),
+    })
+    expect(response.status).toBe(201)
+    expect(response.headers.get('set-cookie')).toContain(MOCK_SESSION_COOKIE_NAME)
+  })
+})
+
+describe('auth: login', () => {
+  it('answers unauthenticated for the bad-password seam, with one message (no field disclosing which was wrong)', async () => {
+    const { status, json } = await postJson('/api/auth/login', {
+      email: 'ngozi@example.com',
+      password: 'wrong-password',
+    })
+    expect(status).toBe(401)
+    expect(json).toMatchObject({ code: 'unauthenticated' })
+    expect((json as { fields?: unknown }).fields).toBeUndefined()
+  })
+
+  it('answers rate_limited with a Retry-After header for the rate-limit seam', async () => {
+    const response = await fetch(`${ORIGIN}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'ratelimited@example.com', password: 'anything123' }),
+    })
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe('30')
+    const json: unknown = await response.json()
+    expect(json).toMatchObject({ code: 'rate_limited' })
+  })
+
+  it('succeeds for any other credentials and sets a session cookie', async () => {
+    const response = await fetch(`${ORIGIN}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'ngozi@example.com', password: 'a-real-password' }),
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain(MOCK_SESSION_COOKIE_NAME)
+  })
+})
+
+describe('auth: me honours the forwarded session cookie', () => {
+  it('401s with no cookie at all', async () => {
+    const { status, json } = await getJson('/api/auth/me')
+    expect(status).toBe(401)
+    expect(json).toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('200s for a request carrying the session cookie', async () => {
+    const response = await fetch(`${ORIGIN}/api/auth/me`, {
+      headers: { cookie: `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}` },
+    })
+    expect(response.status).toBe(200)
+    const json = (await response.json()) as { user: { email: string } }
+    expect(typeof json.user.email).toBe('string')
+    expect(json.user.email.length).toBeGreaterThan(0)
+  })
+})
+
+describe('auth: logout clears the session cookie', () => {
+  it('204s and answers a clearing Set-Cookie', async () => {
+    const response = await fetch(`${ORIGIN}/api/auth/logout`, { method: 'POST' })
+    expect(response.status).toBe(204)
+    const setCookie = response.headers.get('set-cookie') ?? ''
+    expect(setCookie).toContain(MOCK_SESSION_COOKIE_NAME)
+    expect(setCookie.toLowerCase()).toContain('max-age=0')
   })
 })
 

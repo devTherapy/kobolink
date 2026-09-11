@@ -21,7 +21,10 @@ interface FieldSharedProps {
 
 export interface FieldTextProps extends FieldSharedProps {
   variant?: 'text'
-  type?: 'text' | 'email' | 'tel' | undefined
+  // `'password'` added for F2's login/register forms — masked input, plain
+  // native `<input type="password">` semantics, nothing else about the
+  // field changes.
+  type?: 'text' | 'email' | 'tel' | 'password' | undefined
   value: string
   onChange: (value: string) => void
 }
@@ -69,7 +72,21 @@ export function Field(props: FieldProps) {
   const hoverActive = !hasError && !isDisabled
 
   const inputClassName = cn(
-    'h-11 w-full rounded-(--radius-input) border bg-(--color-surface) px-3 text-[14px] text-(--color-ink) outline-none transition-colors',
+    // Deliberately no base `outline-none`/`outline-hidden`: both set
+    // Tailwind's `--tw-outline-style` custom property to `none` on this
+    // element unconditionally, and `focus-visible:outline-2` below only
+    // ever sets width/offset/color — never that variable back to `solid` —
+    // so with either "hide the outline" utility present, `outline-style`
+    // stays computed as `none` even while `:focus-visible` genuinely
+    // matches (verified via `getComputedStyle().outlineStyle` during a real
+    // keyboard tab pass: the ring was invisible despite correct
+    // width/color). Omitting the utility entirely leaves `outline-style`
+    // unset outside focus (so no ring shows unfocused — nothing here
+    // declares one) and lets it resolve to `--tw-outline-style`'s
+    // `@property`-registered initial value of `solid` the moment
+    // `:focus-visible` does match, which is exactly the ring this field
+    // wants.
+    'h-11 w-full rounded-(--radius-input) border bg-(--color-surface) px-3 text-[14px] text-(--color-ink) transition-colors',
     'placeholder:text-(--color-ink-3)',
     hoverActive && 'hover:border-(--color-ink-2)',
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)',
