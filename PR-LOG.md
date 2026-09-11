@@ -15,3 +15,4 @@ here. Read top to bottom to follow how the implementation was built.
 | 8 | F1 | UI kit from the tokens | https://github.com/devTherapy/kobolink/pull/13 | 2026-09-11 |
 | 9 | F6 | Public checkout /l/[code], server component | https://github.com/devTherapy/kobolink/pull/11 | 2026-09-11 |
 | 10 | B2 | Auth: register, login, logout, session guard, argon2id, rate limit | https://github.com/devTherapy/kobolink/pull/15 | 2026-09-11 |
+| 11 | B3 | Links API: create with collision retry, list, get, update status | https://github.com/devTherapy/kobolink/pull/18 | 2026-09-11 |
