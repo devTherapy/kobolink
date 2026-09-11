@@ -22,8 +22,10 @@ code=$(curl -sS -o "$work/aasa.json" -w '%{http_code}' \
        "https://$DOMAIN/.well-known/apple-app-site-association")
 [ "$code" = "200" ] || fail "AASA returned HTTP $code from our own server"
 
-# A 301/302 anywhere in the chain fails Apple's validation outright.
-redirects=$(curl -sS -o /dev/null -w '%{num_redirects}' \
+# A 301/302 anywhere in the chain fails Apple's validation outright. Follow
+# redirects here so the count reflects the whole chain; the unfollowed fetch
+# above already rejected a 3xx from the origin itself.
+redirects=$(curl -sSL -o /dev/null -w '%{num_redirects}' \
             "https://$DOMAIN/.well-known/apple-app-site-association")
 [ "$redirects" = "0" ] || fail "AASA is served through $redirects redirect(s); Apple requires none"
 
@@ -61,14 +63,19 @@ else
 fi
 
 # --- 3. Android --------------------------------------------------------------
-curl -sS -o "$work/assetlinks.json" "https://$DOMAIN/.well-known/assetlinks.json"
+code=$(curl -sS -o "$work/assetlinks.json" -w '%{http_code}' \
+       "https://$DOMAIN/.well-known/assetlinks.json")
+[ "$code" = "200" ] || fail "assetlinks.json returned HTTP $code"
 jq -e --arg pkg "$EXPECTED_PACKAGE" \
    '.[0].target.package_name == $pkg' "$work/assetlinks.json" >/dev/null \
    || fail "assetlinks.json does not name $EXPECTED_PACKAGE"
 jq -e '.[0].target.sha256_cert_fingerprints | length > 0' "$work/assetlinks.json" >/dev/null \
    || fail "assetlinks.json carries no fingerprints"
-jq -e '[.[0].target.sha256_cert_fingerprints[] | select(test("^([0-9A-F]{2}:){31}[0-9A-F]{2}$"))]
-       | length == (. | length)' "$work/assetlinks.json" >/dev/null 2>&1 \
+# `all` over the array, not a length comparison against itself — the latter
+# can never fail. Lowercase or truncated fingerprints verify locally and fail
+# silently in production, which is the failure this line exists to catch.
+jq -e '.[0].target.sha256_cert_fingerprints
+       | all(test("^([0-9A-F]{2}:){31}[0-9A-F]{2}$"))' "$work/assetlinks.json" >/dev/null 2>&1 \
    || fail "assetlinks.json has a malformed or lowercase fingerprint"
 pass "assetlinks.json served correctly"
 
