@@ -1,0 +1,38 @@
+{
+  "name": "@kobolink/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NestJS API — auth, links, the ledger, SSE. All writes live here.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsc -p tsconfig.build.json && concurrently -k -n tsc,node -c yellow,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:api": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@kobolink/contracts": "*",
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/config": "^12.0.0",
+    "@nestjs/core": "^12.0.1",
+    "@nestjs/platform-express": "^12.0.1",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.16.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^12.0.1",
+    "@swc/core": "^1.16.2",
+    "@testcontainers/postgresql": "^12.1.0",
+    "@types/express": "^5.0.5",
+    "@types/pg": "^8.15.6",
+    "@types/supertest": "^6.0.3",
+    "drizzle-kit": "^0.31.10",
+    "supertest": "^7.2.2",
+    "unplugin-swc": "^1.6.0"
+  }
+}
