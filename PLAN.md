@@ -58,7 +58,7 @@ edits `packages/contracts` directly.
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | in-progress |
+| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | in-review |
 | B1 | Schema + migrations: `users`, `sessions`, `ledger_accounts`, `ledger_entries`, `links`, `idempotency_keys` | B0 | `drizzle-kit` migration runs clean up and down; a seed script populates a merchant | todo |
 | B2 | Auth: register, login, logout, session guard, argon2id, login rate limit | B1 | Integration tests cover wrong password, unknown user, expired session, revoked session, rate limit trip | todo |
 | B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | todo |
