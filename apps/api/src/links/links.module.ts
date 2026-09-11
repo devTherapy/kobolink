@@ -19,10 +19,15 @@ import { PublicLinksController } from './public-links.controller.js'
  * shares `LinksService` with the merchant-facing controller but composes no
  * guard of its own, so importing `AuthModule` here never puts `SessionGuard`
  * in its path.
+ *
+ * `LinksService` is exported (B5) so `PaymentsModule` can import this module
+ * and call `getForCheckout` from inside its own posting transaction — see
+ * that method's doc comment on `LinksService`.
  */
 @Module({
   imports: [AuthModule],
   controllers: [LinksController, PublicLinksController],
   providers: [LinksService, { provide: LINK_CODE_GENERATOR, useValue: defaultLinkCodeGenerator }],
+  exports: [LinksService],
 })
 export class LinksModule {}

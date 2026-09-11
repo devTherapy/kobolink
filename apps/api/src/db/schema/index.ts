@@ -12,6 +12,7 @@
  * is new rows and new service code, never a migration that reconstructs
  * history.
  */
+export * from './checkout-sessions.js'
 export * from './enums.js'
 export * from './id.js'
 export * from './idempotency-keys.js'

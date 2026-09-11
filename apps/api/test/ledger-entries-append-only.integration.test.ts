@@ -196,13 +196,16 @@ describe('ledger_entries / postings append-only trigger (real Postgres via Testc
 
       // `TRUNCATE postings` *alone* is refused by Postgres itself before
       // any trigger runs — a plain TRUNCATE never implicitly follows a
-      // foreign key the way DELETE does, and ledger_entries.posting_id
-      // references postings.id, so this is Postgres's own protection, not
-      // this migration's. CASCADE (or listing both tables together, as
-      // the third case below does) is what actually reaches the trigger.
+      // foreign key the way DELETE does, and both ledger_entries.posting_id
+      // and (B5) checkout_sessions.posting_id reference postings.id, so
+      // this is Postgres's own protection, not this migration's. CASCADE
+      // (or listing every referencing table together, as the third case
+      // below does) is what actually reaches the trigger.
       await expect(client.query('truncate postings')).rejects.toThrow(/foreign key/i)
       await expect(client.query('truncate postings cascade')).rejects.toThrow(/append-only.*truncate/i)
-      await expect(client.query('truncate ledger_entries, postings')).rejects.toThrow(/append-only.*truncate/i)
+      await expect(client.query('truncate ledger_entries, postings, checkout_sessions')).rejects.toThrow(
+        /append-only.*truncate/i,
+      )
     } finally {
       client.release()
     }

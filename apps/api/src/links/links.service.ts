@@ -10,15 +10,19 @@ import type {
   User,
 } from '@kobolink/contracts'
 import { resolveLink, toPublicLink, toPublicLinkState } from '@kobolink/contracts'
-import { and, desc, eq, gt, inArray, lt, or, type SQL, sql } from 'drizzle-orm'
+import { and, desc, eq, lt, or, type SQL, sql } from 'drizzle-orm'
 import { ApiErrorException } from '../common/errors/api-error.exception.js'
 import { DbService } from '../db/db.service.js'
+import type { Executor } from '../db/db.service.js'
 import { fromIso } from '../db/iso-timestamp.js'
 import { isUniqueViolation } from '../db/pg-error.js'
 import * as schema from '../db/schema/index.js'
 import { decodeLinkCursor, encodeLinkCursor } from './link-cursor.js'
 import { LINK_CODE_GENERATOR, type LinkCodeGenerator } from './link-code.generator.js'
 import { toPaymentLink } from './link-mapper.js'
+import { computeLinkStats, computeLinkStatsBatch, type LinkStats, ZERO_LINK_STATS } from './link-stats.js'
+import { decodePaymentCursor, encodePaymentCursor } from '../payments/payment-cursor.js'
+import { rowToPayment } from '../payments/payment-mapper.js'
 
 /** `links.code` is the primary key (Postgres auto-names it `links_pkey`); a collision is this constraint firing on insert. */
 const LINKS_PKEY_CONSTRAINT = 'links_pkey'
@@ -31,13 +35,6 @@ const LINKS_PKEY_CONSTRAINT = 'links_pkey'
  */
 const MAX_CODE_ATTEMPTS = 8
 
-interface LinkStats {
-  paymentCount: number
-  totalPaidKobo: number
-}
-
-const ZERO_STATS: LinkStats = { paymentCount: 0, totalPaidKobo: 0 }
-
 /**
  * `POST/GET /api/links`, `GET/PATCH /api/links/:code`, `GET
  * /api/links/:code/payments` — PLAN.md's B3 row. Every route
@@ -47,6 +44,10 @@ const ZERO_STATS: LinkStats = { paymentCount: 0, totalPaidKobo: 0 }
  * (`packages/contracts/README.md`) is enforced by that scoping, not by a
  * second authorisation check: a row that exists but is not this merchant's
  * and a row that does not exist at all produce the identical `undefined`.
+ *
+ * `getForCheckout` is exported to B5's `PaymentsService` too (via
+ * `LinksModule`'s exports) — see that method's own doc comment for why it,
+ * uniquely, takes an `Executor` instead of always using `this.db.db`.
  */
 @Injectable()
 export class LinksService {
@@ -107,7 +108,8 @@ export class LinksService {
     const hasMore = rows.length > query.limit
     const page = hasMore ? rows.slice(0, query.limit) : rows
 
-    const stats = await this.computeLinkStatsBatch(
+    const stats = await computeLinkStatsBatch(
+      this.db.db,
       page.map((row) => row.code),
       user.id,
     )
@@ -123,33 +125,40 @@ export class LinksService {
   async getByCode(user: User, code: string): Promise<PaymentLink | undefined> {
     const row = await this.findOwnedRow(user.id, code)
     if (row === undefined) return undefined
-    const stats = await this.computeLinkStats(code, user.id)
+    const stats = await computeLinkStats(this.db.db, code, user.id)
     return toPaymentLink(row, user.displayName, stats.paymentCount, stats.totalPaidKobo)
   }
 
   /**
    * `GET /api/links/:code/public` (`PublicLinksController`) — PLAN.md's B4
-   * row. Unlike every other method here, this is not merchant-scoped: it is
-   * called by a stranger, so it looks the row up by code alone (joining
-   * `users` for `merchantName`, since there is no `CurrentUser` to borrow it
-   * from the way `getByCode`/`list` do) and returns `undefined` only for "no
-   * such code" — a malformed code never reaches this far, `LinkCodeParamPipe`
-   * already turned that into `not_found` before the controller called in.
-   *
-   * The four payable states are computed by `resolveLink()`
-   * (`packages/contracts/src/status.ts`), the single source of truth shared
-   * with the web checkout and both mobile apps, over the same `PaymentLink`
-   * shape `toPaymentLink` already builds — `resolveLink`'s `not-found` branch
-   * is unreachable here (the row was just fetched), so `toPublicLinkState`
-   * cannot return `null`; the `undefined` fallback exists only so a future
-   * change to `resolveLink` fails loudly here instead of serialising a
-   * broken body. `toPublicLink` is what strips `merchantId`, the raw
-   * `status` column and the payment counters before this ever answers a
-   * request — see `PublicLinkSchema`'s own doc comment for why none of that
-   * may leak to an unauthenticated caller.
+   * row, built over the same `getForCheckout` B5 uses.
    */
   async resolvePublic(code: string): Promise<PublicLinkResponse | undefined> {
-    const [row] = await this.db.db
+    const resolved = await this.getForCheckout(this.db.db, code)
+    if (resolved === undefined) return undefined
+
+    const resolution = resolveLink(resolved.link)
+    const state = toPublicLinkState(resolution)
+    if (state === null) {
+      throw new Error(`links: resolveLink for an existing row (${code}) produced 'not-found'`)
+    }
+    return { state, link: toPublicLink(resolved.link) }
+  }
+
+  /**
+   * The merchant-scoped, full-fidelity read `PublicLinksController` cannot
+   * expose (it carries `merchantUserId`, needed to attribute a
+   * `link_payment` posting's `merchant_receivable` account) — shared by
+   * `resolvePublic` above and by B5's `PaymentsService`, which calls this
+   * *inside its own posting transaction* (`executor` is that transaction,
+   * there) so the payability check a `checkout.verify` bases its decision on
+   * reads the same in-flight state its own writes are about to change,
+   * never a separate, possibly-stale connection. Every other caller in this
+   * class passes `this.db.db` and gets the plain pooled read `resolvePublic`
+   * always used.
+   */
+  async getForCheckout(executor: Executor, code: string): Promise<{ link: PaymentLink; merchantUserId: string } | undefined> {
+    const [row] = await executor
       .select({ link: schema.links, merchantName: schema.users.displayName })
       .from(schema.links)
       .innerJoin(schema.users, eq(schema.users.id, schema.links.merchantUserId))
@@ -157,15 +166,9 @@ export class LinksService {
       .limit(1)
     if (row === undefined) return undefined
 
-    const stats = await this.computeLinkStats(code, row.link.merchantUserId)
+    const stats = await computeLinkStats(executor, code, row.link.merchantUserId)
     const paymentLink = toPaymentLink(row.link, row.merchantName, stats.paymentCount, stats.totalPaidKobo)
-
-    const resolution = resolveLink(paymentLink)
-    const state = toPublicLinkState(resolution)
-    if (state === null) {
-      throw new Error(`links: resolveLink for an existing row (${code}) produced 'not-found'`)
-    }
-    return { state, link: toPublicLink(paymentLink) }
+    return { link: paymentLink, merchantUserId: row.link.merchantUserId }
   }
 
   async updateStatus(user: User, code: string, status: LinkStatus): Promise<PaymentLink | undefined> {
@@ -175,34 +178,44 @@ export class LinksService {
       .where(and(eq(schema.links.code, code), eq(schema.links.merchantUserId, user.id)))
       .returning()
     if (row === undefined) return undefined
-    const stats = await this.computeLinkStats(code, user.id)
+    const stats = await computeLinkStats(this.db.db, code, user.id)
     return toPaymentLink(row, user.displayName, stats.paymentCount, stats.totalPaidKobo)
   }
 
   /**
-   * `undefined` when the link is not this merchant's (or doesn't exist) —
-   * the controller turns that into the same `not_found` every other route
-   * gives a wrong-merchant code.
-   *
-   * B5 (`checkout.initialize`/`checkout.verify`) has not landed: nothing
-   * ever writes a `postings` row of kind `link_payment`, so this always
-   * answers an empty, correctly shaped page today. Once B5 lands, this is
-   * where its payments projection (or a query over `postings`/
-   * `ledger_entries` shaped like `computeLinkStats` below) gets wired in —
-   * see this feature's PR description for the exact assumption B5 needs to
-   * either keep or correct.
-   *
-   * `query.cursor` is still decoded — and thrown on if it doesn't parse —
-   * even though nothing here reads the result yet: the underlying data
-   * source isn't wired in until B5, but a garbage cursor should already
-   * behave the same way it does on `list()` (400 `validation_failed`)
-   * rather than silently paging past it into an empty result.
+   * `GET /api/links/:code/payments` — newest first, including failed
+   * payments (`packages/contracts/README.md`: "Includes failed payments...
+   * so the merchant sees declines"). B5 landed: every `link_payment`
+   * posting tagged with this `code` (`postings.metadata ->> 'linkCode'`,
+   * the same convention `computeLinkStats` reads) is one page row, success
+   * or failure alike — `rowToPayment` (`payments/payment-mapper.ts`)
+   * projects the posting (never `ledger_entries` directly; a failure has
+   * none) into the contract's `Payment` shape.
    */
   async payments(user: User, code: string, query: PageQuery): Promise<PaymentListResponse | undefined> {
-    this.decodeCursorOrThrow(query.cursor)
+    const cursor = this.decodePaymentCursorOrThrow(query.cursor)
     const row = await this.findOwnedRow(user.id, code)
     if (row === undefined) return undefined
-    return { items: [], nextCursor: null }
+
+    const linkCodeExpr = sql<string>`${schema.postings.metadata} ->> 'linkCode'`
+    const scope = and(eq(schema.postings.kind, 'link_payment'), eq(linkCodeExpr, code))
+    const where = cursor === undefined ? scope : and(scope, this.beforePaymentCursor(cursor))
+
+    const rows = await this.db.db
+      .select()
+      .from(schema.postings)
+      .where(where)
+      .orderBy(desc(this.postingCreatedAtMs()), desc(schema.postings.reference))
+      .limit(query.limit + 1)
+
+    const hasMore = rows.length > query.limit
+    const page = hasMore ? rows.slice(0, query.limit) : rows
+    const items = page.map((r) => rowToPayment(r))
+
+    const last = page.at(-1)
+    const nextCursor = hasMore && last !== undefined ? encodePaymentCursor(last.createdAt, last.reference) : null
+
+    return { items, nextCursor }
   }
 
   private async findOwnedRow(merchantId: string, code: string): Promise<typeof schema.links.$inferSelect | undefined> {
@@ -214,6 +227,19 @@ export class LinksService {
   private decodeCursorOrThrow(cursor: string | undefined): { createdAt: Date; code: string } | undefined {
     if (cursor === undefined) return undefined
     const decoded = decodeLinkCursor(cursor)
+    if (decoded === undefined) {
+      throw new ApiErrorException({
+        code: 'validation_failed',
+        message: 'Invalid cursor.',
+        fields: { cursor: ['not a valid cursor'] },
+      })
+    }
+    return decoded
+  }
+
+  private decodePaymentCursorOrThrow(cursor: string | undefined): { createdAt: Date; reference: string } | undefined {
+    if (cursor === undefined) return undefined
+    const decoded = decodePaymentCursor(cursor)
     if (decoded === undefined) {
       throw new ApiErrorException({
         code: 'validation_failed',
@@ -239,6 +265,11 @@ export class LinksService {
     return sql`date_trunc('milliseconds', ${schema.links.createdAt})`
   }
 
+  /** Same reasoning as `createdAtMs`, for `payments`'s keyset over `postings.created_at`. */
+  private postingCreatedAtMs(): SQL {
+    return sql`date_trunc('milliseconds', ${schema.postings.createdAt})`
+  }
+
   /** Keyset predicate for "strictly after `cursor` in the `createdAtMs() desc, code desc` order". */
   private beforeCursor(cursor: { createdAt: Date; code: string }): SQL | undefined {
     const createdAtMs = this.createdAtMs()
@@ -248,75 +279,17 @@ export class LinksService {
     )
   }
 
+  /** Keyset predicate for `payments`'s `postingCreatedAtMs() desc, reference desc` order. */
+  private beforePaymentCursor(cursor: { createdAt: Date; reference: string }): SQL | undefined {
+    const createdAtMs = this.postingCreatedAtMs()
+    return or(
+      lt(createdAtMs, cursor.createdAt),
+      and(eq(createdAtMs, cursor.createdAt), lt(schema.postings.reference, cursor.reference)),
+    )
+  }
+
   private statsTuple(stats: Map<string, LinkStats>, code: string): [number, number] {
-    const found = stats.get(code) ?? ZERO_STATS
+    const found = stats.get(code) ?? ZERO_LINK_STATS
     return [found.paymentCount, found.totalPaidKobo]
-  }
-
-  /**
-   * Derives `paymentCount`/`totalPaidKobo` from successful `link_payment`
-   * postings — never a separately-written counter a client (or a bug) could
-   * drift from the ledger. A posting only exists for a payment that actually
-   * completed (round 2 of B1's own review: "B5 must ... only ever write a
-   * `postings` row for a transaction that actually completed"), so counting
-   * postings *is* counting successes; no `status` filter is needed or
-   * possible here.
-   *
-   * Attribution assumption, since B1's schema has no dedicated link-postings
-   * join table: a `link_payment` posting's `metadata` carries `linkCode`
-   * (`postings.metadata ->> 'linkCode' = code`), and the credit side of that
-   * posting — the positive entry against the merchant's own
-   * `merchant_receivable` account — is the amount that counts. `postings`'
-   * own `jsonb` `metadata` column (see that file's doc comment) is otherwise
-   * unshaped, so this is this feature's own convention, not yet
-   * cross-checked against B5's real write path; flagged in the PR
-   * description as the one thing B5 may need to conform to (or correct this
-   * query to match) once it lands.
-   */
-  private async computeLinkStats(code: string, merchantId: string): Promise<LinkStats> {
-    const batch = await this.computeLinkStatsBatch([code], merchantId)
-    return batch.get(code) ?? ZERO_STATS
-  }
-
-  private async computeLinkStatsBatch(codes: string[], merchantId: string): Promise<Map<string, LinkStats>> {
-    const result = new Map<string, LinkStats>()
-    if (codes.length === 0) return result
-
-    const linkCodeExpr = sql<string>`${schema.postings.metadata} ->> 'linkCode'`
-
-    const rows = await this.db.db
-      .select({ linkCode: linkCodeExpr, amountKobo: schema.ledgerEntries.amountKobo })
-      .from(schema.postings)
-      .innerJoin(schema.ledgerEntries, eq(schema.ledgerEntries.postingId, schema.postings.id))
-      .innerJoin(schema.ledgerAccounts, eq(schema.ledgerAccounts.id, schema.ledgerEntries.accountId))
-      .where(
-        and(
-          eq(schema.postings.kind, 'link_payment'),
-          eq(schema.ledgerAccounts.kind, 'merchant_receivable'),
-          eq(schema.ledgerAccounts.ownerUserId, merchantId),
-          gt(schema.ledgerEntries.amountKobo, 0),
-          inArray(linkCodeExpr, codes),
-        ),
-      )
-
-    for (const row of rows) {
-      if (row.linkCode === null) continue
-      const existing = result.get(row.linkCode) ?? { paymentCount: 0, totalPaidKobo: 0 }
-      result.set(row.linkCode, {
-        paymentCount: existing.paymentCount + 1,
-        totalPaidKobo: existing.totalPaidKobo + row.amountKobo,
-      })
-    }
-
-    // See ledger-entries.ts's own doc comment: `mode: 'number'` is safe for
-    // one bounded row but never for an aggregate — verify before trusting a
-    // summed totalPaidKobo the same way a single row's value is trusted.
-    for (const [code, stats] of result) {
-      if (!Number.isSafeInteger(stats.totalPaidKobo)) {
-        throw new Error(`links: totalPaidKobo for ${code} exceeded Number.MAX_SAFE_INTEGER`)
-      }
-    }
-
-    return result
   }
 }
