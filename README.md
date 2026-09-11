@@ -35,6 +35,7 @@ npm ci
 npm run dev          # web on 3000, api on 3001
 npm run lint         # eslint --max-warnings 0, every workspace
 npm run typecheck    # tsc --noEmit, every workspace
+npm run build        # contracts tsc · nest build · next build — catches Server/Client boundary errors
 npm run test         # unit — pure logic, no I/O
 npm run test:api     # API integration — real Postgres via Testcontainers
 npm run test:web     # component tests — RTL + MSW

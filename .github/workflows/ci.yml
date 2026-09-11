@@ -2,7 +2,7 @@
 # reviewer PASS — is enforced by the orchestrator, not by GitHub branch
 # protection, which the repository owner has chosen not to enable.
 #
-#   lint-typecheck   eslint --max-warnings 0 · tsc --noEmit, every workspace
+#   lint-typecheck   eslint --max-warnings 0 · tsc --noEmit · npm run build, every workspace
 #   unit             vitest, pure logic, no I/O
 #   integration-api  NestJS + Supertest + real Postgres via Testcontainers
 #   integration-web  React Testing Library + MSW, no browser
@@ -48,6 +48,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      # A Server/Client boundary mistake in Next, or a Nest build error, only
+      # surfaces at build time. Lint and typecheck pass on it; this does not.
+      - run: npm run build
 
   unit:
     name: unit
