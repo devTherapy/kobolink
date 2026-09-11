@@ -58,7 +58,7 @@ edits `packages/contracts` directly.
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | todo |
+| B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | in-progress |
 | B1 | Schema + migrations: `users`, `sessions`, `ledger_accounts`, `ledger_entries`, `links`, `idempotency_keys` | B0 | `drizzle-kit` migration runs clean up and down; a seed script populates a merchant | todo |
 | B2 | Auth: register, login, logout, session guard, argon2id, login rate limit | B1 | Integration tests cover wrong password, unknown user, expired session, revoked session, rate limit trip | todo |
 | B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | todo |
@@ -78,7 +78,7 @@ no `payments` table with a status column. One `users` table with roles, never a
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | todo |
+| F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | in-progress |
 | F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | todo |
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | todo |
 | F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | todo |
@@ -124,7 +124,7 @@ They are deliberately not the same design and neither is the web page.
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
 | X0 | Monorepo (npm workspaces), five CI jobs, hooks, agent definitions | — | A failing test fails a PR | done |
-| X1 | `packages/contracts` — domain types, Zod schemas, money/code/status | X0 | Both apps import it; changing a shape breaks the other side's typecheck | in-review |
+| X1 | `packages/contracts` — domain types, Zod schemas, money/code/status | X0 | Both apps import it; changing a shape breaks the other side's typecheck | done |
 | X2 | Integration: wire web to the real API, mobile to the real API | Wave 2 | MSW handlers deleted from the e2e path; the real journey passes | todo |
 | X3 | Hosting, `pay.folusayo.com`, association smoke test | X2 | `scripts/smoke-associations.sh` green against the real domain, including Apple's CDN copy | todo |
 | X4 | Release: tag, changelog from the PR trail | X3 | — | todo |
