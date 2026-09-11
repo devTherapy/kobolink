@@ -22,12 +22,11 @@ code=$(curl -sS -o "$work/aasa.json" -w '%{http_code}' \
        "https://$DOMAIN/.well-known/apple-app-site-association")
 [ "$code" = "200" ] || fail "AASA returned HTTP $code from our own server"
 
-# A 301/302 anywhere in the chain fails Apple's validation outright. Follow
-# redirects here so the count reflects the whole chain; the unfollowed fetch
-# above already rejected a 3xx from the origin itself.
-redirects=$(curl -sSL -o /dev/null -w '%{num_redirects}' \
-            "https://$DOMAIN/.well-known/apple-app-site-association")
-[ "$redirects" = "0" ] || fail "AASA is served through $redirects redirect(s); Apple requires none"
+# A 301/302 anywhere in the chain fails Apple's validation outright. The
+# unfollowed fetch above only accepts a literal 200, so any redirect — which
+# necessarily starts with a 3xx from the origin — has already failed the run.
+# No separate redirect check is needed, and one that re-fetched the same URL
+# could never fail.
 
 jq -e --arg id "$EXPECTED_APP_ID" \
    '.applinks.details[0].appIDs | index($id)' "$work/aasa.json" >/dev/null \

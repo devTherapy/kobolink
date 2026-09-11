@@ -1,4 +1,6 @@
-# Five blocking jobs. A PR cannot merge while any of them is red.
+# Five jobs. The merge rule — every one of them green on `gh pr checks`, plus a
+# reviewer PASS — is enforced by the orchestrator, not by GitHub branch
+# protection, which the repository owner has chosen not to enable.
 #
 #   lint-typecheck   eslint --max-warnings 0 · tsc --noEmit, every workspace
 #   unit             vitest, pure logic, no I/O
@@ -19,7 +21,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR runs are cancelled; runs on main are never cancelled, so
+  # every merged commit ends with a real status rather than "cancelled".
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

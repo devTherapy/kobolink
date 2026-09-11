@@ -25,6 +25,11 @@ scripts/             Post-deploy smoke test for the deep-link contract
 
 Requires Node 22 (`.nvmrc`) and Docker for the API integration tests.
 
+`npm ci` compiles `packages/contracts` to `dist/` through its `prepare` script;
+that is what `apps/api` and `apps/web` import. An install with
+`--ignore-scripts` leaves no `dist/`, and imports of `@kobolink/contracts`
+then fail at module resolution — run `npm run build -w packages/contracts`.
+
 ```
 npm ci
 npm run dev          # web on 3000, api on 3001
@@ -37,4 +42,7 @@ npm run test:e2e     # Playwright, full stack, desktop + mobile
 npm run smoke        # post-deploy deep-link check (DOMAIN, EXPECTED_APP_ID)
 ```
 
-The same five checks run as blocking jobs in `.github/workflows/ci.yml`.
+The same five checks run as CI jobs in `.github/workflows/ci.yml`. Nothing is
+merged unless all five are green and the adversarial review passes; that rule
+is applied by the orchestrator at merge time (there is no GitHub branch
+protection, by the owner's choice).
