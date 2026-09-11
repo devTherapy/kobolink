@@ -43,7 +43,13 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponse> {
-    const outcome = await this.authService.register(dto, req.headers['user-agent'])
+    // Review round 1, finding 3: registration was unthrottled. It shares
+    // login's per-IP bucket via the same Retry-After-on-429 handling.
+    const outcome = await this.authService.register(dto, this.resolveIp(req), req.headers['user-agent'])
+    if (outcome.kind === 'rate_limited') {
+      res.setHeader('Retry-After', String(outcome.retryAfterSeconds))
+      throw new ApiErrorException({ code: 'rate_limited', message: RATE_LIMITED_MESSAGE })
+    }
     if (outcome.kind === 'conflict') {
       throw new ApiErrorException({ code: 'conflict', message: CONFLICT_MESSAGE })
     }
@@ -57,15 +63,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponse> {
-    const ip = getClientIp({
-      forwardedFor: req.headers['x-forwarded-for'] as string | undefined,
-      remoteAddress: req.socket.remoteAddress,
-      // Only ever true when this deployment's own reverse proxy sets (and
-      // overwrites) X-Forwarded-For — see client-ip.ts's doc comment.
-      trustProxy: process.env.TRUST_PROXY === '1',
-    })
-
-    const outcome = await this.authService.login(dto, ip, req.headers['user-agent'])
+    const outcome = await this.authService.login(dto, this.resolveIp(req), req.headers['user-agent'])
 
     if (outcome.kind === 'rate_limited') {
       // Set directly on the real response before throwing: the global
@@ -112,5 +110,16 @@ export class AuthController {
       return { user: outcome.user, session: outcome.session }
     }
     return { user: outcome.user, session: outcome.session, token: outcome.token }
+  }
+
+  /** Shared by `register` and `login` — both feed the rate limiter's IP bucket. */
+  private resolveIp(req: Request): string {
+    return getClientIp({
+      forwardedFor: req.headers['x-forwarded-for'] as string | undefined,
+      remoteAddress: req.socket.remoteAddress,
+      // Only ever true when this deployment's own reverse proxy sets (and
+      // overwrites) X-Forwarded-For — see client-ip.ts's doc comment.
+      trustProxy: process.env.TRUST_PROXY === '1',
+    })
   }
 }

@@ -5,7 +5,7 @@
   "description": "NestJS API — auth, links, the ledger, SSE. All writes live here.",
   "type": "module",
   "scripts": {
-    "dev": "tsc -p tsconfig.build.json && concurrently -k -n tsc,node -c yellow,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
+    "dev": "tsc -p tsconfig.build.json && concurrently -k -n tsc,node -c yellow,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"NODE_ENV=development node --watch --enable-source-maps dist/main.js\"",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",

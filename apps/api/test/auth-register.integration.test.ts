@@ -137,6 +137,33 @@ describe('POST /api/auth/register (real Postgres via Testcontainers)', () => {
     expect(sameEmailBody).toEqual(samePhoneBody)
   })
 
+  it('conflict: phone numbers that normalise to the same E.164 value collide too (review round 1, finding 7)', async () => {
+    // A phone distinct from the conflict test above's +2348031111111 —
+    // that number is already taken in this file's shared container by the
+    // time this test runs.
+    const first = await getCtx().request.post(API.auth.register).send({
+      email: 'phone-norm-a@example.test',
+      phone: '+2348032222222',
+      password: 'correct horse battery staple',
+      displayName: 'Phone Norm A',
+      client: 'web',
+    })
+    expect(first.status).toBe(201)
+
+    // "0803 222 2222" normalises (PhoneSchema, packages/contracts/src/primitives.ts)
+    // to the exact same +2348032222222 the first registration already holds.
+    const second = await getCtx().request.post(API.auth.register).send({
+      email: 'phone-norm-b@example.test',
+      phone: '0803 222 2222',
+      password: 'correct horse battery staple',
+      displayName: 'Phone Norm B',
+      client: 'web',
+    })
+
+    expect(second.status).toBe(409)
+    expect(ApiErrorSchema.parse(second.body).code).toBe('conflict')
+  })
+
   function asCookieArray(setCookie: string | string[] | undefined): string[] {
     if (setCookie === undefined) return []
     return Array.isArray(setCookie) ? setCookie : [setCookie]

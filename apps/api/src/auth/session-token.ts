@@ -21,15 +21,17 @@ import { nanoid } from 'nanoid'
  * exactly that character set (see `db/schema/id.ts`), so `generateSessionId`
  * reuses it directly rather than inventing a second encoding. 22 characters
  * (not nanoid's own 21-character default) is deliberate: log2(64) * 22 ≈
- * 132 bits, comfortably over the ≥128-bit floor DESIGN-SPEC.md /
- * PLAN.md's B2 row asks for — 21 characters (≈126 bits) would round down
- * under it.
+ * 132 bits, comfortably over the ≥128-bit floor this PR's own design set for
+ * the opaque id (review round 1, finding 9: an earlier version of this
+ * comment cited DESIGN-SPEC.md/PLAN.md for that specific floor, which
+ * neither document states — the floor is this feature's own call) — 21
+ * characters (≈126 bits) would round down under it.
  *
  * The session token is not an `Id` — it never appears in a URL path or a
  * `packages/contracts` schema field named `id` — so it is free to use
  * `base64url` over raw bytes instead of nanoid's alphabet-sampling
- * approach. 32 bytes is exactly 256 bits, matching the ≥256-bit floor for
- * the secret half of the pair.
+ * approach. 32 bytes is exactly 256 bits, matching the same PR's ≥256-bit
+ * floor for the secret half of the pair.
  */
 const SESSION_ID_LENGTH = 22
 const SESSION_TOKEN_BYTES = 32

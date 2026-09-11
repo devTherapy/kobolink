@@ -1,16 +1,19 @@
 import { Injectable } from '@nestjs/common'
 import type { LoginRequest, RegisterRequest, User } from '@kobolink/contracts'
-import { eq } from 'drizzle-orm'
+import { eq, or } from 'drizzle-orm'
 import { DbService } from '../db/db.service.js'
 import { toIso } from '../db/iso-timestamp.js'
 import { isUniqueViolation } from '../db/pg-error.js'
 import * as schema from '../db/schema/index.js'
 import { hashPassword, verifyDummyPassword, verifyPassword } from './password.js'
 import { RateLimiterService } from './rate-limiter.service.js'
+// Review round 1, finding 5: this constant was previously declared a second
+// time in this file, each copy's own comment claiming to be the single
+// source. `session-cookie.ts` is now the one place it is defined (it also
+// backs the cookie's own Max-Age) — everything else, including this file,
+// imports it.
+import { SESSION_LIFETIME_MS } from './session-cookie.js'
 import { generateSessionId, generateSessionToken, hashSessionToken } from './session-token.js'
-
-/** 30 days for both `client: 'web'` and `client: 'mobile'` — one constant, so the two never quietly drift apart. */
-export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface SessionInfo {
   id: string
@@ -21,6 +24,7 @@ export type RegisterOutcome =
   | { kind: 'ok'; user: User; session: SessionInfo; token: string }
   /** A taken email *or* phone — the caller decides the (deliberately generic) message; which one is never disclosed. */
   | { kind: 'conflict' }
+  | { kind: 'rate_limited'; retryAfterSeconds: number }
 
 export type LoginOutcome =
   | { kind: 'ok'; user: User; session: SessionInfo; token: string }
@@ -61,7 +65,28 @@ export class AuthService {
     private readonly rateLimiter: RateLimiterService,
   ) {}
 
-  async register(dto: RegisterRequest, userAgent: string | undefined): Promise<RegisterOutcome> {
+  /**
+   * Review round 1, finding 3: registration was previously unthrottled and
+   * hashed the password before checking uniqueness at all. `tryAcquireIp`
+   * runs first (cheap, synchronous, shares the login flow's own IP
+   * bucket), then a plain `select` checks uniqueness *before* paying
+   * argon2's cost for a request that is going to be rejected anyway. That
+   * select is a fast-path optimisation only, never the actual authority —
+   * a concurrent race between it and the insert below is still caught by
+   * `users_email_unique`/`users_phone_unique` and turned into the same
+   * `conflict` outcome, exactly as before this change.
+   */
+  async register(dto: RegisterRequest, ip: string, userAgent: string | undefined): Promise<RegisterOutcome> {
+    const rateCheck = this.rateLimiter.tryAcquireIp(ip)
+    if (!rateCheck.allowed) {
+      return { kind: 'rate_limited', retryAfterSeconds: rateCheck.retryAfterSeconds }
+    }
+
+    const conflictMatch =
+      dto.phone !== undefined ? or(eq(schema.users.email, dto.email), eq(schema.users.phone, dto.phone)) : eq(schema.users.email, dto.email)
+    const [existing] = await this.db.db.select({ id: schema.users.id }).from(schema.users).where(conflictMatch).limit(1)
+    if (existing !== undefined) return { kind: 'conflict' }
+
     const passwordHash = await hashPassword(dto.password)
 
     try {
@@ -113,12 +138,15 @@ export class AuthService {
    * of an argon2 verify (`verifyDummyPassword`) so the two branches take
    * roughly the same time; see that function's own doc comment.
    *
-   * Rate limiting is checked *before* touching the database or argon2 at
-   * all — a tripped limiter must reject a request with the *correct*
-   * password just as fast as a wrong one, not merely eventually.
+   * Rate limiting is reserved *before* touching the database or argon2 at
+   * all, atomically with the check itself (`tryAcquireLogin` — review
+   * round 1, finding 1) — a tripped limiter must reject a request with the
+   * *correct* password just as fast as a wrong one, and a burst of
+   * genuinely concurrent requests must not all see the same pre-request
+   * bucket state and be admitted together.
    */
   async login(dto: LoginRequest, ip: string, userAgent: string | undefined): Promise<LoginOutcome> {
-    const rateCheck = this.rateLimiter.check(dto.email, ip)
+    const rateCheck = this.rateLimiter.tryAcquireLogin(dto.email, ip)
     if (!rateCheck.allowed) {
       return { kind: 'rate_limited', retryAfterSeconds: rateCheck.retryAfterSeconds }
     }
@@ -128,7 +156,9 @@ export class AuthService {
     const passwordOk = userRow !== undefined ? await verifyPassword(userRow.passwordHash, dto.password) : await verifyDummyPassword(dto.password)
 
     if (userRow === undefined || !passwordOk) {
-      this.rateLimiter.recordFailure(dto.email, ip)
+      // No separate "record the failure" call — tryAcquireLogin above
+      // already reserved this attempt's slot in both buckets synchronously,
+      // before any of this async work ran.
       return { kind: 'unauthenticated' }
     }
 

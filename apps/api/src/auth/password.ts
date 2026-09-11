@@ -15,9 +15,14 @@ export async function verifyPassword(passwordHash: string, password: string): Pr
 }
 
 /**
- * Login "always run argon2 verify against a dummy hash when the user is
- * unknown" (PLAN.md's B2 row) — so that rejecting an unknown email takes
- * roughly the same wall-clock time as rejecting a wrong password for a
+ * This PR's own decision for login: always run an argon2 verify against a
+ * dummy hash when the user is unknown — PLAN.md's B2 row asks for the
+ * observable behaviour ("wrong password, unknown user" both indistinguishable
+ * 401s) but not this specific mechanism. Review round 1, finding 9: an
+ * earlier version of this comment cited PLAN.md for the mechanism itself,
+ * which it does not actually specify. The point of doing it this way is so
+ * that rejecting an unknown email takes roughly the same wall-clock time as
+ * rejecting a wrong password for a
  * real one, instead of an unknown-user response returning near-instantly
  * (no argon2 call at all) and a wrong-password response taking tens of
  * milliseconds — a gap an attacker can use to enumerate which emails have

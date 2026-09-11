@@ -94,7 +94,7 @@ describe('POST /api/auth/login (real Postgres via Testcontainers)', () => {
     expect(unknownUser.headers['set-cookie']).toBeUndefined()
   })
 
-  it('validation failure: a missing password is rejected before touching the database', async () => {
+  it('validation failure: a missing password is rejected with validation_failed and a field-keyed message', async () => {
     const response = await getCtx().request.post(API.auth.login).send({
       email: 'missing-password@example.test',
       client: 'web',
