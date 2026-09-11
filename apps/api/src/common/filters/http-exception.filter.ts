@@ -1,6 +1,7 @@
 import { HttpException, type ArgumentsHost, Catch, type ExceptionFilter, Logger } from '@nestjs/common'
 import type { Response } from 'express'
 import { toApiErrorResponse } from './error-mapping.js'
+import { safeLogDetail } from './log-redaction.js'
 
 /**
  * Registered globally in `main.ts`. Every thrown error — ours or Nest's own
@@ -24,8 +25,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // the full-stack ERROR log for what actually is unanticipated: anything
     // that reached here *without* being an HttpException at all.
     if (!(exception instanceof HttpException)) {
-      const detail = exception instanceof Error ? (exception.stack ?? exception.message) : String(exception)
-      this.logger.error(detail)
+      // safeLogDetail (review round 1, finding 8): a raw DrizzleQueryError
+      // reaching here carries its bound query parameters verbatim in its
+      // own .message/.stack — never logged unredacted.
+      this.logger.error(safeLogDetail(exception))
     }
 
     const response = host.switchToHttp().getResponse<Response>()
