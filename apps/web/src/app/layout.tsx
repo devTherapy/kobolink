@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next'
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google'
-import { MswProvider } from '@/mocks/msw-provider'
 import './globals.css'
 
 /**
@@ -37,9 +36,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body>
-        <MswProvider>{children}</MswProvider>
-      </body>
+      <body>{children}</body>
     </html>
   )
 }

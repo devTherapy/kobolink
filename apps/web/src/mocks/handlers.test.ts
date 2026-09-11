@@ -11,9 +11,14 @@ import { INITIAL_WALLET_BALANCE_KOBO, linkStore } from './state'
  */
 
 const ORIGIN = 'http://localhost:3000'
+const DEFAULT_CODE = 'aBcDeFgH' // The seeded default link — state.ts.
+const DEFAULT_AMOUNT_KOBO = 1_850_000 // Its fixed amount — state.ts.
 
-function idemKey(suffix: string): string {
-  return `test-idem-key-${suffix}`
+let idemCounter = 0
+/** IdempotencyKeySchema requires at least 16 characters — pad the counter so every key clears it. */
+function idemKey(): string {
+  idemCounter += 1
+  return `test-idem-key-${String(idemCounter).padStart(4, '0')}`
 }
 
 async function postJson(
@@ -46,13 +51,32 @@ async function patchJson(path: string, body: unknown): Promise<{ status: number;
   return { status: response.status, json }
 }
 
-describe('checkout.initialize', () => {
-  it('rejects an amount that does not match a fixed-amount link with amount_mismatch (finding 1)', async () => {
-    // The seeded default link (state.ts) has a fixed amountKobo of 1_850_000.
+/** Initializes a checkout and returns its reference. */
+async function initializeCheckout(
+  code: string,
+  amountKobo: number,
+  payerEmail: string,
+): Promise<string> {
+  const { json } = await postJson(
+    '/api/checkout/initialize',
+    { code, amountKobo, payerName: 'Ngozi Okafor', payerEmail },
+    { [IDEMPOTENCY_HEADER]: idemKey() },
+  )
+  return (json as { reference: string }).reference
+}
+
+/** Initializes and verifies a checkout with a payer email that does not decline. */
+async function payLink(code: string, amountKobo: number): Promise<void> {
+  const reference = await initializeCheckout(code, amountKobo, 'ngozi@example.com')
+  await postJson('/api/checkout/verify', { reference }, { [IDEMPOTENCY_HEADER]: idemKey() })
+}
+
+describe('checkout.initialize: amount_mismatch on a fixed-amount link', () => {
+  it('rejects an amount that does not match the link', async () => {
     const { status, json } = await postJson(
       '/api/checkout/initialize',
-      { code: 'aBcDeFgH', amountKobo: 999_00, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' },
-      { [IDEMPOTENCY_HEADER]: idemKey('mismatch') },
+      { code: DEFAULT_CODE, amountKobo: 999_00, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' },
+      { [IDEMPOTENCY_HEADER]: idemKey() },
     )
     expect(status).toBe(422)
     expect(json).toMatchObject({ code: 'amount_mismatch', moneyMoved: false })
@@ -61,56 +85,47 @@ describe('checkout.initialize', () => {
   it('accepts an amount that matches the fixed amount', async () => {
     const { status, json } = await postJson(
       '/api/checkout/initialize',
-      { code: 'aBcDeFgH', amountKobo: 1_850_000, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' },
-      { [IDEMPOTENCY_HEADER]: idemKey('match') },
+      { code: DEFAULT_CODE, amountKobo: DEFAULT_AMOUNT_KOBO, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' },
+      { [IDEMPOTENCY_HEADER]: idemKey() },
     )
     expect(status).toBe(201)
-    expect(json).toMatchObject({ code: 'aBcDeFgH', amountKobo: 1_850_000, status: 'pending' })
+    expect(json).toMatchObject({ code: DEFAULT_CODE, amountKobo: DEFAULT_AMOUNT_KOBO, status: 'pending' })
   })
 })
 
-describe('checkout.verify (finding 3: simulated decline)', () => {
-  async function initialize(payerEmail: string, key: string) {
-    const { json } = await postJson(
-      '/api/checkout/initialize',
-      { code: 'aBcDeFgH', amountKobo: 1_850_000, payerName: 'Ngozi Okafor', payerEmail },
-      { [IDEMPOTENCY_HEADER]: idemKey(key) },
-    )
-    return (json as { reference: string }).reference
-  }
-
+describe('checkout.verify: the simulated gateway', () => {
   it('declines when the payer email starts with fail@, and money did not move', async () => {
-    const reference = await initialize('fail@example.com', 'decline-init')
-    const { status, json } = await postJson(
-      '/api/checkout/verify',
-      { reference },
-      { [IDEMPOTENCY_HEADER]: idemKey('decline-verify') },
-    )
+    const reference = await initializeCheckout(DEFAULT_CODE, DEFAULT_AMOUNT_KOBO, 'fail@example.com')
+    const { status, json } = await postJson('/api/checkout/verify', { reference }, { [IDEMPOTENCY_HEADER]: idemKey() })
     expect(status).toBe(200)
-    expect(json).toMatchObject({
-      payment: { status: 'failed', moneyMoved: false },
-    })
+    expect(json).toMatchObject({ payment: { status: 'failed', moneyMoved: false } })
     expect((json as { payment: { failureReason: string | null } }).payment.failureReason).toBeTruthy()
   })
 
   it('succeeds for any other payer email, and money moved', async () => {
-    const reference = await initialize('ngozi@example.com', 'success-init')
-    const { status, json } = await postJson(
-      '/api/checkout/verify',
-      { reference },
-      { [IDEMPOTENCY_HEADER]: idemKey('success-verify') },
-    )
+    const reference = await initializeCheckout(DEFAULT_CODE, DEFAULT_AMOUNT_KOBO, 'ngozi@example.com')
+    const { status, json } = await postJson('/api/checkout/verify', { reference }, { [IDEMPOTENCY_HEADER]: idemKey() })
     expect(status).toBe(200)
-    expect(json).toMatchObject({
-      payment: { status: 'success', moneyMoved: true, failureReason: null },
-    })
+    expect(json).toMatchObject({ payment: { status: 'success', moneyMoved: true, failureReason: null } })
+  })
+
+  it('is a read of one outcome: verifying the same reference again (a different Idempotency-Key) returns the original payment, and does not post twice', async () => {
+    const reference = await initializeCheckout(DEFAULT_CODE, DEFAULT_AMOUNT_KOBO, 'ngozi@example.com')
+    const first = await postJson('/api/checkout/verify', { reference }, { [IDEMPOTENCY_HEADER]: idemKey() })
+    const second = await postJson('/api/checkout/verify', { reference }, { [IDEMPOTENCY_HEADER]: idemKey() })
+
+    expect(second.json).toEqual(first.json)
+
+    const { json: link } = await getJson(`/api/links/${DEFAULT_CODE}`)
+    // Seeded at paymentCount 3 (state.ts) — exactly one payment posted, not two.
+    expect(link).toMatchObject({ paymentCount: 4, totalPaidKobo: 5_550_000 + DEFAULT_AMOUNT_KOBO })
   })
 })
 
-describe('idempotency replay (finding 4)', () => {
+describe('Idempotency-Key: "a replay ... returns the stored response ... the same key with a different body is idempotency_mismatch"', () => {
   it('replaying the same key with the same body returns the original response, not a new posting', async () => {
-    const key = idemKey('replay-same')
-    const body = { code: 'aBcDeFgH', amountKobo: 1_850_000, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' }
+    const key = idemKey()
+    const body = { code: DEFAULT_CODE, amountKobo: DEFAULT_AMOUNT_KOBO, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' }
 
     const first = await postJson('/api/checkout/initialize', body, { [IDEMPOTENCY_HEADER]: key })
     const second = await postJson('/api/checkout/initialize', body, { [IDEMPOTENCY_HEADER]: key })
@@ -120,8 +135,8 @@ describe('idempotency replay (finding 4)', () => {
   })
 
   it('the same key with a different body is idempotency_mismatch', async () => {
-    const key = idemKey('replay-diff')
-    const bodyA = { code: 'aBcDeFgH', amountKobo: 1_850_000, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' }
+    const key = idemKey()
+    const bodyA = { code: DEFAULT_CODE, amountKobo: DEFAULT_AMOUNT_KOBO, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' }
     const bodyB = { ...bodyA, payerEmail: 'someone-else@example.com' }
 
     await postJson('/api/checkout/initialize', bodyA, { [IDEMPOTENCY_HEADER]: key })
@@ -132,8 +147,8 @@ describe('idempotency replay (finding 4)', () => {
   })
 })
 
-describe('malformed or unknown link codes (finding 5)', () => {
-  it('GET /api/links/:code/public 404s for a malformed code instead of crashing', async () => {
+describe('a malformed or unknown link code is not_found, never a crash', () => {
+  it('GET /api/links/:code/public 404s for a malformed code', async () => {
     const { status, json } = await getJson('/api/links/too-short/public')
     expect(status).toBe(404)
     expect(json).toMatchObject({ code: 'not_found' })
@@ -161,10 +176,10 @@ describe('malformed or unknown link codes (finding 5)', () => {
   })
 })
 
-describe('public resolve computes state with resolveLink() (finding 6)', () => {
+describe('public resolve computes state with resolveLink(), not a hardcoded "payable"', () => {
   it('reflects a status flipped to disabled by PATCH .../status', async () => {
-    await patchJson('/api/links/aBcDeFgH/status', { status: 'disabled' })
-    const { json } = await getJson('/api/links/aBcDeFgH/public')
+    await patchJson(`/api/links/${DEFAULT_CODE}/status`, { status: 'disabled' })
+    const { json } = await getJson(`/api/links/${DEFAULT_CODE}/public`)
     expect(json).toMatchObject({ state: 'disabled' })
   })
 
@@ -175,27 +190,76 @@ describe('public resolve computes state with resolveLink() (finding 6)', () => {
     expect(json).toMatchObject({ state: 'expired' })
   })
 
-  it('resolves an exhausted single-use link to state already-paid', async () => {
-    const code = newLinkCode()
-    linkStore.set(code, exampleLink({ code, isReusable: false, paymentCount: 1 }))
-    const { json } = await getJson(`/api/links/${code}/public`)
-    expect(json).toMatchObject({ state: 'already-paid' })
-  })
-
   it('resolves an active, unexpired, reusable link to state payable', async () => {
     const code = newLinkCode()
     linkStore.set(code, exampleLink({ code, status: 'active', isReusable: true, expiresAt: null }))
     const { json } = await getJson(`/api/links/${code}/public`)
     expect(json).toMatchObject({ state: 'payable' })
   })
+
+  it('a single-use link becomes already-paid once it is actually paid — driven through initialize -> verify -> resolve, not a seeded paymentCount', async () => {
+    const code = newLinkCode()
+    const amountKobo = 500_00
+    linkStore.set(code, exampleLink({ code, isReusable: false, paymentCount: 0, totalPaidKobo: 0, amountKobo }))
+
+    // Before payment: payable.
+    expect((await getJson(`/api/links/${code}/public`)).json).toMatchObject({ state: 'payable' })
+
+    await payLink(code, amountKobo)
+
+    // After payment: already-paid.
+    expect((await getJson(`/api/links/${code}/public`)).json).toMatchObject({ state: 'already-paid' })
+
+    // The real API's answer to a second attempt: link_not_payable, not a second charge.
+    const second = await postJson(
+      '/api/checkout/initialize',
+      { code, amountKobo, payerName: 'Ngozi Okafor', payerEmail: 'ngozi@example.com' },
+      { [IDEMPOTENCY_HEADER]: idemKey() },
+    )
+    expect(second.status).toBe(409)
+    expect(second.json).toMatchObject({ code: 'link_not_payable', state: 'already-paid', moneyMoved: false })
+  })
 })
 
-describe('wallet.transfer overdraft protection (finding 7)', () => {
+describe('the numbers agree with the lists beneath them', () => {
+  it('after create -> initialize -> verify, dashboard stats, the link counters, and the payments list all agree', async () => {
+    const { json: created } = await postJson('/api/links', { title: 'Handmade Beads', amountKobo: 750_00, isReusable: true })
+    const code = (created as { code: string }).code
+
+    await payLink(code, 750_00)
+
+    const { json: link } = await getJson(`/api/links/${code}`)
+    expect(link).toMatchObject({ paymentCount: 1, totalPaidKobo: 750_00 })
+
+    const { json: payments } = await getJson(`/api/links/${code}/payments`)
+    expect((payments as { items: unknown[] }).items).toHaveLength(1)
+
+    const { json: stats } = await getJson('/api/dashboard/stats')
+    // The seeded default link contributes 3 payments / 5_550_000 (state.ts);
+    // this test's link, reusable, is still payable and adds a fourth.
+    expect(stats).toMatchObject({
+      paymentCount: 4,
+      totalCollectedKobo: 5_550_000 + 750_00,
+      activeLinks: 2,
+    })
+  })
+})
+
+describe('GET /api/links: newest first', () => {
+  it('lists a newly created link before the seeded default', async () => {
+    await postJson('/api/links', { title: 'A Second Link' })
+    const { json } = await getJson('/api/links')
+    const items = (json as { items: { title: string }[] }).items
+    expect(items[0]?.title).toBe('A Second Link')
+  })
+})
+
+describe('wallet.transfer: overdraft is rejected, not posted', () => {
   it('rejects a transfer larger than the balance with insufficient_funds, and the balance does not move', async () => {
     const { status, json } = await postJson(
       '/api/wallet/transfer',
       { toPhone: '+2348031234567', amountKobo: INITIAL_WALLET_BALANCE_KOBO + 1 },
-      { [IDEMPOTENCY_HEADER]: idemKey('overdraft') },
+      { [IDEMPOTENCY_HEADER]: idemKey() },
     )
     expect(status).toBe(422)
     expect(json).toMatchObject({ code: 'insufficient_funds', moneyMoved: false })
@@ -208,11 +272,24 @@ describe('wallet.transfer overdraft protection (finding 7)', () => {
     const { status } = await postJson(
       '/api/wallet/transfer',
       { toPhone: '+2348031234567', amountKobo: 2_000_000 },
-      { [IDEMPOTENCY_HEADER]: idemKey('within-balance') },
+      { [IDEMPOTENCY_HEADER]: idemKey() },
     )
     expect(status).toBe(200)
 
     const { json: wallet } = await getJson('/api/wallet')
     expect(wallet).toMatchObject({ balanceKobo: INITIAL_WALLET_BALANCE_KOBO - 2_000_000 })
+  })
+})
+
+describe('a malformed JSON body is validation_failed, not a crash', () => {
+  it('POST /api/links with unparseable JSON answers 400, not a generic 500', async () => {
+    const response = await fetch(`${ORIGIN}/api/links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not valid json',
+    })
+    const json: unknown = await response.json()
+    expect(response.status).toBe(400)
+    expect(json).toMatchObject({ code: 'validation_failed' })
   })
 })

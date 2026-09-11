@@ -6,9 +6,7 @@ import {
   IdempotencyKeySchema,
   LinkCodeSchema,
   SCHEMAS,
-  examplePayment,
   exampleLink,
-  exampleStats,
   exampleUser,
   isSimulatedDecline,
   maskEmail,
@@ -27,10 +25,20 @@ import {
   TopUpRequestSchema,
   type ApiError,
   type ErrorCode,
+  type Payment,
   type PaymentLink,
   type SchemaName,
 } from '@kobolink/contracts'
-import { checkoutSessions, idempotencyStore, linkStore, walletFixture, walletState } from './state'
+import {
+  checkoutSessions,
+  computeDashboardStats,
+  idempotencyStore,
+  linkStore,
+  paymentsByCode,
+  recordSuccessfulPayment,
+  walletFixture,
+  walletState,
+} from './state'
 
 /**
  * Every handler builds its response from a `@kobolink/contracts` fixture (or
@@ -88,9 +96,15 @@ function readIdempotencyKey(request: Request): string | null {
   return key
 }
 
+/** A malformed JSON body parses to `undefined` — which fails every request schema's `safeParse` and answers `validation_failed` — rather than letting `JSON.parse` throw into MSW's generic 500. */
 async function readJson(request: Request): Promise<unknown> {
   const text = await request.text()
-  return text.length > 0 ? (JSON.parse(text) as unknown) : undefined
+  if (text.length === 0) return undefined
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -200,7 +214,9 @@ export const handlers = [
   }),
 
   http.get(API.links.collection, () =>
-    respond('LinkListResponse', { items: Array.from(linkStore.values()), nextCursor: null }),
+    // README: "Only the caller's links, newest first." linkStore is
+    // insertion-ordered (oldest first), so reverse it.
+    respond('LinkListResponse', { items: Array.from(linkStore.values()).reverse(), nextCursor: null }),
   ),
 
   http.get(API.links.item(':code'), ({ params }) => {
@@ -222,7 +238,9 @@ export const handlers = [
   http.get(API.links.payments(':code'), ({ params }) => {
     const linkOrError = requireLink(codeParam(params))
     if (linkOrError instanceof HttpResponse) return linkOrError
-    return respond('PaymentListResponse', { items: [examplePayment({ code: linkOrError.code })], nextCursor: null })
+    // Already newest first — `recordSuccessfulPayment` unshifts.
+    const items = paymentsByCode.get(linkOrError.code) ?? []
+    return respond('PaymentListResponse', { items, nextCursor: null })
   }),
 
   http.get(API.links.resolve(':code'), ({ params }) => {
@@ -299,30 +317,42 @@ export const handlers = [
       if (!session) {
         return buildError('not_found', 'No checkout with that reference.', { moneyMoved: false })
       }
+
+      // A verify is a *read* of this reference's one outcome — Paystack's
+      // shape, deliberately. Once decided, re-verifying (even under a
+      // different Idempotency-Key, which the memo above does not cover
+      // since its key differs) must return the same payment, never decide
+      // again or post to the link a second time.
+      if (session.result) {
+        return buildSuccess('VerifyCheckoutResponse', { payment: session.result })
+      }
+
       const declined = isSimulatedDecline(session.payerEmail)
       const now = new Date().toISOString()
-      return buildSuccess('VerifyCheckoutResponse', {
-        payment: {
-          reference: parsed.data.reference,
-          code: session.code,
-          amountKobo: session.amountKobo,
-          currency: 'NGN',
-          status: declined ? 'failed' : 'success',
-          payerName: session.payerName,
-          payerEmail: maskEmail(session.payerEmail),
-          createdAt: now,
-          completedAt: now,
-          failureReason: declined ? 'Card declined by the simulated gateway.' : null,
-          moneyMoved: !declined,
-        },
-      })
+      const payment: Payment = {
+        reference: parsed.data.reference,
+        code: session.code,
+        amountKobo: session.amountKobo,
+        currency: 'NGN',
+        status: declined ? 'failed' : 'success',
+        payerName: session.payerName,
+        payerEmail: maskEmail(session.payerEmail),
+        createdAt: now,
+        completedAt: now,
+        failureReason: declined ? 'Card declined by the simulated gateway.' : null,
+        moneyMoved: !declined,
+      }
+      session.result = payment
+      if (!declined) recordSuccessfulPayment(session.code, payment)
+
+      return buildSuccess('VerifyCheckoutResponse', { payment })
     })
 
     return toResponse(result)
   }),
 
   // ---- dashboard ----------------------------------------------------------
-  http.get(API.dashboard.stats, () => respond('DashboardStats', exampleStats())),
+  http.get(API.dashboard.stats, () => respond('DashboardStats', computeDashboardStats())),
   // API.dashboard.stream is Server-Sent Events, not a JSON response body —
   // MSW's http handlers do not model SSE. Left for F7, which wires the SSE
   // client and needs a streaming mock, not a `respond()`-shaped one.

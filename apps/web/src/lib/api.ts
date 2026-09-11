@@ -1,6 +1,7 @@
 import {
   API,
   DashboardStatsSchema,
+  LinkCodeSchema,
   LinkListResponseSchema,
   MeResponseSchema,
   PaymentLinkSchema,
@@ -22,27 +23,50 @@ import type { ZodType } from 'zod'
  * Thrown for every non-2xx response. Carries the parsed `ApiError` body so a
  * caller can switch on `error.code` instead of an HTTP status, and the
  * status itself for anything that only cares about the transport outcome.
+ *
+ * `transport` is true exactly when `error` is a *fabricated* `ApiError` —
+ * `transportError()` below, standing in for a response the API never
+ * actually produced (a proxy's HTML page, a server not running yet) — and
+ * false when the API itself answered with this body. F6's result screen
+ * needs to tell those apart: "the gateway declined this payment" reads very
+ * differently from "we could not reach the gateway at all".
  */
 export class ApiRequestError extends Error {
   readonly status: number
   readonly error: ApiError
+  readonly transport: boolean
 
-  constructor(status: number, error: ApiError) {
+  constructor(status: number, error: ApiError, transport = false) {
     super(error.message)
     this.name = 'ApiRequestError'
     this.status = status
     this.error = error
+    this.transport = transport
   }
 }
 
 /**
  * A fallback body for a non-2xx response that is not itself a well-formed
  * `ApiError` — a proxy timeout, an HTML error page, a server that is not
- * running yet. Kept distinct from `internal` so a caller can tell "the API
- * told us it failed" from "we could not reach the API at all".
+ * running yet. `ApiRequestError.transport` is what actually lets a caller
+ * tell this apart from a real `internal` error the API returned; this
+ * function only supplies its body.
  */
 function transportError(status: number, statusText: string): ApiError {
   return { code: 'internal', message: `Request failed with status ${status} ${statusText}`.trim() }
+}
+
+/**
+ * `code` reaches the URL path unencoded (`API.links.item(code)` is a plain
+ * template string) — validating it against the same `LinkCodeSchema` the
+ * server enforces means a garbage value (whitespace, a slash, anything that
+ * would reshape the path) is rejected here, as the `not_found` the server
+ * would answer anyway, without spending a request finding that out.
+ */
+function requireValidLinkCode(code: string): void {
+  if (!LinkCodeSchema.safeParse(code).success) {
+    throw new ApiRequestError(404, { code: 'not_found', message: `"${code}" is not a valid link code.` })
+  }
 }
 
 /**
@@ -97,8 +121,8 @@ async function request<T>(schema: ZodType<T>, path: string, options: RequestOpti
   }
 
   if (!response.ok) {
-    const apiError = isApiError(json) ? json : transportError(response.status, response.statusText)
-    throw new ApiRequestError(response.status, apiError)
+    if (isApiError(json)) throw new ApiRequestError(response.status, json, false)
+    throw new ApiRequestError(response.status, transportError(response.status, response.statusText), true)
   }
 
   return schema.parse(json)
@@ -120,13 +144,25 @@ export const client = {
   links: {
     list: (query?: PageQuery) =>
       request<LinkListResponse>(LinkListResponseSchema, API.links.collection, { query: pageQuery(query) }),
-    get: (code: string) => request<PaymentLink>(PaymentLinkSchema, API.links.item(code)),
-    resolve: (code: string) =>
-      request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code)),
-    payments: (code: string, query?: PageQuery) =>
-      request<PaymentListResponse>(PaymentListResponseSchema, API.links.payments(code), {
+    // `async` here is deliberate, not stylistic: it turns
+    // `requireValidLinkCode`'s synchronous throw into a rejected Promise, so
+    // `client.links.resolve(bad).catch(...)` catches it exactly like it
+    // catches a non-2xx response, instead of throwing synchronously out of
+    // whatever effect or handler called it.
+    get: async (code: string) => {
+      requireValidLinkCode(code)
+      return await request<PaymentLink>(PaymentLinkSchema, API.links.item(code))
+    },
+    resolve: async (code: string) => {
+      requireValidLinkCode(code)
+      return await request<PublicLinkResponse>(PublicLinkResponseSchema, API.links.resolve(code))
+    },
+    payments: async (code: string, query?: PageQuery) => {
+      requireValidLinkCode(code)
+      return await request<PaymentListResponse>(PaymentListResponseSchema, API.links.payments(code), {
         query: pageQuery(query),
-      }),
+      })
+    },
   },
   dashboard: {
     stats: () => request<DashboardStats>(DashboardStatsSchema, API.dashboard.stats),
