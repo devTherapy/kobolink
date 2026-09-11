@@ -11,6 +11,14 @@ export interface TableColumn<T> {
   align?: 'left' | 'right' | undefined
   /** Applies `tabular-nums` — set for every money or count column. */
   numeric?: boolean | undefined
+  /**
+   * Column 0's output sits inside a `<button>` when `Table` is given
+   * `onRowClick` (that column becomes the row's primary action) — so it
+   * must be phrasing content: text, inline elements (`<span>`, `<code>`),
+   * nothing that renders a block-level or interactive element (another
+   * button, a link, a nested table). Every other column renders directly
+   * into its `<td>` and has no such restriction.
+   */
   render: (row: T) => ReactNode
 }
 
@@ -207,7 +215,7 @@ function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
       onClick={clickable ? handleRowClick : undefined}
       className={cn(
         'border-b border-(--color-border-soft) last:border-0',
-        clickable && 'hover:bg-(--color-border-soft) active:bg-(--color-border)',
+        clickable && 'cursor-pointer hover:bg-(--color-border-soft) active:bg-(--color-border)',
         disabled && 'opacity-50',
       )}
     >
@@ -229,7 +237,8 @@ function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
                 disabled={disabled}
                 onClick={() => onRowClick?.(row)}
                 className={cn(
-                  'w-full touch-manipulation px-4 py-3 text-left outline-none',
+                  'w-full touch-manipulation px-4 py-3 outline-none',
+                  column.align === 'right' ? 'text-right' : 'text-left',
                   'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--color-brand)',
                   'disabled:cursor-not-allowed',
                   !disabled && 'cursor-pointer',

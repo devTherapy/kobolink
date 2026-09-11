@@ -73,7 +73,8 @@ export default function KitPage() {
         <h1 className="text-[26px] font-semibold text-(--color-ink)">UI Kit</h1>
         <p className="max-w-2xl text-[14px] text-(--color-ink-2)">
           Every component from the F1 kit, in every state it ships. Built from the tokens in{' '}
-          <code className="font-mono text-[13px]">globals.css</code> — nothing here introduces a new colour.
+          <code className="font-mono text-[13px]">globals.css</code> — the tokens define every colour these
+          components use, extended (never replaced) when a new one earns its place, like the skeleton fill below.
         </p>
       </header>
 

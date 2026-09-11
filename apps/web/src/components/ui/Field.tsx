@@ -139,7 +139,14 @@ export function Field(props: FieldProps) {
             shape="line"
             width="50%"
             aria-label={`Loading ${props.label}…`}
-            className="pointer-events-none absolute left-7 top-1/2 -translate-y-1/2"
+            // `left-7` only for the amount variant, to clear its ₦ prefix
+            // (itself at `left-3`); the text variant's input starts at the
+            // same `px-3` every other text field uses, so the overlay
+            // matches that, not the currency layout.
+            className={cn(
+              'pointer-events-none absolute top-1/2 -translate-y-1/2',
+              props.variant === 'amount' ? 'left-7' : 'left-3',
+            )}
           />
         ) : null}
       </div>
@@ -195,20 +202,43 @@ function AmountField({
   className,
 }: AmountFieldProps) {
   const [raw, setRaw] = useState(() => formatDisplay(valueKobo))
-  // Tracks the last value *this field itself* emitted via `onChangeKobo` —
-  // deliberately not "the last `valueKobo` prop seen". A caller that only
-  // commits *parseable* amounts (validating on submit, not every keystroke)
-  // will simply not react to an intermediate `onChangeKobo(null)` while the
-  // payer is mid-typing "10." — `valueKobo` then legitimately still equals
-  // whatever we last committed, e.g. `1000` for "10". Only update this
-  // baseline when the keystroke actually parses, so an unparseable
-  // intermediate string never becomes something the next render "corrects"
-  // away from — the field trusts its own `raw` text until either the caller
-  // hands it a genuinely different committed amount, or the field blurs.
-  const [lastEmittedKobo, setLastEmittedKobo] = useState(valueKobo)
-  if (valueKobo !== lastEmittedKobo) {
-    setLastEmittedKobo(valueKobo)
-    setRaw(formatDisplay(valueKobo))
+  // Tracks the last `valueKobo` this field has already reconciled with —
+  // every prop value it has seen and decided not to act on, including
+  // `null`. Two different caller shapes both have to work:
+  //
+  //  - A caller that *echoes* every emission straight back (state = exactly
+  //    what `onChangeKobo` last passed, including `null` mid-typing "10.").
+  //  - A caller that only commits *parseable* amounts (validates on submit,
+  //    so an intermediate `onChangeKobo(null)` never reaches its own state,
+  //    and `valueKobo` keeps reflecting the last value it *did* accept).
+  //
+  // Comparing only against "the last prop seen" breaks the first shape
+  // (typing "10." synchronously updates this field's own local state before
+  // the echo arrives, so the echoed prop looks "new" and gets reformatted —
+  // wiping the "10." the payer just typed). Comparing only against "the
+  // last value emitted, but never on null" breaks the second shape (the
+  // reviewed-and-reverted round 1 attempt): an echoing caller's legitimate
+  // `null` then looks like a stale baseline never caught up to, and forces
+  // the same wipe from the other direction.
+  //
+  // The fix that satisfies both: resync `raw` only when the incoming
+  // `valueKobo` is a value we have neither already reconciled with *nor*
+  // is what the field's own current text would produce right now. That
+  // second check is what makes an echo safe regardless of whether the
+  // caller's state update lands before or after this component re-renders.
+  const [reconciledKobo, setReconciledKobo] = useState(valueKobo)
+  if (valueKobo !== reconciledKobo) {
+    if (valueKobo === parseNaira(raw)) {
+      // Either an echo of what we just emitted, or the prop has simply
+      // caught up to what `raw` already represents — nothing to reformat,
+      // just stop treating this prop value as unreconciled.
+      setReconciledKobo(valueKobo)
+    } else {
+      // A value this field did not just produce and that doesn't match its
+      // current text — a form reset, a fetched default, or similar.
+      setReconciledKobo(valueKobo)
+      setRaw(formatDisplay(valueKobo))
+    }
   }
 
   return (
@@ -238,14 +268,12 @@ function AmountField({
         onChange={(event) => {
           const next = event.target.value
           setRaw(next)
-          const parsed = parseNaira(next)
-          // Only move the resync baseline on a value that actually parsed —
-          // see the comment above `lastEmittedKobo`. The parent still hears
-          // about the unparseable intermediate via `onChangeKobo(null)`; the
-          // field just doesn't treat its own null as something to reconcile
-          // against next render.
-          if (parsed !== null) setLastEmittedKobo(parsed)
-          onChangeKobo(parsed)
+          // Deliberately doesn't touch `reconciledKobo` here — the
+          // render-time check above is the only writer, so it can tell an
+          // echo of *this* emission apart from a prop that changed for an
+          // unrelated reason, no matter which order the caller's own
+          // re-render lands relative to this one.
+          onChangeKobo(parseNaira(next))
         }}
         onBlur={() => {
           const parsed = parseNaira(raw)

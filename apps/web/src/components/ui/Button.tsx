@@ -1,3 +1,5 @@
+'use client'
+
 import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from 'react'
 import { useId } from 'react'
 import { cn } from './cn'
@@ -59,6 +61,17 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 /**
+ * `'use client'` because the loading-click-guard (`handleClick`, below)
+ * always attaches a real `onClick` to the underlying `<button>`, regardless
+ * of whether the caller passed one — and a plain function component
+ * rendered directly by a Server Component (the kit showcase does this at
+ * module scope) can't hand an event handler prop to a host element. This
+ * broke `next build`'s prerender of `/kit` before the directive was added:
+ * "Event handlers cannot be passed to Client Component props". Server
+ * Components rendering `<Button>` directly (as `/kit` does) is still fine —
+ * that's the standard "client leaf inside a server tree" shape; only a
+ * Server Component *defining* its own handler is disallowed.
+ *
  * Seven states, all CSS-driven off real DOM/ARIA rather than extra props:
  * default (base classes) · hover (`hover:`) · focus (`focus-visible:`,
  * matches the global ring token) · active (`active:`) · disabled (native
@@ -111,7 +124,10 @@ export function Button({
           'relative inline-flex touch-manipulation select-none items-center justify-center gap-2 whitespace-nowrap rounded-(--radius-input) border font-medium transition-colors',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)',
           'disabled:pointer-events-none disabled:opacity-50',
-          isLoading && 'pointer-events-none cursor-wait',
+          // Not `cursor-wait`: `pointer-events-none` makes the element
+          // unreachable to the mouse in the first place, so no cursor style
+          // set on it is ever actually shown — dead CSS.
+          isLoading && 'pointer-events-none',
           isError && cn('ring-2 ring-(--color-danger) ring-offset-2', RING_OFFSET_CLASSES[surface]),
           VARIANT_CLASSES[variant],
           SIZE_CLASSES[size],

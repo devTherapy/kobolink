@@ -246,6 +246,44 @@ describe('Field (amount variant)', () => {
     expect(input).toHaveValue('10.')
   })
 
+  // A caller that echoes *every* emission straight back into its own state,
+  // including `null` — the shape the kit's own `field-examples.tsx` and a
+  // plain `useState` round-trip both use, and the shape round 1's fix
+  // (resync-baseline-skips-null) broke: an echoed `null` looked like a
+  // stale, unreconciled baseline and forced a reformat mid-typing.
+  function EchoingHarness() {
+    const [kobo, setKobo] = useState<number | null>(null)
+    return <Field variant="amount" label="Amount" valueKobo={kobo} onChangeKobo={setKobo} />
+  }
+
+  it('does not wipe "10." when the parent echoes every commit, including null', async () => {
+    const user = userEvent.setup()
+    render(<EchoingHarness />)
+    await user.type(screen.getByLabelText('Amount'), '10.')
+    expect(screen.getByLabelText('Amount')).toHaveValue('10.')
+  })
+
+  it('keeps a fully-typed "10.50" intact through an echoing parent', async () => {
+    const user = userEvent.setup()
+    render(<EchoingHarness />)
+    await user.type(screen.getByLabelText('Amount'), '10.50')
+    expect(screen.getByLabelText('Amount')).toHaveValue('10.50')
+  })
+
+  it('keeps an invalid "5x" on screen through an echoing parent, erroring only on blur', async () => {
+    const user = userEvent.setup()
+    render(<EchoingHarness />)
+    const input = screen.getByLabelText('Amount')
+    await user.type(input, '5x')
+    expect(input).toHaveValue('5x')
+
+    // onBlur only reformats a *parseable* value (see the handler below) —
+    // "5x" stays exactly as typed, which is what lets a caller show a
+    // validation error beside it.
+    await user.tab()
+    expect(input).toHaveValue('5x')
+  })
+
   it('resyncs the displayed text when valueKobo changes from outside the field', () => {
     const onChangeKobo = vi.fn()
     const { rerender } = render(
