@@ -12,7 +12,12 @@ const config = [
   ...nextCoreWebVitals,
   ...nextTypescript,
   {
-    ignores: ['.next/**', 'next-env.d.ts', 'public/mockServiceWorker.js'],
+    // e2e/associations.spec.ts is intentionally excluded from tsconfig.json
+    // (see its "exclude" entry) because @playwright/test is not installed —
+    // typed linting would otherwise fail the same "not found by the project
+    // service" way the dot-directory route handlers did before that was
+    // fixed. F9 removes this ignore alongside the tsconfig one.
+    ignores: ['.next/**', 'next-env.d.ts', 'public/mockServiceWorker.js', 'e2e/**'],
   },
 ]
 
