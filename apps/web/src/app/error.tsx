@@ -15,16 +15,44 @@ import { useEffect } from 'react'
  * or balances — that specific, stronger guarantee belongs to the checkout
  * route's own boundary, which knows exactly what could and couldn't have
  * happened.
+ *
+ * `retry`, not `reset` — see `app/l/[code]/error.tsx`'s own doc comment for
+ * why: `reset()` alone re-renders the already-failed tree without
+ * re-fetching anything, so "Try again" would keep showing the same error
+ * even after whatever caused it recovers. `reset`/`window.location.reload()`
+ * stay as defensive fallbacks only.
+ *
+ * No `<title>` export here either (error boundaries are Client Components),
+ * so this boundary renders its own via React's `<title>` element.
  */
-export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function GlobalError({
+  error,
+  retry,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  retry?: () => void
+  reset: () => void
+}) {
   useEffect(() => {
     // No error-reporting sink is wired up yet (out of scope for this PR) —
     // the console is the only place this is currently visible.
     console.error(error)
   }, [error])
 
+  function handleTryAgain() {
+    if (retry) {
+      retry()
+    } else if (reset) {
+      reset()
+    } else {
+      window.location.reload()
+    }
+  }
+
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-(--color-ground) px-4 py-10 text-center">
+      <title>Something went wrong — Kobolink</title>
       <div role="alert" aria-live="assertive" className="flex flex-col items-center gap-3">
         <h1 className="text-[23px] font-semibold text-(--color-ink)">Something went wrong</h1>
         <p className="max-w-sm text-[14px] text-(--color-ink-2)">
@@ -32,7 +60,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         </p>
         <button
           type="button"
-          onClick={() => reset()}
+          onClick={handleTryAgain}
           className="mt-2 inline-flex min-h-11 items-center justify-center rounded-(--radius-input) bg-(--color-brand) px-5 text-[14px] font-semibold text-white hover:bg-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)"
         >
           Try again

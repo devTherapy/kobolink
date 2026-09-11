@@ -166,10 +166,17 @@ export function PayForm({ link }: { link: PublicLink }) {
           case 'rate_limited':
           case 'idempotency_mismatch':
           case 'insufficient_funds':
-          case 'internal':
-            setFormError(error.error.message)
+          case 'internal': {
+            // `checkout.initialize` never posts anything — only `verify`
+            // does — so nothing here should ever have moved money. Still
+            // read `moneyMoved` defensively rather than asserting that from
+            // the endpoint's shape alone: the reassurance is only added
+            // when the server didn't say the opposite.
+            const reassurance = error.error.moneyMoved === true ? '' : ' No money has moved.'
+            setFormError(`${error.error.message}${reassurance}`)
             setPhase({ kind: 'form' })
             return
+          }
         }
       }
       setPhase({ kind: 'transport', reference: null })
@@ -177,15 +184,24 @@ export function PayForm({ link }: { link: PublicLink }) {
   }
 
   async function reportPriceChanged() {
-    let amountKobo: number | null = null
     try {
       const resolution = await client.links.resolve(link.code)
-      if (resolution.state === 'payable') amountKobo = resolution.link.amountKobo
+      if (resolution.state === 'payable') {
+        setPhase({ kind: 'price-changed', amountKobo: resolution.link.amountKobo })
+        return
+      }
+      // The link stopped being payable entirely between page load and this
+      // submit (disabled, expired, or — a single-use link — paid by someone
+      // else) rather than merely repricing. "The price changed, reload" is
+      // the wrong story for that; the non-payable screen is the true one.
+      const state = isNonPayableState(resolution.state) ? resolution.state : null
+      setPhase({ kind: 'not-payable', state })
     } catch {
-      // Best-effort — the "Reload" next step below is still a safe way out
-      // even when this second read also fails.
+      // Best-effort — the "Reload" next step is still a safe way out even
+      // when this second read also fails, so `amountKobo: null` here just
+      // means "we don't know the new price, but you should reload".
+      setPhase({ kind: 'price-changed', amountKobo: null })
     }
-    setPhase({ kind: 'price-changed', amountKobo })
   }
 
   function validate(): { amountKobo: number; name: string; email: string } | null {
@@ -271,7 +287,7 @@ export function PayForm({ link }: { link: PublicLink }) {
   if (phase.kind === 'transport') {
     return (
       <TransportResult
-        hasReference={phase.reference !== null}
+        reference={phase.reference}
         onCheckStatus={handleCheckStatus}
         onTryAgain={handleTryAgain}
         {...(phase.detail !== undefined ? { detail: phase.detail } : {})}
@@ -505,12 +521,16 @@ function PriceChangedResult({
 }
 
 function TransportResult({
-  hasReference,
+  reference,
   detail,
   onCheckStatus,
   onTryAgain,
 }: {
-  hasReference: boolean
+  /** Set once `initialize` has succeeded. When present, shown the same way
+   *  `SuccessResult` shows one — a payer with an uncertain payment needs a
+   *  reference to quote to the merchant every bit as much as one who knows
+   *  it succeeded. */
+  reference: string | null
   /** Overrides the default "connection dropped" body copy for the
    *  non-transport case — a `verify`-time `ApiError` we could not rule out
    *  as having moved money (see `Phase`'s own `'transport'` doc comment). */
@@ -521,7 +541,7 @@ function TransportResult({
   const headingRef = useResultHeadingFocus<HTMLHeadingElement>()
   return (
     <CheckoutCard>
-      {/* `role="alert"` (assertive): the `hasReference` branch is telling a
+      {/* `role="alert"` (assertive): the `reference` branch is telling a
           payer their money's status is *unknown* — at least as urgent as a
           confirmed failure, never less. */}
       <div role="alert" aria-live="assertive" className="flex flex-col items-center gap-3 text-center">
@@ -529,7 +549,7 @@ function TransportResult({
         <h2 ref={headingRef} tabIndex={-1} className="text-[23px] font-semibold text-(--color-ink) outline-none">
           We couldn&apos;t confirm this payment
         </h2>
-        {hasReference ? (
+        {reference !== null ? (
           <>
             <p className="text-[14px] text-(--color-ink-2)">
               {detail ??
@@ -538,6 +558,7 @@ function TransportResult({
             <p className="rounded-(--radius-input) bg-(--color-warning-tint) px-3 py-2 text-[13px] font-medium text-(--color-warning)">
               Money may or may not have moved. Do not pay again until you have checked.
             </p>
+            <p className="font-mono tabular text-[13px] text-(--color-ink-3)">Reference {reference}</p>
             <PayButton state="warning" type="button" onClick={onCheckStatus}>
               Check status
             </PayButton>

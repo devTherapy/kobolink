@@ -17,8 +17,33 @@ import { CheckoutCard, CheckoutShell } from '@/components/checkout/CheckoutCard'
  * is strictly before `PayForm` ever exists to submit a payment. `PayForm`'s
  * own transport/error handling (see its own file) is what covers everything
  * that can go wrong once a payer has actually pressed Pay.
+ *
+ * `retry`, not `reset`, is what "Try again" calls: `reset()` alone clears
+ * the boundary's error state and re-renders the same already-thrown-away
+ * tree without re-running `page.tsx`/`generateMetadata` — the outage that
+ * put the payer here would still be showing after the API recovered. As of
+ * this Next version `retry` re-fetches and re-renders the segment (see
+ * `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/error.md`
+ * §retry/§reset) and is the documented default; `reset` is kept only as a
+ * defensive fallback in case a future/older runtime ever calls this
+ * component without it, and `window.location.reload()` is the last resort
+ * if somehow neither function is available at all.
+ *
+ * No `generateMetadata` here — error boundaries are Client Components and
+ * cannot export it — so the outage screen would otherwise ship with no
+ * `<title>` at all. Rendered inline via React's own `<title>` element
+ * (hoisted into `<head>` automatically), per the same Next doc's
+ * global-error guidance.
  */
-export default function CheckoutError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function CheckoutError({
+  error,
+  retry,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  retry?: () => void
+  reset: () => void
+}) {
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   useEffect(() => {
@@ -28,8 +53,19 @@ export default function CheckoutError({ error, reset }: { error: Error & { diges
     headingRef.current?.focus()
   }, [error])
 
+  function handleTryAgain() {
+    if (retry) {
+      retry()
+    } else if (reset) {
+      reset()
+    } else {
+      window.location.reload()
+    }
+  }
+
   return (
     <CheckoutShell>
+      <title>We couldn&apos;t load this payment link — Kobolink</title>
       <CheckoutCard>
         <div role="alert" aria-live="assertive" className="flex flex-col items-center gap-3 text-center">
           <h1 ref={headingRef} tabIndex={-1} className="text-[23px] font-semibold text-(--color-ink) outline-none">
@@ -40,7 +76,7 @@ export default function CheckoutError({ error, reset }: { error: Error & { diges
           </p>
           <button
             type="button"
-            onClick={() => reset()}
+            onClick={handleTryAgain}
             className="mt-2 inline-flex min-h-11 items-center justify-center rounded-(--radius-input) bg-(--color-brand) px-5 text-[14px] font-semibold text-white hover:bg-(--color-brand-hover) active:bg-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)"
           >
             Try again

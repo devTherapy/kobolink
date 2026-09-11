@@ -1,11 +1,9 @@
-'use client'
-
 import Link from 'next/link'
-import { useEffect, useRef } from 'react'
 import type { PublicLink } from '@kobolink/contracts'
 import { NON_PAYABLE_COPY, type NonPayableState } from '@/lib/checkout'
 import { CheckoutCard } from './CheckoutCard'
 import { AlertTriangleIcon } from './icons'
+import { FocusHeadingOnMount } from './FocusHeadingOnMount'
 
 /**
  * One screen for the three ways a link can refuse a payment — rendered by
@@ -15,12 +13,14 @@ import { AlertTriangleIcon } from './icons'
  * payer clicking Pay). Same component, same copy (`NON_PAYABLE_COPY`),
  * either way — never two screens that could say it two different ways.
  *
- * `'use client'`: the initial-load render from the server page still SSRs
- * this component's HTML exactly as before (a Server Component rendering a
- * Client Component is not a client-rendered page — only `generateMetadata`
- * and the page's own JSX matter for the OG-card guarantee); the directive
- * only means this file's `useEffect` (the focus management below) is legal
- * to write at all, since a Server Component cannot use hooks.
+ * A plain Server Component, deliberately: nothing here needs a hook, so the
+ * initial-load render from the server page ships this screen's HTML with
+ * zero client JS. The one bit of behavior that *does* need a hook — moving
+ * focus to the heading for `PayForm`'s client-side `link_not_payable` swap —
+ * is isolated in `FocusHeadingOnMount`, the sole client-only sliver, rather
+ * than making this whole component (and every visitor who only ever sees
+ * the initial SSR render of a disabled/expired/already-paid link) pay for a
+ * `'use client'` boundary it does not need.
  *
  * Every variant states the thing a worried payer actually wants to know
  * first: no money moved. Then it names what happened, then the next step —
@@ -56,13 +56,6 @@ export function NonPayableScreen({
   autoFocus?: boolean
 }) {
   const copy = state ? NON_PAYABLE_COPY[state] : null
-  const Heading = headingLevel
-  const headingRef = useRef<HTMLHeadingElement>(null)
-
-  useEffect(() => {
-    if (autoFocus) headingRef.current?.focus()
-  }, [autoFocus])
-
   const heading = copy ? copy.heading : 'This link cannot be paid right now'
   const body = copy ? copy.body(link) : null
   const nextStep = copy ? copy.nextStep(link) : 'Please try again in a moment.'
@@ -80,13 +73,13 @@ export function NonPayableScreen({
             merely-unpayable link look like a harder failure than it is. */}
         <AlertTriangleIcon className="text-(--color-warning)" width={32} height={32} />
         <p className="truncate text-[13px] text-(--color-ink-2)">{link.merchantName}</p>
-        <Heading
-          ref={headingRef}
-          tabIndex={-1}
+        <FocusHeadingOnMount
+          active={autoFocus}
+          as={headingLevel}
           className="text-[23px] font-semibold text-(--color-ink) outline-none"
         >
           {heading}
-        </Heading>
+        </FocusHeadingOnMount>
         <p className="truncate text-[16px] text-(--color-ink-2)">{link.title}</p>
         {body ? <p className="text-[14px] text-(--color-ink-2)">{body}</p> : null}
         {/* Neutral, not amber: the icon above already carries "heads up,

@@ -214,6 +214,31 @@ describe('PayForm — amount_mismatch on a fixed-amount link', () => {
     expect(await screen.findByRole('heading', { name: 'The price has changed' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
   })
+
+  it('renders the non-payable screen when the re-fetched link is no longer payable at all', async () => {
+    server.use(
+      http.post(API.checkout.initialize, () =>
+        HttpResponse.json(
+          { code: 'amount_mismatch', message: 'That amount does not match this link.', moneyMoved: false },
+          { status: 422 },
+        ),
+      ),
+      http.get(API.links.resolve(':code'), () =>
+        HttpResponse.json({ state: 'disabled', link: { ...link, amountKobo: 2_500_000 } }),
+      ),
+    )
+
+    const user = userEvent.setup()
+    render(<PayForm link={link} />)
+
+    await fillPayerFields(user)
+    await user.click(screen.getByRole('button', { name: /pay ₦18,500/i }))
+
+    // Not "the price has changed" — the link stopped being payable
+    // entirely, which is a different (and truer) story.
+    expect(await screen.findByRole('heading', { name: /turned off/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'The price has changed' })).not.toBeInTheDocument()
+  })
 })
 
 describe('PayForm — non-transport verify errors', () => {
@@ -315,6 +340,9 @@ describe('PayForm — transport errors', () => {
 
     expect(await screen.findByRole('heading', { name: /couldn.t confirm this payment/i })).toBeInTheDocument()
     expect(screen.getByText(/may or may not have moved/i)).toBeInTheDocument()
+    // A reference to quote to the merchant matters at least as much here as
+    // it does on a confirmed success — this payer doesn't know which they got.
+    expect(screen.getByText(/^Reference kbl_/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Check status' }))
 
@@ -342,6 +370,59 @@ describe('PayForm — transport errors', () => {
 
     await user.click(screen.getByRole('button', { name: /pay ₦18,500/i }))
     expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeInTheDocument()
+  })
+})
+
+describe('PayForm — generic initialize errors', () => {
+  it('appends "No money has moved" when moneyMoved is absent', async () => {
+    server.use(
+      http.post(API.checkout.initialize, () =>
+        HttpResponse.json({ code: 'internal', message: 'Something went wrong.' }, { status: 500 }),
+      ),
+    )
+
+    const user = userEvent.setup()
+    render(<PayForm link={link} />)
+
+    await fillPayerFields(user)
+    await user.click(screen.getByRole('button', { name: /pay ₦18,500/i }))
+
+    expect(await screen.findByText('Something went wrong. No money has moved.')).toBeInTheDocument()
+  })
+
+  it('appends "No money has moved" when moneyMoved is explicitly false', async () => {
+    server.use(
+      http.post(API.checkout.initialize, () =>
+        HttpResponse.json({ code: 'rate_limited', message: 'Slow down.', moneyMoved: false }, { status: 429 }),
+      ),
+    )
+
+    const user = userEvent.setup()
+    render(<PayForm link={link} />)
+
+    await fillPayerFields(user)
+    await user.click(screen.getByRole('button', { name: /pay ₦18,500/i }))
+
+    expect(await screen.findByText('Slow down. No money has moved.')).toBeInTheDocument()
+  })
+
+  it('does not add the reassurance when the server says moneyMoved: true', async () => {
+    // Never actually happens for `initialize` (it's pre-charge by
+    // contract), but the copy reads `moneyMoved` rather than assuming that.
+    server.use(
+      http.post(API.checkout.initialize, () =>
+        HttpResponse.json({ code: 'internal', message: 'Something went wrong.', moneyMoved: true }, { status: 500 }),
+      ),
+    )
+
+    const user = userEvent.setup()
+    render(<PayForm link={link} />)
+
+    await fillPayerFields(user)
+    await user.click(screen.getByRole('button', { name: /pay ₦18,500/i }))
+
+    expect(await screen.findByText('Something went wrong.')).toBeInTheDocument()
+    expect(screen.queryByText(/no money has moved/i)).not.toBeInTheDocument()
   })
 })
 
