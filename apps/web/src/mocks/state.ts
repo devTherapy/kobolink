@@ -6,6 +6,7 @@ import {
   type DashboardStats,
   type Payment,
   type PaymentLink,
+  type WalletTransaction,
 } from '@kobolink/contracts'
 
 /**
@@ -17,9 +18,9 @@ import {
  * decline, the idempotency replay, and the overdraft rejection possible.
  *
  * `linkStore`, `paymentsByCode`, and `walletState` are kept mutually
- * consistent: a successful `checkout.verify` is the only thing that writes a
- * payment, and it always updates the link's counters and the payments list
- * together (`recordSuccessfulPayment`) — so `dashboard.stats`, a link's
+ * consistent: `checkout.verify` is the only thing that writes a payment
+ * (`recordPayment`), success or failure, and a success is the only thing
+ * that updates a link's counters — so `dashboard.stats`, a link's
  * `paymentCount`/`totalPaidKobo`, and `GET .../payments` can never disagree
  * with each other the way three independently-hardcoded fixtures could.
  *
@@ -63,6 +64,9 @@ export const idempotencyStore = new Map<string, IdempotencyRecord>()
 
 export const walletState = { balanceKobo: INITIAL_WALLET_BALANCE_KOBO }
 
+/** Newest first, minted by `wallet.transfer`/`wallet.topup`. */
+export const walletTransactions: WalletTransaction[] = []
+
 function seedDefaultLink(): void {
   const link = exampleLink()
   linkStore.set(link.code, link)
@@ -97,6 +101,7 @@ export function resetMockState(): void {
   checkoutSessions.clear()
   idempotencyStore.clear()
   walletState.balanceKobo = INITIAL_WALLET_BALANCE_KOBO
+  walletTransactions.length = 0
   seedDefaultLink()
 }
 
@@ -109,14 +114,23 @@ export function walletFixture() {
 }
 
 /**
- * The one place a successful payment is written. Called once, from
- * `checkout.verify`'s success path — never from a retry or a replay, both of
- * which return the already-recorded `CheckoutSession.result` instead.
+ * The one place any `checkout.verify` outcome is written — success *or*
+ * failure. Called once per reference, from `checkout.verify`'s first-time
+ * path only; a retry or a replay returns the already-recorded
+ * `CheckoutSession.result` instead and never calls this again.
+ *
+ * A failed payment (a decline, or a link that stopped being payable between
+ * initialize and verify) still shows up in `GET .../payments` — the
+ * merchant's payments list includes it — but only a `success` updates the
+ * link's `paymentCount`/`totalPaidKobo`, and only a `success` counts toward
+ * `computeDashboardStats()`. A failure changes what a merchant can see, not
+ * what they collected.
  */
-export function recordSuccessfulPayment(code: string, payment: Payment): void {
+export function recordPayment(code: string, payment: Payment): void {
   const existing = paymentsByCode.get(code) ?? []
   paymentsByCode.set(code, [payment, ...existing])
 
+  if (payment.status !== 'success') return
   const link = linkStore.get(code)
   if (!link) return
   linkStore.set(code, {

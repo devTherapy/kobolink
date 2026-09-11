@@ -24,12 +24,16 @@ import type { ZodType } from 'zod'
  * caller can switch on `error.code` instead of an HTTP status, and the
  * status itself for anything that only cares about the transport outcome.
  *
- * `transport` is true exactly when `error` is a *fabricated* `ApiError` —
- * `transportError()` below, standing in for a response the API never
- * actually produced (a proxy's HTML page, a server not running yet) — and
- * false when the API itself answered with this body. F6's result screen
- * needs to tell those apart: "the gateway declined this payment" reads very
- * differently from "we could not reach the gateway at all".
+ * `transport` means the API could not be reached or did not answer at all —
+ * true only for `transportError()` below, standing in for a response the
+ * API never actually produced (a proxy's HTML page, a server not running
+ * yet). It is false both when the API itself answered with this body *and*
+ * when this file fabricates one client-side without a request
+ * (`requireValidLinkCode`'s `not_found`) — that fabrication is a considered
+ * stand-in for what the server would have said, not a failure to reach it.
+ * F6's result screen needs the true/false split: "the gateway declined this
+ * payment" reads very differently from "we could not reach the gateway at
+ * all".
  */
 export class ApiRequestError extends Error {
   readonly status: number
@@ -48,9 +52,10 @@ export class ApiRequestError extends Error {
 /**
  * A fallback body for a non-2xx response that is not itself a well-formed
  * `ApiError` — a proxy timeout, an HTML error page, a server that is not
- * running yet. `ApiRequestError.transport` is what actually lets a caller
- * tell this apart from a real `internal` error the API returned; this
- * function only supplies its body.
+ * running yet. The `code: 'internal'` here is indistinguishable from a real
+ * `internal` error the API returned by looking at the body alone;
+ * `ApiRequestError.transport` (always `true` at this function's one call
+ * site) is what actually lets a caller tell the two apart.
  */
 function transportError(status: number, statusText: string): ApiError {
   return { code: 'internal', message: `Request failed with status ${status} ${statusText}`.trim() }

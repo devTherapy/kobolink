@@ -35,9 +35,10 @@ import {
   idempotencyStore,
   linkStore,
   paymentsByCode,
-  recordSuccessfulPayment,
+  recordPayment,
   walletFixture,
   walletState,
+  walletTransactions,
 } from './state'
 
 /**
@@ -208,6 +209,7 @@ export const handlers = [
       expiresAt: parsed.data.expiresAt,
       paymentCount: 0,
       totalPaidKobo: 0,
+      createdAt: new Date().toISOString(),
     })
     linkStore.set(code, link)
     return respond('PaymentLink', link, 201)
@@ -238,7 +240,10 @@ export const handlers = [
   http.get(API.links.payments(':code'), ({ params }) => {
     const linkOrError = requireLink(codeParam(params))
     if (linkOrError instanceof HttpResponse) return linkOrError
-    // Already newest first — `recordSuccessfulPayment` unshifts.
+    // Already newest first — `recordPayment` unshifts. Includes failed
+    // payments (a decline, a link that stopped being payable) as well as
+    // successful ones; only a success counts toward the link's own
+    // paymentCount/totalPaidKobo or dashboard.stats.
     const items = paymentsByCode.get(linkOrError.code) ?? []
     return respond('PaymentListResponse', { items, nextCursor: null })
   }),
@@ -327,23 +332,55 @@ export const handlers = [
         return buildSuccess('VerifyCheckoutResponse', { payment: session.result })
       }
 
-      const declined = isSimulatedDecline(session.payerEmail)
       const now = new Date().toISOString()
-      const payment: Payment = {
+      const base = {
         reference: parsed.data.reference,
         code: session.code,
         amountKobo: session.amountKobo,
-        currency: 'NGN',
-        status: declined ? 'failed' : 'success',
+        currency: 'NGN' as const,
         payerName: session.payerName,
         payerEmail: maskEmail(session.payerEmail),
         createdAt: now,
         completedAt: now,
-        failureReason: declined ? 'Card declined by the simulated gateway.' : null,
-        moneyMoved: !declined,
       }
+
+      // The link is re-resolved *now*, not trusted from initialize time: it
+      // may have been disabled, expired, or (a single-use link) paid by a
+      // different initialize since. A verify against a link that is not
+      // payable right now fails — it never records a success for it.
+      const link = linkStore.get(session.code) ?? null
+      const resolution = resolveLink(link)
+
+      let payment: Payment
+      if (resolution.kind !== 'payable') {
+        let failureReason: string
+        switch (resolution.kind) {
+          case 'disabled':
+            failureReason = 'Link is disabled'
+            break
+          case 'expired':
+            failureReason = 'Link has expired'
+            break
+          case 'already-paid':
+            failureReason = 'Link is already paid'
+            break
+          case 'not-found':
+            failureReason = 'Link no longer exists'
+            break
+        }
+        payment = { ...base, status: 'failed', failureReason, moneyMoved: false }
+      } else {
+        const declined = isSimulatedDecline(session.payerEmail)
+        payment = {
+          ...base,
+          status: declined ? 'failed' : 'success',
+          failureReason: declined ? 'Card declined by the simulated gateway.' : null,
+          moneyMoved: !declined,
+        }
+      }
+
       session.result = payment
-      if (!declined) recordSuccessfulPayment(session.code, payment)
+      recordPayment(session.code, payment)
 
       return buildSuccess('VerifyCheckoutResponse', { payment })
     })
@@ -361,7 +398,8 @@ export const handlers = [
   http.get(API.wallet.me, () => respond('Wallet', walletFixture())),
 
   http.get(API.wallet.transactions, () =>
-    respond('WalletTransactionListResponse', { items: [], nextCursor: null }),
+    // Already newest first — transfer/topup unshift onto walletTransactions.
+    respond('WalletTransactionListResponse', { items: walletTransactions, nextCursor: null }),
   ),
 
   http.post(API.wallet.transfer, async ({ request }) => {
@@ -379,17 +417,16 @@ export const handlers = [
         })
       }
       walletState.balanceKobo -= parsed.data.amountKobo
-      return buildSuccess('TransferResponse', {
-        transaction: {
-          postingId: newId('pst'),
-          kind: 'transfer',
-          amountKobo: -parsed.data.amountKobo,
-          counterparty: null,
-          note: parsed.data.note ?? null,
-          createdAt: new Date().toISOString(),
-        },
-        wallet: walletFixture(),
-      })
+      const transaction = {
+        postingId: newId('pst'),
+        kind: 'transfer' as const,
+        amountKobo: -parsed.data.amountKobo,
+        counterparty: null,
+        note: parsed.data.note ?? null,
+        createdAt: new Date().toISOString(),
+      }
+      walletTransactions.unshift(transaction)
+      return buildSuccess('TransferResponse', { transaction, wallet: walletFixture() })
     })
 
     return toResponse(result)
@@ -405,17 +442,16 @@ export const handlers = [
 
     const result = withIdempotency(API.wallet.topup, key, parsed.data, (): JsonResult => {
       walletState.balanceKobo += parsed.data.amountKobo
-      return buildSuccess('TransferResponse', {
-        transaction: {
-          postingId: newId('pst'),
-          kind: 'topup',
-          amountKobo: parsed.data.amountKobo,
-          counterparty: null,
-          note: null,
-          createdAt: new Date().toISOString(),
-        },
-        wallet: walletFixture(),
-      })
+      const transaction = {
+        postingId: newId('pst'),
+        kind: 'topup' as const,
+        amountKobo: parsed.data.amountKobo,
+        counterparty: null,
+        note: null,
+        createdAt: new Date().toISOString(),
+      }
+      walletTransactions.unshift(transaction)
+      return buildSuccess('TransferResponse', { transaction, wallet: walletFixture() })
     })
 
     return toResponse(result)
