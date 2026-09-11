@@ -116,10 +116,26 @@ export function toApiErrorResponse(
 
   if (exception instanceof HttpException) {
     const status = exception.getStatus()
+    const payload = exception.getResponse()
+
+    // Not every ApiError-shaped body arrives via ApiErrorException — most
+    // relevantly, `ZodValidationPipe` throws a bare `BadRequestException`
+    // carrying one (see that file's own doc comment), so a caller's
+    // `fields` survive the trip. Only trusted when the status already
+    // agrees with what `HTTP_STATUS_FOR_ERROR` says that code should be —
+    // same discipline as the ApiErrorException branch above, so a mismatch
+    // (this exception's status disagreeing with its own claimed code)
+    // falls through to the generic mapping below instead of silently
+    // forwarding a contradiction.
+    const parsedApiError = ApiErrorSchema.safeParse(payload)
+    if (parsedApiError.success && HTTP_STATUS_FOR_ERROR[parsedApiError.data.code] === status) {
+      return { status, body: parsedApiError.data }
+    }
+
     const code = STATUS_TO_ERROR_CODE[status] ?? 'internal'
     // A 5xx from a bare HttpException (e.g. `new InternalServerErrorException(driverError.message)`)
     // must never forward driver/internal detail to a client.
-    const message = status >= 500 ? 'Internal server error.' : extractMessage(exception.getResponse(), exception.message)
+    const message = status >= 500 ? 'Internal server error.' : extractMessage(payload, exception.message)
     return { status, body: { code, message } }
   }
 

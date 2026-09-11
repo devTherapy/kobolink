@@ -87,6 +87,42 @@ describe('toApiErrorResponse', () => {
     expect(body.code).toBe('internal')
   })
 
+  it('forwards fields from a bare BadRequestException whose body already parses as ApiErrorSchema — ZodValidationPipe\'s own path, not just ApiErrorException\'s', () => {
+    // B2 review finding: ZodValidationPipe (src/common/pipes/zod-validation.pipe.ts)
+    // throws a plain BadRequestException, not ApiErrorException, so it must
+    // hit this fallback branch — not the ApiErrorException branch above —
+    // for its `fields` to reach the client at all.
+    const exception = new BadRequestException({
+      code: 'validation_failed',
+      message: 'Validation failed.',
+      fields: { password: ['String must contain at least 10 character(s)'] },
+    })
+
+    const { status, body } = toApiErrorResponse(exception)
+
+    expect(status).toBe(400)
+    expect(body).toEqual({
+      code: 'validation_failed',
+      message: 'Validation failed.',
+      fields: { password: ['String must contain at least 10 character(s)'] },
+    })
+  })
+
+  it('does not forward an ApiError-shaped body whose status disagrees with its own code', () => {
+    // A hypothetical bug: an exception claims code "conflict" (409) but was
+    // actually thrown with a 404 status. The real status must win, and the
+    // (contradictory) fields payload must not be trusted either.
+    class MismatchedException extends BadRequestException {}
+    const exception = new MismatchedException({ code: 'conflict', message: 'oops', fields: { x: ['nope'] } })
+    Object.defineProperty(exception, 'getStatus', { value: () => 404 })
+
+    const { status, body } = toApiErrorResponse(exception)
+
+    expect(status).toBe(404)
+    expect(body.code).toBe('not_found')
+    expect(body).not.toHaveProperty('fields')
+  })
+
   it('collapses class-validator-style string-array messages into one string', () => {
     const exception = new BadRequestException({ message: ['field a is required', 'field b is required'] })
 

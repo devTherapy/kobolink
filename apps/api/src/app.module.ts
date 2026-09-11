@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
+import { AuthModule } from './auth/auth.module.js'
 import { NotFoundModule } from './common/not-found.module.js'
 import { DbModule } from './db/db.module.js'
 import { HealthModule } from './health/health.module.js'
@@ -29,6 +30,7 @@ const repoRoot = path.resolve(here, '../../..')
     }),
     DbModule,
     HealthModule,
+    AuthModule,
     // Every real feature module goes above this line — NotFoundModule's
     // catch-all route must stay last so it never shadows a real one.
     NotFoundModule,
