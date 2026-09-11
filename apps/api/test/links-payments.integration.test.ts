@@ -69,6 +69,21 @@ describe('GET /api/links/:code/payments (real Postgres via Testcontainers)', () 
     expect(ApiErrorSchema.parse(response.body).code).toBe('not_found')
   })
 
+  it('400 validation_failed: a garbage cursor — same as GET /api/links, even though this route\'s page is still always empty', async () => {
+    const merchant = await registerMerchant(getCtx(), 'payments-bad-cursor@example.test')
+    const code = await createLink(merchant.cookie)
+
+    const response = await getCtx()
+      .request.get(API.links.payments(code))
+      .query({ cursor: 'not-a-real-cursor' })
+      .set('Cookie', merchant.cookie)
+
+    expect(response.status).toBe(400)
+    const body = ApiErrorSchema.parse(response.body)
+    expect(body.code).toBe('validation_failed')
+    expect(body.fields).toHaveProperty('cursor')
+  })
+
   it('400 validation_failed: limit above PageQuerySchema\'s max', async () => {
     const merchant = await registerMerchant(getCtx(), 'payments-validation@example.test')
     const code = await createLink(merchant.cookie)

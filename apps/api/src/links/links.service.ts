@@ -99,7 +99,7 @@ export class LinksService {
       .select()
       .from(schema.links)
       .where(where)
-      .orderBy(desc(schema.links.createdAt), desc(schema.links.code))
+      .orderBy(desc(this.createdAtMs()), desc(schema.links.code))
       .limit(query.limit + 1)
 
     const hasMore = rows.length > query.limit
@@ -148,8 +148,15 @@ export class LinksService {
    * `ledger_entries` shaped like `computeLinkStats` below) gets wired in —
    * see this feature's PR description for the exact assumption B5 needs to
    * either keep or correct.
+   *
+   * `query.cursor` is still decoded — and thrown on if it doesn't parse —
+   * even though nothing here reads the result yet: the underlying data
+   * source isn't wired in until B5, but a garbage cursor should already
+   * behave the same way it does on `list()` (400 `validation_failed`)
+   * rather than silently paging past it into an empty result.
    */
-  async payments(user: User, code: string, _query: PageQuery): Promise<PaymentListResponse | undefined> {
+  async payments(user: User, code: string, query: PageQuery): Promise<PaymentListResponse | undefined> {
+    this.decodeCursorOrThrow(query.cursor)
     const row = await this.findOwnedRow(user.id, code)
     if (row === undefined) return undefined
     return { items: [], nextCursor: null }
@@ -174,11 +181,27 @@ export class LinksService {
     return decoded
   }
 
-  /** Keyset predicate for "strictly after `cursor` in the `createdAt desc, code desc` order". */
+  /**
+   * `date_trunc('milliseconds', created_at)` — never the bare column — so
+   * this lines up with what a cursor actually encodes (a JS `Date`, which
+   * cannot hold more than millisecond precision; see `link-cursor.ts`'s doc
+   * comment). Shared by `list`'s `ORDER BY` and `beforeCursor`'s predicate:
+   * comparing a millisecond-truncated cursor against the full
+   * microsecond-precision column let a row sharing the cursor row's
+   * millisecond, but with smaller microseconds, fail both `<` and `=` and
+   * silently drop out of the walk — using the same truncated expression on
+   * both sides (and to order by) closes that gap.
+   */
+  private createdAtMs(): SQL {
+    return sql`date_trunc('milliseconds', ${schema.links.createdAt})`
+  }
+
+  /** Keyset predicate for "strictly after `cursor` in the `createdAtMs() desc, code desc` order". */
   private beforeCursor(cursor: { createdAt: Date; code: string }): SQL | undefined {
+    const createdAtMs = this.createdAtMs()
     return or(
-      lt(schema.links.createdAt, cursor.createdAt),
-      and(eq(schema.links.createdAt, cursor.createdAt), lt(schema.links.code, cursor.code)),
+      lt(createdAtMs, cursor.createdAt),
+      and(eq(createdAtMs, cursor.createdAt), lt(schema.links.code, cursor.code)),
     )
   }
 

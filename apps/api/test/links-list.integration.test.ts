@@ -1,4 +1,5 @@
-import { API, ApiErrorSchema, LinkListResponseSchema, PaymentLinkSchema } from '@kobolink/contracts'
+import { API, ApiErrorSchema, LinkListResponseSchema, newLinkCode, PaymentLinkSchema } from '@kobolink/contracts'
+import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { type ApiTestContext, startApiTestContext } from './support/api-test-context.js'
 import { registerCustomer, registerMerchant } from './support/register-user.js'
@@ -110,6 +111,76 @@ describe('GET /api/links (real Postgres via Testcontainers)', () => {
     // and the walk ends at the very first one created ("Link 00").
     expect(pages[0]?.[0]).toBe('Link 24')
     expect(pages[2]?.at(-1)).toBe('Link 00')
+  })
+
+  it('does not silently drop a row that shares the last row\'s millisecond but has smaller microseconds (pins the cursor precision fix)', async () => {
+    const merchant = await registerMerchant(getCtx(), 'list-precision@example.test')
+
+    // Four rows in the exact same millisecond bucket (10:00:00.250) but at
+    // four different microsecond offsets within it, one of them exactly on
+    // the millisecond boundary. `INSERT`ed directly — not through
+    // `POST /api/links`, which always uses `now()` — because the bug this
+    // pins depends on controlling microseconds precisely, something no
+    // sequence of real requests can guarantee deterministically (unlike the
+    // 25-link walk test above). Postgres stores all four distinctly; a
+    // cursor's `Date` (`link-cursor.ts`) cannot: `beforeCursor`'s predicate
+    // used to compare the full microsecond-precision column against a
+    // millisecond-truncated cursor value, so a row landing right after a
+    // page boundary inside this same bucket, with smaller microseconds than
+    // the boundary row, was neither `<` nor `=` the truncated cursor and
+    // vanished from every later page — the `code` tie-break only ever fired
+    // for the exactly-zero-microseconds row.
+    const timestamps = [
+      '2026-06-01 10:00:00.250000+00',
+      '2026-06-01 10:00:00.250111+00',
+      '2026-06-01 10:00:00.250500+00',
+      '2026-06-01 10:00:00.250999+00',
+    ]
+    const codes: string[] = []
+    const pool = new Pool({ connectionString: getCtx().connectionString })
+    try {
+      for (const createdAt of timestamps) {
+        let code = newLinkCode()
+        while (codes.includes(code)) code = newLinkCode()
+        codes.push(code)
+        await pool.query(
+          `insert into links (code, merchant_user_id, title, is_reusable, created_at)
+           values ($1, $2, $3, false, $4::timestamptz)`,
+          [code, merchant.userId, `Precision ${createdAt}`, createdAt],
+        )
+      }
+    } finally {
+      await pool.end()
+    }
+
+    const seenCodes = new Set<string>()
+    let cursor: string | undefined
+    let pageCount = 0
+
+    for (;;) {
+      const response = await getCtx()
+        .request.get(API.links.collection)
+        .query(cursor === undefined ? { limit: 2 } : { limit: 2, cursor })
+        .set('Cookie', merchant.cookie)
+      expect(response.status).toBe(200)
+      const page = LinkListResponseSchema.parse(response.body)
+      pageCount += 1
+
+      for (const item of page.items) {
+        expect(seenCodes.has(item.code)).toBe(false)
+        seenCodes.add(item.code)
+      }
+
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+      // Guard against an infinite loop if nextCursor is ever wrong.
+      expect(pageCount).toBeLessThanOrEqual(5)
+    }
+
+    expect(pageCount).toBe(2)
+    // The actual regression: without the fix, this is 3, not 4.
+    expect(seenCodes.size).toBe(4)
+    for (const code of codes) expect(seenCodes.has(code)).toBe(true)
   })
 
   it('400 validation_failed: limit above PageQuerySchema\'s max of 100', async () => {
