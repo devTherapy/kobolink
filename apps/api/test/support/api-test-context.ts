@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { INestApplication } from '@nestjs/common'
-import { Test } from '@nestjs/testing'
+import { Test, type TestingModuleBuilder } from '@nestjs/testing'
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -43,6 +43,17 @@ async function applyMigrations(connectionString: string): Promise<void> {
   }
 }
 
+export interface ApiTestContextOptions {
+  /**
+   * Runs against the `TestingModuleBuilder` before `.compile()` — the seam a
+   * test uses to override one provider (e.g. `LinksModule`'s
+   * `LINK_CODE_GENERATOR`, for the collision-retry integration test) without
+   * copying this whole function just to change one line. Identity by
+   * default.
+   */
+  configureModule?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+}
+
 /**
  * Starts one real Postgres container, applies whatever migrations exist,
  * boots the full Nest app against it (the same `AppModule` and
@@ -52,7 +63,7 @@ async function applyMigrations(connectionString: string): Promise<void> {
  * One container per call — call this once per test *file* (`beforeAll`), not
  * per test case, so a suite with many assertions still starts Postgres once.
  */
-export async function startApiTestContext(): Promise<ApiTestContext> {
+export async function startApiTestContext(options: ApiTestContextOptions = {}): Promise<ApiTestContext> {
   const container: StartedPostgreSqlContainer = await new PostgreSqlContainer('postgres:17-alpine').start()
   const connectionString = container.getConnectionUri()
   let app: INestApplication | undefined
@@ -66,7 +77,8 @@ export async function startApiTestContext(): Promise<ApiTestContext> {
     // a process-wide env var is safe here.
     process.env.DATABASE_URL = connectionString
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
+    const builder = Test.createTestingModule({ imports: [AppModule] })
+    const moduleRef = await (options.configureModule?.(builder) ?? builder).compile()
     app = moduleRef.createNestApplication()
     configureApp(app)
     await app.init()
