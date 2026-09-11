@@ -82,16 +82,27 @@ function requireValidLinkCode(code: string): void {
 }
 
 /**
- * The app's own origin, so `fetch` always receives an absolute URL —
- * required outside the browser (SSR, this file's callers under Vitest/Node).
- * `INTERNAL_ORIGIN` is a server-only escape hatch: F6's `/l/[code]` fetches
- * this client from a server component, where `window` does not exist and a
- * hardcoded `localhost:3000` would be wrong in every deployed environment.
- * Deployment must set it to wherever this Next.js process can reach itself.
+ * The origin `fetch` resolves every path against, so a caller (including
+ * this file's own SSR/server-component callers, where `window` does not
+ * exist) always issues an absolute URL.
+ *
+ * In the browser this is simply the page's own origin: `/api/*` there goes
+ * through `next.config.ts`'s rewrite to `apps/api`, which is what keeps
+ * cookies first-party and avoids a CORS story.
+ *
+ * On the server it is `API_ORIGIN` directly — the same variable
+ * `next.config.ts`'s rewrite already reads, not a second `INTERNAL_ORIGIN`
+ * self-origin. F6's `/l/[code]` calls this client from a server component at
+ * request time; resolving to this Next.js process's own origin there would
+ * mean a self-fetch back into the rewrite just to reach `apps/api` a hop
+ * later — extra latency, and a self-connection that is not guaranteed to
+ * even be reachable in every deployment shape (a serverless function cannot
+ * always fetch itself). Going straight to `API_ORIGIN` is both fewer hops
+ * and one less thing that can be wrong.
  */
 function origin(): string {
   if (typeof window !== 'undefined') return window.location.origin
-  return process.env.INTERNAL_ORIGIN ?? 'http://localhost:3000'
+  return process.env.API_ORIGIN ?? 'http://localhost:3001'
 }
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {

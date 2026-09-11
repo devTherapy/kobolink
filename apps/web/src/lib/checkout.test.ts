@@ -2,7 +2,13 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { API, exampleLink, toPublicLink } from '@kobolink/contracts'
 import { server } from '@/mocks/server'
-import { checkoutTitle, formatCheckoutDate, resolveCheckoutLink, NON_PAYABLE_COPY } from './checkout'
+import {
+  checkoutTitle,
+  formatCheckoutDate,
+  resolveCheckoutLink,
+  CheckoutUnavailableError,
+  NON_PAYABLE_COPY,
+} from './checkout'
 
 describe('resolveCheckoutLink', () => {
   it('resolves the seeded fixture link', async () => {
@@ -25,13 +31,18 @@ describe('resolveCheckoutLink', () => {
     expect(resolution).toEqual({ found: false })
   })
 
-  it('re-throws anything that is not a not_found ApiError', async () => {
+  it('maps a non-not_found ApiError (5xx, rate_limited, ...) to CheckoutUnavailableError', async () => {
     server.use(
       http.get(API.links.resolve(':code'), () =>
         HttpResponse.json({ code: 'internal', message: 'boom' }, { status: 500 }),
       ),
     )
-    await expect(resolveCheckoutLink('aBcDeFgH')).rejects.toThrow()
+    await expect(resolveCheckoutLink('aBcDeFgH')).rejects.toThrow(CheckoutUnavailableError)
+  })
+
+  it('maps a raw transport failure (no ApiError body at all) to CheckoutUnavailableError too', async () => {
+    server.use(http.get(API.links.resolve(':code'), () => HttpResponse.error()))
+    await expect(resolveCheckoutLink('aBcDeFgH')).rejects.toThrow(CheckoutUnavailableError)
   })
 })
 
@@ -56,8 +67,21 @@ describe('checkoutTitle', () => {
 describe('formatCheckoutDate', () => {
   it('renders a human-readable date, not a raw ISO string', () => {
     const formatted = formatCheckoutDate('2026-06-15T12:00:00.000Z')
-    expect(formatted).not.toContain('T')
+    // Not `not.toContain('T')` — the zone abbreviation this now includes
+    // (WAT) legitimately contains a "T". What must not survive is the ISO
+    // `<date>T<time>` separator itself.
+    expect(formatted).not.toMatch(/\dT\d/)
     expect(formatted).toMatch(/2026/)
+  })
+
+  it('is pinned to Africa/Lagos and names the zone, so SSR and client agree', () => {
+    // Noon UTC is 13:00 in Lagos (WAT, UTC+1, no DST) — if this were
+    // rendered in the runtime's local zone instead, a non-WAT machine
+    // (exactly what CI and a payer's own device can be) would show a
+    // different hour.
+    const formatted = formatCheckoutDate('2026-06-15T12:00:00.000Z')
+    expect(formatted).toContain('13:00')
+    expect(formatted).toMatch(/WAT|GMT\+1/)
   })
 })
 

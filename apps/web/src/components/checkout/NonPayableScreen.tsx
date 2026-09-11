@@ -1,8 +1,11 @@
+'use client'
+
 import Link from 'next/link'
+import { useEffect, useRef } from 'react'
 import type { PublicLink } from '@kobolink/contracts'
 import { NON_PAYABLE_COPY, type NonPayableState } from '@/lib/checkout'
 import { CheckoutCard } from './CheckoutCard'
-import { AlertTriangleIcon, XCircleIcon } from './icons'
+import { AlertTriangleIcon } from './icons'
 
 /**
  * One screen for the three ways a link can refuse a payment — rendered by
@@ -11,6 +14,13 @@ import { AlertTriangleIcon, XCircleIcon } from './icons'
  * single-use link a racing payer finished paying between page load and this
  * payer clicking Pay). Same component, same copy (`NON_PAYABLE_COPY`),
  * either way — never two screens that could say it two different ways.
+ *
+ * `'use client'`: the initial-load render from the server page still SSRs
+ * this component's HTML exactly as before (a Server Component rendering a
+ * Client Component is not a client-rendered page — only `generateMetadata`
+ * and the page's own JSX matter for the OG-card guarantee); the directive
+ * only means this file's `useEffect` (the focus management below) is legal
+ * to write at all, since a Server Component cannot use hooks.
  *
  * Every variant states the thing a worried payer actually wants to know
  * first: no money moved. Then it names what happened, then the next step —
@@ -23,35 +33,69 @@ import { AlertTriangleIcon, XCircleIcon } from './icons'
  * the whole page and its heading is the document's `<h1>`, and `PayForm`'s
  * `link_not_payable` branch, where the page's real `<h1>` is the link title
  * still visible above it — a second `<h1>` there would be a duplicate.
+ *
+ * `state` is nullable for one specific case: a `link_not_payable` error that
+ * did not carry `state` at all. Rather than guessing (defaulting to
+ * `'disabled'` fabricates a merchant action nobody confirmed happened), a
+ * `null` state renders neutral copy that says only what is actually known —
+ * this link cannot be paid right now.
  */
 export function NonPayableScreen({
   state,
   link,
   headingLevel = 'h1',
+  autoFocus = false,
 }: {
-  state: NonPayableState
+  state: NonPayableState | null
   link: PublicLink
   headingLevel?: 'h1' | 'h2'
+  /** Focus the heading on mount — only correct when this is the result of a
+   *  client-side transition (`PayForm`'s `link_not_payable` swap), never for
+   *  the initial page load, which must not steal focus from the top of the
+   *  document. */
+  autoFocus?: boolean
 }) {
-  const copy = NON_PAYABLE_COPY[state]
-  const Icon = state === 'already-paid' ? XCircleIcon : AlertTriangleIcon
+  const copy = state ? NON_PAYABLE_COPY[state] : null
   const Heading = headingLevel
+  const headingRef = useRef<HTMLHeadingElement>(null)
+
+  useEffect(() => {
+    if (autoFocus) headingRef.current?.focus()
+  }, [autoFocus])
+
+  const heading = copy ? copy.heading : 'This link cannot be paid right now'
+  const body = copy ? copy.body(link) : null
+  const nextStep = copy ? copy.nextStep(link) : 'Please try again in a moment.'
 
   return (
     <CheckoutCard>
-      <div className="flex flex-col items-center gap-3 text-center">
-        <Icon className="text-(--color-warning)" width={32} height={32} />
+      {/* `role="status"`/`aria-live="polite"`: correct for both contexts —
+          inert on the initial SSR render (nothing has "changed" yet, so a
+          screen reader just reads it top-down like any other content), and
+          an actual live announcement for `PayForm`'s client-side swap. */}
+      <div role="status" aria-live="polite" className="flex flex-col items-center gap-3 text-center">
+        {/* One icon for all three states, always amber: `XCircleIcon` is
+            reserved for `PayForm.FailedResult`'s actual payment failure
+            (danger-red) — reusing it here for `already-paid` would make a
+            merely-unpayable link look like a harder failure than it is. */}
+        <AlertTriangleIcon className="text-(--color-warning)" width={32} height={32} />
         <p className="truncate text-[13px] text-(--color-ink-2)">{link.merchantName}</p>
-        <Heading className="text-[23px] font-semibold text-(--color-ink)">{copy.heading}</Heading>
+        <Heading
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-[23px] font-semibold text-(--color-ink) outline-none"
+        >
+          {heading}
+        </Heading>
         <p className="truncate text-[16px] text-(--color-ink-2)">{link.title}</p>
-        <p className="text-[14px] text-(--color-ink-2)">{copy.body(link)}</p>
+        {body ? <p className="text-[14px] text-(--color-ink-2)">{body}</p> : null}
         {/* Neutral, not amber: the icon above already carries "heads up,
             this link can't be paid" — this line is reassurance, not a
             second warning, so it reads as calm fact rather than alarm. */}
         <p className="rounded-(--radius-input) bg-(--color-border-soft) px-3 py-2 text-[13px] font-medium text-(--color-ink-2)">
           No money has moved.
         </p>
-        <p className="text-[13px] text-(--color-ink-2)">{copy.nextStep(link)}</p>
+        <p className="text-[13px] text-(--color-ink-2)">{nextStep}</p>
         <Link
           href="/"
           className="mt-2 inline-flex min-h-11 items-center justify-center rounded-(--radius-input) px-4 text-[13px] font-medium text-(--color-brand) hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)"

@@ -8,10 +8,14 @@ import { CheckoutCard, CheckoutShell } from '@/components/checkout/CheckoutCard'
  * well-formed one the public endpoint answers `not_found` for. Own
  * metadata, since the page's own `generateMetadata` never resolves a title
  * for a link that does not exist.
+ *
+ * No explicit `robots` here: Next.js already answers a `notFound()`
+ * response with a 404 status and its own `noindex` robots meta tag. Setting
+ * one again produced a second, duplicate `<meta name="robots">` in the
+ * rendered head — the 404 handling, not this file, owns that tag.
  */
 export const metadata: Metadata = {
   title: { absolute: 'Link not found · Kobolink' },
-  robots: { index: false, follow: false },
 }
 
 export default function LinkNotFound() {

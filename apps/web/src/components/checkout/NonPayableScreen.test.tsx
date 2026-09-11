@@ -23,4 +23,29 @@ describe('NonPayableScreen', () => {
     render(<NonPayableScreen state="disabled" link={link} />)
     expect(screen.getAllByText('Adebayo Stores').length).toBeGreaterThan(0)
   })
+
+  it('renders neutral copy for a null state instead of fabricating a merchant action', () => {
+    render(<NonPayableScreen state={null} link={link} />)
+
+    expect(screen.getByRole('heading', { name: 'This link cannot be paid right now' })).toBeInTheDocument()
+    expect(screen.queryByText(/turned off/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/already been (paid|used)/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/no money has moved/i)).toBeInTheDocument()
+  })
+
+  it('exposes the container as a status region', () => {
+    render(<NonPayableScreen state="disabled" link={link} />)
+    expect(screen.getByRole('status')).toBeInTheDocument()
+  })
+
+  it('moves focus to the heading when autoFocus is set (the PayForm swap case)', () => {
+    render(<NonPayableScreen state="disabled" link={link} headingLevel="h2" autoFocus />)
+    expect(screen.getByRole('heading', { name: /turned off/i })).toHaveFocus()
+  })
+
+  it('does not steal focus on the initial page-load render (autoFocus unset)', () => {
+    render(<NonPayableScreen state="disabled" link={link} />)
+    expect(screen.getByRole('heading', { name: /turned off/i })).not.toHaveFocus()
+  })
 })
