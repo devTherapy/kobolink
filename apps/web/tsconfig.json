@@ -18,7 +18,24 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    // TypeScript's own "**/*" include globs silently skip dot-directories
+    // (https://www.typescriptlang.org/tsconfig#include) unless a pattern
+    // names them explicitly — the exact ".well-known trap" this repo's docs
+    // warn about, but in tsc/ESLint's project service rather than a host's
+    // deploy step. Without this line `tsc --noEmit` reports success having
+    // silently never looked at the route handlers under src/app/.well-known.
+    "src/app/.well-known/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next", "dist"]
+  "exclude": [
+    "node_modules",
+    ".next",
+    "dist",
+    // e2e/associations.spec.ts imports @playwright/test, which is not a
+    // dependency of this workspace — adding it would make every `npm ci`
+    // (CI included) resolve and install the full Playwright package for a
+    // suite nothing runs yet. F9 adds the dependency, a playwright.config.ts
+    // and a test:e2e script; remove this exclusion in that PR.
+    "e2e"
+  ]
 }
