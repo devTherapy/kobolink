@@ -6,3 +6,4 @@ here. Read top to bottom to follow how the implementation was built.
 | # | Feature | Title | PR | Merged |
 |---|---|---|---|---|
 | 1 | X0 | Monorepo, five CI jobs, shared tooling | https://github.com/devTherapy/kobolink/pull/1 | 2026-09-11 |
+| 2 | X1 | packages/contracts — domain types, Zod schemas, money, codes, status | https://github.com/devTherapy/kobolink/pull/3 | 2026-09-11 |
