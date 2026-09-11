@@ -4,6 +4,8 @@
   "private": true,
   "description": "The single definition of every shape that crosses a process boundary: domain types, Zod schemas, money, link codes, link status.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,5 +22,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.16",
+    "zod": "^4.6.2"
   }
 }

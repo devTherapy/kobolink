@@ -1,18 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { displayStatus, resolveLink } from '@/lib/status'
-import type { PaymentLink } from '@/types'
+import { displayStatus, exampleLink, resolveLink, toPublicLinkState, type PaymentLink } from '../src/index.js'
 
 const NOW = new Date('2026-06-15T12:00:00Z')
-
-function link(overrides: Partial<PaymentLink> = {}): PaymentLink {
-  return {
-    code: 'aBcDeFgH', merchantId: 'm1', merchantName: 'Adebayo Stores',
-    title: 'Ankara Two-Piece Set', description: null, amountKobo: 1_850_000,
-    currency: 'NGN', status: 'active', isReusable: true, expiresAt: null,
-    createdAt: '2026-06-02T09:00:00Z', paymentCount: 0, totalPaidKobo: 0,
-    ...overrides,
-  }
-}
+const link = (overrides: Partial<PaymentLink> = {}) => exampleLink({ paymentCount: 0, totalPaidKobo: 0, ...overrides })
 
 describe('resolveLink', () => {
   it('is not-found for a missing link', () => {
@@ -42,6 +32,21 @@ describe('resolveLink', () => {
   it('closes a single-use link once it has been paid', () => {
     expect(resolveLink(link({ isReusable: false, paymentCount: 1 }), NOW).kind).toBe('already-paid')
     expect(resolveLink(link({ isReusable: true, paymentCount: 9 }), NOW).kind).toBe('payable')
+  })
+
+  it('works on the public projection too, so the checkout page and the API agree', () => {
+    const publicish = { status: 'active' as const, isReusable: false, expiresAt: null, paymentCount: 1 }
+    expect(resolveLink(publicish, NOW).kind).toBe('already-paid')
+  })
+})
+
+describe('toPublicLinkState', () => {
+  it('maps every resolution to the wire state, and not-found to null (a 404, never a body)', () => {
+    expect(toPublicLinkState(resolveLink(null, NOW))).toBeNull()
+    expect(toPublicLinkState(resolveLink(link(), NOW))).toBe('payable')
+    expect(toPublicLinkState(resolveLink(link({ status: 'disabled' }), NOW))).toBe('disabled')
+    expect(toPublicLinkState(resolveLink(link({ expiresAt: '2026-01-01T00:00:00Z' }), NOW))).toBe('expired')
+    expect(toPublicLinkState(resolveLink(link({ isReusable: false, paymentCount: 1 }), NOW))).toBe('already-paid')
   })
 })
 

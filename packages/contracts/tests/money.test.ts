@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatNaira, parseNaira, isValidAmountKobo, MIN_AMOUNT_KOBO, MAX_AMOUNT_KOBO,
-} from '@/lib/money'
+} from '../src/index.js'
 
 describe('formatNaira', () => {
   it('renders whole naira without a decimal part', () => {
