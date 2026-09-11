@@ -1,0 +1,24 @@
+{
+  "name": "@kobolink/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The single definition of every shape that crosses a process boundary: domain types, Zod schemas, money, link codes, link status.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepare": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  }
+}

@@ -1,0 +1,116 @@
+# Five blocking jobs. A PR cannot merge while any of them is red.
+#
+#   lint-typecheck   eslint --max-warnings 0 · tsc --noEmit, every workspace
+#   unit             vitest, pure logic, no I/O
+#   integration-api  NestJS + Supertest + real Postgres via Testcontainers
+#   integration-web  React Testing Library + MSW, no browser
+#   e2e              Playwright, full stack, desktop + mobile projects
+#
+# Each job runs `npm run <script>` at the root, which fans out to every
+# workspace that defines the script (`--workspaces --if-present`). A workspace
+# that has not been built yet is simply skipped, so the pipeline is green from
+# X0 onward and each feature makes its own job real.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  # Playwright is only installed once F9 lands; until then the e2e job is a
+  # no-op fan-out. Skip the browser download when nothing needs it.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+jobs:
+  lint-typecheck:
+    name: lint + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test
+
+  integration-api:
+    name: integration-api
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Testcontainers talks to the runner's Docker daemon directly.
+      - run: docker info --format '{{.ServerVersion}}'
+      - run: npm run test:api
+
+  integration-web:
+    name: integration-web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test:web
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers (only once a workspace depends on it)
+        run: |
+          if [ -d node_modules/@playwright/test ]; then
+            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium webkit
+          else
+            echo "no @playwright/test in the tree yet; skipping browser install"
+          fi
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
