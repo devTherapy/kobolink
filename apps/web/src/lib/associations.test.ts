@@ -1,11 +1,21 @@
+import { ANDROID_PACKAGE_NAME, IOS_BUNDLE_ID } from '@kobolink/contracts'
 import { describe, expect, it } from 'vitest'
-import { buildAasa, buildAssetLinks, parseFingerprints, CLAIMED_PATH } from '@/lib/associations'
+import {
+  buildAasa,
+  buildAssetLinks,
+  parseFingerprints,
+  validateAndroidPackageName,
+  validateAppId,
+  CLAIMED_PATH,
+  PLACEHOLDER_TEAM_ID,
+} from '@/lib/associations'
 
 const FP_A = 'AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99'
 const FP_B = '11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00'
+const REAL_TEAM_ID = 'ZYXWV98765'
 
 describe('buildAasa', () => {
-  const aasa = buildAasa({ appId: 'ABCDE12345.com.folusayo.kobolink' })
+  const aasa = buildAasa({ appId: `${REAL_TEAM_ID}.${IOS_BUNDLE_ID}` })
 
   it('claims the payment-link path', () => {
     const components = aasa.applinks.details[0]?.components ?? []
@@ -33,27 +43,63 @@ describe('buildAasa', () => {
 
 describe('parseFingerprints', () => {
   it('uppercases — a lowercase fingerprint verifies locally and fails in production', () => {
-    expect(parseFingerprints(FP_A.toLowerCase())).toEqual([FP_A])
+    expect(parseFingerprints(FP_A.toLowerCase())).toEqual({ valid: [FP_A], invalid: [] })
   })
 
   it('accepts a comma-separated pair, which is the debug + Play App Signing case', () => {
-    expect(parseFingerprints(`${FP_A}, ${FP_B}`)).toEqual([FP_A, FP_B])
+    expect(parseFingerprints(`${FP_A}, ${FP_B}`)).toEqual({ valid: [FP_A, FP_B], invalid: [] })
   })
 
-  it('drops anything malformed rather than shipping it', () => {
-    expect(parseFingerprints('nope')).toEqual([])
-    expect(parseFingerprints('AA:BB:CC')).toEqual([])
-    expect(parseFingerprints(undefined)).toEqual([])
-    expect(parseFingerprints(`${FP_A},garbage`)).toEqual([FP_A])
+  it('names anything malformed as invalid rather than silently dropping it', () => {
+    // §6.3's exact failure mode: a debug fingerprint plus a mistyped Play App
+    // Signing fingerprint. Silently dropping the bad one and shipping only
+    // the good one verifies on the developer's machine and fails in
+    // production — so a malformed entry is reported, never just discarded.
+    expect(parseFingerprints('nope')).toEqual({ valid: [], invalid: ['NOPE'] })
+    expect(parseFingerprints('AA:BB:CC')).toEqual({ valid: [], invalid: ['AA:BB:CC'] })
+    expect(parseFingerprints(undefined)).toEqual({ valid: [], invalid: [] })
+    expect(parseFingerprints(`${FP_A},garbage`)).toEqual({ valid: [FP_A], invalid: ['GARBAGE'] })
   })
 })
 
 describe('buildAssetLinks', () => {
   it('uses the handle_all_urls relation and both fingerprints', () => {
-    const [entry] = buildAssetLinks({ packageName: 'com.folusayo.kobolink', fingerprints: [FP_A, FP_B] })
+    const [entry] = buildAssetLinks({ packageName: ANDROID_PACKAGE_NAME, fingerprints: [FP_A, FP_B] })
     expect(entry?.relation).toEqual(['delegate_permission/common.handle_all_urls'])
     expect(entry?.target.namespace).toBe('android_app')
-    expect(entry?.target.package_name).toBe('com.folusayo.kobolink')
+    expect(entry?.target.package_name).toBe(ANDROID_PACKAGE_NAME)
     expect(entry?.target.sha256_cert_fingerprints).toHaveLength(2)
+  })
+})
+
+describe('validateAppId', () => {
+  it('accepts a correctly shaped app id for our bundle', () => {
+    expect(validateAppId(`${REAL_TEAM_ID}.${IOS_BUNDLE_ID}`)).toBeNull()
+  })
+
+  it('rejects anything not shaped <TEAM_ID>.<bundle id>', () => {
+    expect(validateAppId('not-shaped-right')).not.toBeNull()
+    expect(validateAppId('short.com.folusayo.kobolink')).not.toBeNull()
+    expect(validateAppId('')).not.toBeNull()
+  })
+
+  it('rejects the .env.example placeholder Team ID even though it is shaped correctly', () => {
+    const error = validateAppId(`${PLACEHOLDER_TEAM_ID}.${IOS_BUNDLE_ID}`)
+    expect(error).not.toBeNull()
+    expect(error).toMatch(/placeholder/i)
+  })
+
+  it('rejects a bundle id that is not the one app this repo ships', () => {
+    expect(validateAppId(`${REAL_TEAM_ID}.com.example.other`)).not.toBeNull()
+  })
+})
+
+describe('validateAndroidPackageName', () => {
+  it('accepts the one package this repo ships', () => {
+    expect(validateAndroidPackageName(ANDROID_PACKAGE_NAME)).toBeNull()
+  })
+
+  it('rejects anything else', () => {
+    expect(validateAndroidPackageName('com.example.other')).not.toBeNull()
   })
 })

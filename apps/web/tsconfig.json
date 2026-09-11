@@ -27,5 +27,15 @@
     // silently never looked at the route handlers under src/app/.well-known.
     "src/app/.well-known/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next", "dist"]
+  "exclude": [
+    "node_modules",
+    ".next",
+    "dist",
+    // e2e/associations.spec.ts imports @playwright/test, which is not a
+    // dependency of this workspace — adding it would make every `npm ci`
+    // (CI included) resolve and install the full Playwright package for a
+    // suite nothing runs yet. F9 adds the dependency, a playwright.config.ts
+    // and a test:e2e script; remove this exclusion in that PR.
+    "e2e"
+  ]
 }

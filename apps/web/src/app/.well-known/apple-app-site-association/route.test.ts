@@ -1,4 +1,6 @@
+import { IOS_BUNDLE_ID } from '@kobolink/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PLACEHOLDER_TEAM_ID } from '@/lib/associations'
 import { GET } from './route'
 
 /**
@@ -10,7 +12,10 @@ import { GET } from './route'
  * of thing `toMatchObject` would let through silently.
  */
 
-const APP_ID = 'ABCDE12345.com.folusayo.kobolink'
+// Deliberately not the .env.example placeholder — that value is its own
+// rejection case below, so a "happy path" test using it would prove nothing.
+const REAL_TEAM_ID = 'ZYXWV98765'
+const APP_ID = `${REAL_TEAM_ID}.${IOS_BUNDLE_ID}`
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -76,6 +81,36 @@ describe('GET /.well-known/apple-app-site-association', () => {
 
   it('503s rather than serving an empty-string Team ID', () => {
     vi.stubEnv('APPLE_APP_ID', '')
+
+    const response = GET()
+
+    expect(response.status).toBe(503)
+  })
+
+  it('503s on the .env.example placeholder Team ID rather than serving it', async () => {
+    // This is the scenario the shape check alone would miss: the placeholder
+    // is shaped exactly like a real app ID, so copying .env.example without
+    // editing it must still 503, not serve a 200 Apple's CDN then caches for
+    // up to 24 hours with no way to invalidate it.
+    vi.stubEnv('APPLE_APP_ID', `${PLACEHOLDER_TEAM_ID}.${IOS_BUNDLE_ID}`)
+
+    const response = GET()
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toMatch(/placeholder/i)
+  })
+
+  it('503s when APPLE_APP_ID is not shaped <TEAM_ID>.<bundle id>', () => {
+    vi.stubEnv('APPLE_APP_ID', 'not-shaped-right')
+
+    const response = GET()
+
+    expect(response.status).toBe(503)
+  })
+
+  it('503s when the bundle id does not match the app this repo ships', () => {
+    vi.stubEnv('APPLE_APP_ID', `${REAL_TEAM_ID}.com.example.other`)
 
     const response = GET()
 
