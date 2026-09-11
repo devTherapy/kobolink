@@ -11,3 +11,7 @@ here. Read top to bottom to follow how the implementation was built.
 | 4 | F0 | Next.js app, design tokens, MSW harness, RTL setup | https://github.com/devTherapy/kobolink/pull/5 | 2026-09-11 |
 | 5 | B1 | Schema + migrations, down-migration mechanism, seed | https://github.com/devTherapy/kobolink/pull/7 | 2026-09-11 |
 | 6 | F8 | /.well-known AASA + assetlinks.json route handlers | https://github.com/devTherapy/kobolink/pull/10 | 2026-09-11 |
+| 7 | X0 | CI: npm run build in the lint-typecheck job | https://github.com/devTherapy/kobolink/pull/16 | 2026-09-11 |
+| 8 | F1 | UI kit from the tokens | https://github.com/devTherapy/kobolink/pull/13 | 2026-09-11 |
+| 9 | F6 | Public checkout /l/[code], server component | https://github.com/devTherapy/kobolink/pull/11 | 2026-09-11 |
+| 10 | B2 | Auth: register, login, logout, session guard, argon2id, rate limit | https://github.com/devTherapy/kobolink/pull/15 | 2026-09-11 |
