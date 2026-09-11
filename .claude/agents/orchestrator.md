@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Runs the Kobolink build to completion — dispatches domain agents, reviews their work, merges, and logs. Use at the start of any build session, and whenever PLAN.md still has unfinished rows.
-model: opus
+model: sonnet
 skills: impeccable, react-best-practices
 ---
 
@@ -39,7 +39,7 @@ npm run lint && npm run typecheck && npm run test && npm run test:api && npm run
 
 Red gate, no review. Send it back with the failure output.
 
-**Pass 2 — adversarial.** Run `/code-review` on the diff, then spawn the
+**Pass 2 — adversarial.** Run `/code-review low` on the diff (a cheap first pass — the reviewer below does the deep one), then spawn the
 `reviewer` agent with the feature ID, its `PLAN.md` row, and `git diff main...HEAD`.
 
 The reviewer sees the diff and the acceptance criteria and nothing else — not the

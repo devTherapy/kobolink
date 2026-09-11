@@ -61,7 +61,7 @@ edits `packages/contracts` directly.
 | B0 | NestJS skeleton, Drizzle wiring, Testcontainers harness, `/api/health` | X1 | An integration test boots the app against a real Postgres container and gets 200 | done |
 | B1 | Schema + migrations: `users`, `sessions`, `ledger_accounts`, `ledger_entries`, `links`, `idempotency_keys` | B0 | `drizzle-kit` migration runs clean up and down; a seed script populates a merchant | done |
 | B2 | Auth: register, login, logout, session guard, argon2id, login rate limit | B1 | Integration tests cover wrong password, unknown user, expired session, revoked session, rate limit trip | done |
-| B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | in-progress |
+| B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | in-review |
 | B4 | Public link resolution `GET /api/links/:code`, unauthenticated | B3 | Returns only fields the checkout page renders; disabled/expired/paid resolve to the right state | todo |
 | B5 | Payments as **ledger postings**: initialize, verify, idempotency | B4 | Entries balance to zero; replaying the same idempotency key is a no-op, not a double charge | todo |
 | B6 | SSE `/api/stream/dashboard` fed by Postgres `LISTEN/NOTIFY` | B5 | Two subscribers both receive an event; a dropped connection reconnects; heartbeat keeps proxies from killing it | todo |
