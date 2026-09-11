@@ -18,6 +18,7 @@ describe('errors', () => {
   it('a link_not_payable error can carry the resolved state, and only a known one', () => {
     expect(isApiError({ code: 'link_not_payable', message: 'x', state: 'already-paid' })).toBe(true)
     expect(isApiError({ code: 'link_not_payable', message: 'x', state: 'active' })).toBe(false)
+    expect(isApiError({ code: 'link_not_payable', message: 'x', state: 'payable' })).toBe(false)
   })
 
   it('has no payment_declined code — a gateway decline is a 200 with status failed, never an error', () => {

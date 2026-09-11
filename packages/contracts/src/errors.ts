@@ -36,6 +36,10 @@ export const ApiErrorSchema = z
      */
     state: PublicLinkStateSchema.optional(),
   })
+  .refine((e) => e.code !== 'link_not_payable' || e.state !== 'payable', {
+    message: 'a link_not_payable error cannot carry state payable',
+    path: ['state'],
+  })
   .meta({ id: 'ApiError' })
 export type ApiError = z.infer<typeof ApiErrorSchema>
 

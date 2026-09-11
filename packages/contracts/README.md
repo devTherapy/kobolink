@@ -88,4 +88,7 @@ map to the checkout page's non-payable screens one to one.
 A gateway decline is a *result*: `Payment { status: 'failed', failureReason,
 moneyMoved: false }` with HTTP 200. `ApiError` is for a request that could not
 be processed: bad input, no session, a link that is not payable, insufficient
-funds. Every result and every money-related error states whether money moved.
+funds. A `Payment` always states `moneyMoved`; clients render from that field
+and never re-derive it from `status` (the invariant is enforced by the API, not
+by the generated models). `ApiError.moneyMoved` is set on every error from a
+money-moving endpoint and absent elsewhere.

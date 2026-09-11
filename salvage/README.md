@@ -11,7 +11,7 @@ removed from here.
 | File | Goes to | Why it survived |
 |---|---|---|
 | `web/associations.ts` | `apps/web/src/lib/` | AASA + assetlinks builders, pure and testable |
-| `web/associations.test.ts` | `apps/web/src/lib/` (beside the implementation) | 11 passing unit tests: AASA components-only format, fingerprint uppercasing and rejection, assetlinks relation |
+| `web/associations.test.ts` | `apps/web/src/lib/` (beside the implementation) | 8 passing unit tests: AASA components-only format, fingerprint uppercasing and rejection, assetlinks relation |
 | `web/well-known/aasa.route.ts` | `apps/web/src/app/.well-known/apple-app-site-association/route.ts` | Must stay in the web app: served by the host the universal link names |
 | `web/well-known/assetlinks.route.ts` | `apps/web/src/app/.well-known/assetlinks.json/route.ts` | Same |
 | `web/globals.css` | `apps/web/src/app/` | The design tokens. Extend, don't replace |
