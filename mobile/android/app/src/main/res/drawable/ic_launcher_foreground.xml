@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A simple link-chain glyph in the adaptive icon's safe zone (center
+         66dp circle), white on the brand-blue background. Placeholder until
+         a real brand mark ships. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M43,40 h10 a12,12 0 0 1 0,24 h-10 a12,12 0 0 1 0,-24 z
+                           M65,44 h10 a12,12 0 0 1 0,24 h-10 a12,12 0 0 1 0,-24 z"
+        android:fillType="evenOdd" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:pathData="M53,52 L65,56" />
+</vector>

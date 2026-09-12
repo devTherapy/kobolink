@@ -1,0 +1,16 @@
+# Copy this file to `local.properties` (already gitignored) and fill in real
+# values for your machine. Never commit `local.properties` itself.
+
+# Path to your Android SDK checkout. Android Studio writes this automatically;
+# set it by hand if you build from the command line.
+sdk.dir=/Users/you/Library/Android/sdk
+
+# Base URL the app's API client points at. Read by app/build.gradle.kts and
+# exposed to Kotlin as BuildConfig.API_BASE_URL — never hardcode this in
+# source. Point it at your local `npm run dev` API (port 3001) for
+# development, or a deployed environment for staging/release builds.
+#
+# Android emulator note: "localhost" from inside the emulator is the emulator
+# itself, not your host machine. Use the special alias 10.0.2.2 to reach a
+# server running on your Mac.
+kobolink.apiBaseUrl=http://10.0.2.2:3001/

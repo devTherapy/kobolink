@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Dark-mode counterpart to values/themes.xml. Without this override the
+      platform theme's light #FEFBFF windowBackground shows through as a
+      flash before Compose draws its first frame in dark mode. #131318
+      matches ui/theme/Color.kt's surfaceDark, the same M3 dark surface
+      KobolinkTheme renders once Compose takes over.
+    -->
+    <style name="Theme.Kobolink" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#131318</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
