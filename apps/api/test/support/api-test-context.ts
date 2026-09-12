@@ -52,6 +52,15 @@ export interface ApiTestContextOptions {
    * default.
    */
   configureModule?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+  /**
+   * Runs against the `PostgreSqlContainer` before `.start()` — the seam
+   * `dashboard-listener-reconnect.integration.test.ts` uses to lower
+   * `max_connections` (via `.withCommand([...])`) so that test can exhaust
+   * every connection slot itself, cheaply, to force a genuine
+   * connection-establishment failure on the dedicated LISTEN client rather
+   * than merely severing an already-open one. Identity by default.
+   */
+  configureContainer?: (container: PostgreSqlContainer) => PostgreSqlContainer
 }
 
 /**
@@ -64,7 +73,8 @@ export interface ApiTestContextOptions {
  * per test case, so a suite with many assertions still starts Postgres once.
  */
 export async function startApiTestContext(options: ApiTestContextOptions = {}): Promise<ApiTestContext> {
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer('postgres:17-alpine').start()
+  const containerBuilder = new PostgreSqlContainer('postgres:17-alpine')
+  const container: StartedPostgreSqlContainer = await (options.configureContainer?.(containerBuilder) ?? containerBuilder).start()
   const connectionString = container.getConnectionUri()
   let app: INestApplication | undefined
 
