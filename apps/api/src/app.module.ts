@@ -8,6 +8,7 @@ import { DashboardModule } from './dashboard/dashboard.module.js'
 import { DbModule } from './db/db.module.js'
 import { HealthModule } from './health/health.module.js'
 import { LinksModule } from './links/links.module.js'
+import { OpenApiModule } from './openapi/openapi.module.js'
 import { PaymentsModule } from './payments/payments.module.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -37,6 +38,7 @@ const repoRoot = path.resolve(here, '../../..')
     LinksModule,
     PaymentsModule,
     DashboardModule,
+    OpenApiModule,
     // Every real feature module goes above this line — NotFoundModule's
     // catch-all route must stay last so it never shadows a real one.
     NotFoundModule,

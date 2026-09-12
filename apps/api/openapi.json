@@ -1,0 +1,2985 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kobolink API",
+    "version": "0.1.0",
+    "description": "Generated from the Zod schemas in packages/contracts (registry.ts) and the route manifest in apps/api/src/openapi/route-manifest.ts. Do not hand-edit — run `npm run generate:openapi -w apps/api`."
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness/readiness probe. 200 only if Postgres round-trips.",
+        "tags": [
+          "Health"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The API and its database are both reachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "ok"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "registerUser",
+        "summary": "Create an account and sign in.",
+        "tags": [
+          "Auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Account created and signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "New account details.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "login",
+        "summary": "Sign in with email and password.",
+        "tags": [
+          "Auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "Credentials.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "summary": "Revoke the current session.",
+        "tags": [
+          "Auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "Session revoked. No body."
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "The signed-in user.",
+        "tags": [
+          "Auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The signed-in user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/links": {
+      "post": {
+        "operationId": "createLink",
+        "summary": "Create a payment link.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "The created link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentLink"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The new link.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLinkRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listLinks",
+        "summary": "The signed-in merchant's links.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of links.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/links/{code}": {
+      "get": {
+        "operationId": "getLink",
+        "summary": "The signed-in merchant's own link, by code.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The link's short code.",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 8,
+              "description": "8 characters from an alphabet without 0/O/1/l/I.",
+              "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentLink"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/links/{code}/status": {
+      "patch": {
+        "operationId": "updateLinkStatus",
+        "summary": "Enable or disable a link.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The link's short code.",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 8,
+              "description": "8 characters from an alphabet without 0/O/1/l/I.",
+              "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentLink"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The new status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLinkStatusRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/links/{code}/payments": {
+      "get": {
+        "operationId": "listLinkPayments",
+        "summary": "Payments made against one link.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The link's short code.",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 8,
+              "description": "8 characters from an alphabet without 0/O/1/l/I.",
+              "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of payments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/links/{code}/public": {
+      "get": {
+        "operationId": "resolvePublicLink",
+        "summary": "Unauthenticated resolution for the checkout page and both mobile apps.",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The link's short code.",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 8,
+              "description": "8 characters from an alphabet without 0/O/1/l/I.",
+              "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The state the link resolves to, and the public fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLinkResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkout/initialize": {
+      "post": {
+        "operationId": "initializeCheckout",
+        "summary": "Start a payment against a link. Money-moving; idempotent.",
+        "tags": [
+          "Checkout"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Client-chosen key for one logical money-moving attempt. A replayed key returns the original result.",
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "A pending payment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InitializeCheckoutResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The link, amount and payer.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitializeCheckoutRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkout/verify": {
+      "post": {
+        "operationId": "verifyCheckout",
+        "summary": "Complete a payment: posts the ledger entries. Money-moving; idempotent.",
+        "tags": [
+          "Checkout"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Client-chosen key for one logical money-moving attempt. A replayed key returns the original result.",
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The completed (or declined) payment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyCheckoutResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The payment reference to verify.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyCheckoutRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UserRole": {
+        "type": "string",
+        "enum": [
+          "merchant",
+          "customer"
+        ]
+      },
+      "ClientKind": {
+        "type": "string",
+        "enum": [
+          "web",
+          "mobile"
+        ]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque URL-safe identifier."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "merchant",
+              "customer"
+            ]
+          },
+          "email": {
+            "description": "Lowercased email address.",
+            "type": "string",
+            "maxLength": 254,
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+                "pattern": "^\\+234[789][01]\\d{8}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "email",
+          "phone",
+          "displayName",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "description": "Lowercased email address.",
+            "type": "string"
+          },
+          "phone": {
+            "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+            "pattern": "^\\+234[789][01]\\d{8}$",
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 200
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "merchant",
+              "customer"
+            ]
+          },
+          "client": {
+            "type": "string",
+            "enum": [
+              "web",
+              "mobile"
+            ]
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "displayName"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "description": "Lowercased email address.",
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "client": {
+            "type": "string",
+            "enum": [
+              "web",
+              "mobile"
+            ]
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "Opaque URL-safe identifier."
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "merchant",
+                  "customer"
+                ]
+              },
+              "email": {
+                "description": "Lowercased email address.",
+                "type": "string",
+                "maxLength": 254,
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              "phone": {
+                "anyOf": [
+                  {
+                    "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+                    "pattern": "^\\+234[789][01]\\d{8}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "id",
+              "role",
+              "email",
+              "phone",
+              "displayName",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "Opaque URL-safe identifier."
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "id",
+              "expiresAt"
+            ],
+            "additionalProperties": false
+          },
+          "token": {
+            "type": "string",
+            "minLength": 32
+          }
+        },
+        "required": [
+          "user",
+          "session"
+        ],
+        "additionalProperties": false
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "Opaque URL-safe identifier."
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "merchant",
+                  "customer"
+                ]
+              },
+              "email": {
+                "description": "Lowercased email address.",
+                "type": "string",
+                "maxLength": 254,
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              "phone": {
+                "anyOf": [
+                  {
+                    "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+                    "pattern": "^\\+234[789][01]\\d{8}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "id",
+              "role",
+              "email",
+              "phone",
+              "displayName",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      },
+      "LinkStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "disabled"
+        ]
+      },
+      "PaymentLink": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "8 characters from an alphabet without 0/O/1/l/I.",
+            "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+          },
+          "merchantId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque URL-safe identifier."
+          },
+          "merchantName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amountKobo": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 10000,
+                "maximum": 1000000000,
+                "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "const": "NGN"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "isReusable": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          },
+          "paymentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "totalPaidKobo": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+          }
+        },
+        "required": [
+          "code",
+          "merchantId",
+          "merchantName",
+          "title",
+          "description",
+          "amountKobo",
+          "currency",
+          "status",
+          "isReusable",
+          "expiresAt",
+          "createdAt",
+          "paymentCount",
+          "totalPaidKobo"
+        ],
+        "additionalProperties": false
+      },
+      "CreateLinkRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "amountKobo": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 10000,
+                "maximum": 1000000000,
+                "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isReusable": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "UpdateLinkStatusRequest": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "LinkListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 8,
+                  "maxLength": 8,
+                  "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                  "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                },
+                "merchantId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "description": "Opaque URL-safe identifier."
+                },
+                "merchantName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amountKobo": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 10000,
+                      "maximum": 1000000000,
+                      "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "currency": {
+                  "type": "string",
+                  "const": "NGN"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "disabled"
+                  ]
+                },
+                "isReusable": {
+                  "type": "boolean"
+                },
+                "expiresAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "description": "RFC 3339 timestamp with offset."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "RFC 3339 timestamp with offset."
+                },
+                "paymentCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "totalPaidKobo": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                }
+              },
+              "required": [
+                "code",
+                "merchantId",
+                "merchantName",
+                "title",
+                "description",
+                "amountKobo",
+                "currency",
+                "status",
+                "isReusable",
+                "expiresAt",
+                "createdAt",
+                "paymentCount",
+                "totalPaidKobo"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "PublicLink": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "8 characters from an alphabet without 0/O/1/l/I.",
+            "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+          },
+          "merchantName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amountKobo": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 10000,
+                "maximum": 1000000000,
+                "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "const": "NGN"
+          },
+          "isReusable": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "merchantName",
+          "title",
+          "description",
+          "amountKobo",
+          "currency",
+          "isReusable",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "PublicLinkState": {
+        "type": "string",
+        "enum": [
+          "payable",
+          "disabled",
+          "expired",
+          "already-paid"
+        ]
+      },
+      "PublicLinkResponse": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "payable",
+              "disabled",
+              "expired",
+              "already-paid"
+            ]
+          },
+          "link": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 8,
+                "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+              },
+              "merchantName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "amountKobo": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 10000,
+                    "maximum": 1000000000,
+                    "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "currency": {
+                "type": "string",
+                "const": "NGN"
+              },
+              "isReusable": {
+                "type": "boolean"
+              },
+              "expiresAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "merchantName",
+              "title",
+              "description",
+              "amountKobo",
+              "currency",
+              "isReusable",
+              "expiresAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "state",
+          "link"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "success",
+          "failed"
+        ]
+      },
+      "Payment": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "string",
+            "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+            "description": "kbl_ followed by ten code characters."
+          },
+          "code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "8 characters from an alphabet without 0/O/1/l/I.",
+            "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+          },
+          "amountKobo": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1000000000,
+            "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+          },
+          "currency": {
+            "type": "string",
+            "const": "NGN"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "success",
+              "failed"
+            ]
+          },
+          "payerName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "payerEmail": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 254
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failureReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "moneyMoved": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reference",
+          "code",
+          "amountKobo",
+          "currency",
+          "status",
+          "payerName",
+          "payerEmail",
+          "createdAt",
+          "completedAt",
+          "failureReason",
+          "moneyMoved"
+        ],
+        "additionalProperties": false
+      },
+      "InitializeCheckoutRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "8 characters from an alphabet without 0/O/1/l/I.",
+            "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+          },
+          "amountKobo": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1000000000,
+            "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+          },
+          "payerName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "payerEmail": {
+            "description": "Lowercased email address.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "amountKobo",
+          "payerName",
+          "payerEmail"
+        ]
+      },
+      "InitializeCheckoutResponse": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "string",
+            "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+            "description": "kbl_ followed by ten code characters."
+          },
+          "code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "8 characters from an alphabet without 0/O/1/l/I.",
+            "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+          },
+          "amountKobo": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1000000000,
+            "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+          },
+          "currency": {
+            "type": "string",
+            "const": "NGN"
+          },
+          "status": {
+            "type": "string",
+            "const": "pending"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          }
+        },
+        "required": [
+          "reference",
+          "code",
+          "amountKobo",
+          "currency",
+          "status",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "VerifyCheckoutRequest": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "string",
+            "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+            "description": "kbl_ followed by ten code characters."
+          }
+        },
+        "required": [
+          "reference"
+        ]
+      },
+      "VerifyCheckoutResponse": {
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "reference": {
+                "type": "string",
+                "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+                "description": "kbl_ followed by ten code characters."
+              },
+              "code": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 8,
+                "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+              },
+              "amountKobo": {
+                "type": "integer",
+                "minimum": 10000,
+                "maximum": 1000000000,
+                "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+              },
+              "currency": {
+                "type": "string",
+                "const": "NGN"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "success",
+                  "failed"
+                ]
+              },
+              "payerName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "payerEmail": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 254
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failureReason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "moneyMoved": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "reference",
+              "code",
+              "amountKobo",
+              "currency",
+              "status",
+              "payerName",
+              "payerEmail",
+              "createdAt",
+              "completedAt",
+              "failureReason",
+              "moneyMoved"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+                  "description": "kbl_ followed by ten code characters."
+                },
+                "code": {
+                  "type": "string",
+                  "minLength": 8,
+                  "maxLength": 8,
+                  "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                  "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                },
+                "amountKobo": {
+                  "type": "integer",
+                  "minimum": 10000,
+                  "maximum": 1000000000,
+                  "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                },
+                "currency": {
+                  "type": "string",
+                  "const": "NGN"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "success",
+                    "failed"
+                  ]
+                },
+                "payerName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "payerEmail": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 254
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "RFC 3339 timestamp with offset."
+                },
+                "completedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "description": "RFC 3339 timestamp with offset."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "failureReason": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "moneyMoved": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "reference",
+                "code",
+                "amountKobo",
+                "currency",
+                "status",
+                "payerName",
+                "payerEmail",
+                "createdAt",
+                "completedAt",
+                "failureReason",
+                "moneyMoved"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "DashboardStats": {
+        "type": "object",
+        "properties": {
+          "totalCollectedKobo": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+          },
+          "paymentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Number of successful link payments."
+          },
+          "activeLinks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Links that resolve to payable at asOf."
+          },
+          "asOf": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          }
+        },
+        "required": [
+          "totalCollectedKobo",
+          "paymentCount",
+          "activeLinks",
+          "asOf"
+        ],
+        "additionalProperties": false
+      },
+      "DashboardEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "heartbeat"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "type",
+              "at"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "payment.completed"
+              },
+              "payment": {
+                "type": "object",
+                "properties": {
+                  "reference": {
+                    "type": "string",
+                    "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+                    "description": "kbl_ followed by ten code characters."
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 8,
+                    "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                    "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                  },
+                  "amountKobo": {
+                    "type": "integer",
+                    "minimum": 10000,
+                    "maximum": 1000000000,
+                    "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "const": "NGN"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "success",
+                      "failed"
+                    ]
+                  },
+                  "payerName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "payerEmail": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 254
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  "completedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                        "description": "RFC 3339 timestamp with offset."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "failureReason": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "moneyMoved": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "code",
+                  "amountKobo",
+                  "currency",
+                  "status",
+                  "payerName",
+                  "payerEmail",
+                  "createdAt",
+                  "completedAt",
+                  "failureReason",
+                  "moneyMoved"
+                ],
+                "additionalProperties": false
+              },
+              "stats": {
+                "type": "object",
+                "properties": {
+                  "totalCollectedKobo": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                  },
+                  "paymentCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Number of successful link payments."
+                  },
+                  "activeLinks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Links that resolve to payable at asOf."
+                  },
+                  "asOf": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  }
+                },
+                "required": [
+                  "totalCollectedKobo",
+                  "paymentCount",
+                  "activeLinks",
+                  "asOf"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payment",
+              "stats"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "payment.failed"
+              },
+              "payment": {
+                "type": "object",
+                "properties": {
+                  "reference": {
+                    "type": "string",
+                    "pattern": "^kbl_[2-9A-HJ-NP-Za-km-z]{10}$",
+                    "description": "kbl_ followed by ten code characters."
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 8,
+                    "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                    "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                  },
+                  "amountKobo": {
+                    "type": "integer",
+                    "minimum": 10000,
+                    "maximum": 1000000000,
+                    "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "const": "NGN"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "success",
+                      "failed"
+                    ]
+                  },
+                  "payerName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "payerEmail": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 254
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  "completedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                        "description": "RFC 3339 timestamp with offset."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "failureReason": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "moneyMoved": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "code",
+                  "amountKobo",
+                  "currency",
+                  "status",
+                  "payerName",
+                  "payerEmail",
+                  "createdAt",
+                  "completedAt",
+                  "failureReason",
+                  "moneyMoved"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payment"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "link.created"
+              },
+              "link": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 8,
+                    "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                    "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                  },
+                  "merchantId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "Opaque URL-safe identifier."
+                  },
+                  "merchantName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "amountKobo": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 10000,
+                        "maximum": 1000000000,
+                        "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "currency": {
+                    "type": "string",
+                    "const": "NGN"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "disabled"
+                    ]
+                  },
+                  "isReusable": {
+                    "type": "boolean"
+                  },
+                  "expiresAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                        "description": "RFC 3339 timestamp with offset."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  "paymentCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "totalPaidKobo": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                  }
+                },
+                "required": [
+                  "code",
+                  "merchantId",
+                  "merchantName",
+                  "title",
+                  "description",
+                  "amountKobo",
+                  "currency",
+                  "status",
+                  "isReusable",
+                  "expiresAt",
+                  "createdAt",
+                  "paymentCount",
+                  "totalPaidKobo"
+                ],
+                "additionalProperties": false
+              },
+              "stats": {
+                "type": "object",
+                "properties": {
+                  "totalCollectedKobo": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                  },
+                  "paymentCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Number of successful link payments."
+                  },
+                  "activeLinks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Links that resolve to payable at asOf."
+                  },
+                  "asOf": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  }
+                },
+                "required": [
+                  "totalCollectedKobo",
+                  "paymentCount",
+                  "activeLinks",
+                  "asOf"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "link",
+              "stats"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "link.updated"
+              },
+              "link": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 8,
+                    "description": "8 characters from an alphabet without 0/O/1/l/I.",
+                    "pattern": "^[2-9A-HJ-NP-Za-km-z]{8}$"
+                  },
+                  "merchantId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "Opaque URL-safe identifier."
+                  },
+                  "merchantName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "amountKobo": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 10000,
+                        "maximum": 1000000000,
+                        "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "currency": {
+                    "type": "string",
+                    "const": "NGN"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "disabled"
+                    ]
+                  },
+                  "isReusable": {
+                    "type": "boolean"
+                  },
+                  "expiresAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                        "description": "RFC 3339 timestamp with offset."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  },
+                  "paymentCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "totalPaidKobo": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                  }
+                },
+                "required": [
+                  "code",
+                  "merchantId",
+                  "merchantName",
+                  "title",
+                  "description",
+                  "amountKobo",
+                  "currency",
+                  "status",
+                  "isReusable",
+                  "expiresAt",
+                  "createdAt",
+                  "paymentCount",
+                  "totalPaidKobo"
+                ],
+                "additionalProperties": false
+              },
+              "stats": {
+                "type": "object",
+                "properties": {
+                  "totalCollectedKobo": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Integer number of kobo (₦1 = 100 kobo). Never a float."
+                  },
+                  "paymentCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Number of successful link payments."
+                  },
+                  "activeLinks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Links that resolve to payable at asOf."
+                  },
+                  "asOf": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "description": "RFC 3339 timestamp with offset."
+                  }
+                },
+                "required": [
+                  "totalCollectedKobo",
+                  "paymentCount",
+                  "activeLinks",
+                  "asOf"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "link",
+              "stats"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Wallet": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque URL-safe identifier."
+          },
+          "currency": {
+            "type": "string",
+            "const": "NGN"
+          },
+          "balanceKobo": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "asOf": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          }
+        },
+        "required": [
+          "accountId",
+          "currency",
+          "balanceKobo",
+          "asOf"
+        ],
+        "additionalProperties": false
+      },
+      "WalletTransaction": {
+        "type": "object",
+        "properties": {
+          "postingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque URL-safe identifier."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "link_payment",
+              "transfer",
+              "topup"
+            ]
+          },
+          "amountKobo": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "counterparty": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 140
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "RFC 3339 timestamp with offset."
+          }
+        },
+        "required": [
+          "postingId",
+          "kind",
+          "amountKobo",
+          "counterparty",
+          "note",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "WalletTransactionListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "postingId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "description": "Opaque URL-safe identifier."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "link_payment",
+                    "transfer",
+                    "topup"
+                  ]
+                },
+                "amountKobo": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "counterparty": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 140
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "RFC 3339 timestamp with offset."
+                }
+              },
+              "required": [
+                "postingId",
+                "kind",
+                "amountKobo",
+                "counterparty",
+                "note",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "TransferRequest": {
+        "type": "object",
+        "properties": {
+          "toPhone": {
+            "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+            "pattern": "^\\+234[789][01]\\d{8}$",
+            "type": "string"
+          },
+          "amountKobo": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1000000000,
+            "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 140
+          }
+        },
+        "required": [
+          "toPhone",
+          "amountKobo"
+        ]
+      },
+      "TransferResponse": {
+        "type": "object",
+        "properties": {
+          "transaction": {
+            "type": "object",
+            "properties": {
+              "postingId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "Opaque URL-safe identifier."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "link_payment",
+                  "transfer",
+                  "topup"
+                ]
+              },
+              "amountKobo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "counterparty": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 140
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "postingId",
+              "kind",
+              "amountKobo",
+              "counterparty",
+              "note",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          },
+          "wallet": {
+            "type": "object",
+            "properties": {
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "Opaque URL-safe identifier."
+              },
+              "currency": {
+                "type": "string",
+                "const": "NGN"
+              },
+              "balanceKobo": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "asOf": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "description": "RFC 3339 timestamp with offset."
+              }
+            },
+            "required": [
+              "accountId",
+              "currency",
+              "balanceKobo",
+              "asOf"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "transaction",
+          "wallet"
+        ],
+        "additionalProperties": false
+      },
+      "TopUpRequest": {
+        "type": "object",
+        "properties": {
+          "amountKobo": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1000000000,
+            "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+          }
+        },
+        "required": [
+          "amountKobo"
+        ],
+        "description": "Simulated funding. No real money enters the system."
+      },
+      "QrPayload": {
+        "type": "object",
+        "properties": {
+          "v": {
+            "type": "number",
+            "const": 1
+          },
+          "toPhone": {
+            "description": "Nigerian mobile number in E.164 form, +234XXXXXXXXXX.",
+            "pattern": "^\\+234[789][01]\\d{8}$",
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "amountKobo": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 10000,
+                "maximum": 1000000000,
+                "description": "Integer kobo between 10000 (₦100) and 1000000000 (₦10,000,000)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "v",
+          "toPhone",
+          "displayName",
+          "amountKobo"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "validation_failed",
+          "unauthenticated",
+          "forbidden",
+          "not_found",
+          "conflict",
+          "rate_limited",
+          "idempotency_mismatch",
+          "link_not_payable",
+          "amount_mismatch",
+          "insufficient_funds",
+          "internal"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "validation_failed",
+              "unauthenticated",
+              "forbidden",
+              "not_found",
+              "conflict",
+              "rate_limited",
+              "idempotency_mismatch",
+              "link_not_payable",
+              "amount_mismatch",
+              "insufficient_funds",
+              "internal"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fields": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "moneyMoved": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "payable",
+              "disabled",
+              "expired",
+              "already-paid"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "PageQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "description": "Cursor pagination query parameters."
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "description": "Client-chosen key for one logical money-moving attempt. Sent as the Idempotency-Key header."
+      }
+    },
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "kobolink_session",
+        "description": "Web session cookie, httpOnly. Set by `POST /api/auth/login` and `/register` for `client: \"web\"`."
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Mobile session token, returned in `AuthResponse.token` for `client: \"mobile\"`."
+      }
+    }
+  }
+}
