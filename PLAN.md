@@ -64,7 +64,7 @@ edits `packages/contracts` directly.
 | B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | done |
 | B4 | Public link resolution `GET /api/links/:code/public`, unauthenticated | B3 | Returns only fields the checkout page renders; disabled/expired/paid resolve to the right state | done |
 | B5 | Payments as **ledger postings**: initialize, verify, idempotency | B4 | Entries balance to zero; replaying the same idempotency key is a no-op, not a double charge | done |
-| B6 | SSE `/api/stream/dashboard` fed by Postgres `LISTEN/NOTIFY` | B5 | Two subscribers both receive an event; a dropped connection reconnects; heartbeat keeps proxies from killing it | todo |
+| B6 | SSE `/api/stream/dashboard` fed by Postgres `LISTEN/NOTIFY` | B5 | Two subscribers both receive an event; a dropped connection reconnects; heartbeat keeps proxies from killing it | done |
 | B7 | OpenAPI document generated from the Zod schemas | B5 | Spec validates; `packages/contracts` and the spec cannot disagree | done |
 | B8 | **Phase 2** — wallet accounts, balance derivation, P2P transfer, QR payload | B5 | Transfer is atomic; insufficient funds rejected; balance = sum of entries | todo |
 
