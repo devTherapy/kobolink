@@ -4,6 +4,7 @@ import { HealthController } from '../health/health.controller.js'
 import { LinksController } from '../links/links.controller.js'
 import { PublicLinksController } from '../links/public-links.controller.js'
 import { PaymentsController } from '../payments/payments.controller.js'
+import { WalletController } from '../wallet/wallet.controller.js'
 import { type MountedRoute, mountedRoutes } from './mounted-routes.js'
 import { ROUTES } from './route-manifest.js'
 
@@ -11,7 +12,9 @@ import { ROUTES } from './route-manifest.js'
  * `NotFoundController` (`@All()`/`@All('*path')`) is a catch-all, not a
  * route the contract describes, and `OpenApiController` serves this very
  * document rather than being described by it — both are deliberately
- * excluded here, not forgotten.
+ * excluded here, not forgotten. `DashboardStreamController` (B6) is also
+ * excluded: Server-Sent Events, not the JSON request/response shape this
+ * manifest describes — not this PR's to add or remove.
  */
 const REAL_CONTROLLERS = [
   HealthController,
@@ -19,6 +22,7 @@ const REAL_CONTROLLERS = [
   LinksController,
   PublicLinksController,
   PaymentsController,
+  WalletController,
 ]
 
 function key(route: { method: string; path: string }): string {
@@ -44,11 +48,12 @@ describe('ROUTES vs. the controllers AppModule actually mounts', () => {
     expect(missing).toEqual([])
   })
 
-  it('mounts exactly the 13 routes this feature documents, no more, no fewer', () => {
+  it('mounts exactly the 17 routes this feature documents, no more, no fewer', () => {
     // A change to this number is either a new route (add it to ROUTES too)
-    // or a route removed (delete its ROUTES entry) — never silent.
-    expect(mounted).toHaveLength(13)
-    expect(ROUTES).toHaveLength(13)
+    // or a route removed (delete its ROUTES entry) — never silent. B8 added
+    // 4 wallet routes to B7's 13.
+    expect(mounted).toHaveLength(17)
+    expect(ROUTES).toHaveLength(17)
   })
 
   it('agrees with the manifest on method and path for every route, one by one', () => {

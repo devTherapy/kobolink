@@ -13,6 +13,7 @@ export interface RegisteredUser {
   cookie: string
   userId: string
   displayName: string
+  phone: string | null
 }
 
 function sessionCookieFrom(response: { headers: Record<string, string | string[] | undefined> }): string {
@@ -28,6 +29,7 @@ async function register(
   email: string,
   displayName: string,
   role: 'merchant' | 'customer',
+  phone?: string,
 ): Promise<RegisteredUser> {
   const response = await ctx.request.post(API.auth.register).send({
     email,
@@ -35,26 +37,29 @@ async function register(
     displayName,
     role,
     client: 'web',
+    ...(phone !== undefined ? { phone } : {}),
   })
   if (response.status !== 201) {
     throw new Error(`fixture register (${role}) failed: ${response.status} ${JSON.stringify(response.body)}`)
   }
   const body: AuthResponse = AuthResponseSchema.parse(response.body)
-  return { cookie: sessionCookieFrom(response), userId: body.user.id, displayName: body.user.displayName }
+  return { cookie: sessionCookieFrom(response), userId: body.user.id, displayName: body.user.displayName, phone: body.user.phone }
 }
 
 export async function registerMerchant(
   ctx: ApiTestContext,
   email: string,
   displayName = 'Adebayo Stores',
+  phone?: string,
 ): Promise<RegisteredUser> {
-  return register(ctx, email, displayName, 'merchant')
+  return register(ctx, email, displayName, 'merchant', phone)
 }
 
 export async function registerCustomer(
   ctx: ApiTestContext,
   email: string,
   displayName = 'A Customer',
+  phone?: string,
 ): Promise<RegisteredUser> {
-  return register(ctx, email, displayName, 'customer')
+  return register(ctx, email, displayName, 'customer', phone)
 }

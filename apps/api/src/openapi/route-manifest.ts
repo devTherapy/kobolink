@@ -12,12 +12,12 @@ import { API, IDEMPOTENCY_HEADER, type SchemaName } from '@kobolink/contracts'
  *    exactly, in both directions — a route added to, removed from, or
  *    reshaped in a controller without a matching edit here fails that test.
  *
- * `packages/contracts`' own `API` object also names `wallet.*` and
- * `dashboard.*` paths — B8 and B6, both still `todo` in `PLAN.md`. No
- * controller mounts them yet, so they are deliberately absent here: this
- * manifest (and so the generated OpenAPI document) describes routes the API
- * actually exposes today, not ones a future feature will add. Wiring those
- * two up is that feature's own PR, alongside its own edit to this file.
+ * `packages/contracts`' own `API` object also names `dashboard.*` paths —
+ * B6's own PR left `API.dashboard.stats` unmounted and
+ * `API.dashboard.stream` (Server-Sent Events, not a JSON request/response
+ * this document's shape describes) out of this manifest; neither is this
+ * PR's to add. B8 (`wallet.*`) is wired up below — every route
+ * `WalletController` mounts.
  */
 
 export type HttpMethod = 'get' | 'post' | 'patch' | 'delete'
@@ -221,6 +221,47 @@ export const ROUTES: readonly RouteDef[] = [
     idempotencyKey: true,
     requestBody: { schema: 'VerifyCheckoutRequest', description: 'The payment reference to verify.' },
     responses: [{ status: 200, schema: 'VerifyCheckoutResponse', description: 'The completed (or declined) payment.' }],
+  },
+  {
+    method: 'get',
+    path: API.wallet.me,
+    operationId: 'getWallet',
+    summary: "The signed-in user's own wallet: account id, currency and balance derived from the ledger.",
+    tags: ['Wallet'],
+    auth: 'session',
+    responses: [{ status: 200, schema: 'Wallet', description: 'The wallet.' }],
+  },
+  {
+    method: 'get',
+    path: API.wallet.transactions,
+    operationId: 'listWalletTransactions',
+    summary: "The signed-in user's wallet transfers and top-ups, newest first.",
+    tags: ['Wallet'],
+    auth: 'session',
+    query: 'PageQuery',
+    responses: [{ status: 200, schema: 'WalletTransactionListResponse', description: 'One page of wallet transactions.' }],
+  },
+  {
+    method: 'post',
+    path: API.wallet.transfer,
+    operationId: 'transferMoney',
+    summary: "P2P transfer to another user's wallet by phone number. Money-moving; idempotent.",
+    tags: ['Wallet'],
+    auth: 'session',
+    idempotencyKey: true,
+    requestBody: { schema: 'TransferRequest', description: 'The recipient, amount and optional note.' },
+    responses: [{ status: 201, schema: 'TransferResponse', description: 'The posted transfer and the sender’s updated wallet.' }],
+  },
+  {
+    method: 'post',
+    path: API.wallet.topup,
+    operationId: 'topUpWallet',
+    summary: 'Simulated funding into the signed-in user’s own wallet. No real money enters the system. Money-moving; idempotent.',
+    tags: ['Wallet'],
+    auth: 'session',
+    idempotencyKey: true,
+    requestBody: { schema: 'TopUpRequest', description: 'The amount to credit.' },
+    responses: [{ status: 201, schema: 'TransferResponse', description: 'The posted top-up and the updated wallet.' }],
   },
 ]
 
