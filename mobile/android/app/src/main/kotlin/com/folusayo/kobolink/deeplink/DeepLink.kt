@@ -42,7 +42,7 @@ private const val CUSTOM_SCHEME = "kobolink"
  */
 object LinkCode {
     const val LENGTH = 8
-    private val SHAPE = Regex("^[2-9A-HJ-NP-Za-km-z]{8}$")
+    private val SHAPE = Regex("^[2-9A-HJ-NP-Za-km-z]{$LENGTH}$")
 
     fun isValid(code: String): Boolean = SHAPE.matches(code)
 }

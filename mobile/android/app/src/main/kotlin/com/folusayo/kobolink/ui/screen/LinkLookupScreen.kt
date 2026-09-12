@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.folusayo.kobolink.deeplink.LinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
 import com.folusayo.kobolink.money.Kobo
@@ -131,7 +132,7 @@ fun LinkLookupScreen(
                 value = code,
                 onValueChange = {
                     val trimmed = it.trim()
-                    if (trimmed.length <= 8) code = trimmed
+                    if (trimmed.length <= LinkCode.LENGTH) code = trimmed
                 },
                 label = { Text("Link code") },
                 placeholder = { Text("e.g. 7hK2mQ9x") },
@@ -154,7 +155,7 @@ fun LinkLookupScreen(
                         )
                     }
                 },
-                enabled = code.length == 8 && state != LookupState.Loading,
+                enabled = code.length == LinkCode.LENGTH && state != LookupState.Loading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),

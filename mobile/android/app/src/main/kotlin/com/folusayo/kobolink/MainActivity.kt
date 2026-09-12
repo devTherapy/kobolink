@@ -40,7 +40,17 @@ class MainActivity : ComponentActivity() {
         // this app never draws its own status bar or gesture pill.
         enableEdgeToEdge()
 
-        deepLinkCode = codeFrom(intent)
+        // Guarded on savedInstanceState so a configuration change (e.g.
+        // rotation) — which recreates this Activity with the same Intent
+        // under singleTask's default configChanges handling — doesn't
+        // re-parse and re-trigger LinkLookupScreen's LaunchedEffect lookup
+        // for a code already in flight or resolved before the recreation.
+        // The resolved/loading state itself is not preserved across the
+        // recreation (this stub screen has no Saver for it); M3's real
+        // checkout screen should carry state through rotation properly.
+        if (savedInstanceState == null) {
+            deepLinkCode = codeFrom(intent)
+        }
 
         setContent {
             KobolinkTheme {
