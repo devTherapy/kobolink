@@ -237,6 +237,7 @@
             }
           }
         },
+        "description": "Requires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
         "requestBody": {
           "required": true,
           "description": "The new link.",
@@ -308,6 +309,7 @@
             }
           }
         },
+        "description": "Requires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
         "security": [
           {
             "sessionCookie": []
@@ -362,6 +364,7 @@
             }
           }
         },
+        "description": "Requires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
         "security": [
           {
             "sessionCookie": []
@@ -416,6 +419,7 @@
             }
           }
         },
+        "description": "Requires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
         "requestBody": {
           "required": true,
           "description": "The new status.",
@@ -502,6 +506,7 @@
             }
           }
         },
+        "description": "Requires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
         "security": [
           {
             "sessionCookie": []
@@ -662,6 +667,47 @@
             }
           }
         }
+      }
+    },
+    "/api/stream/dashboard": {
+      "get": {
+        "operationId": "streamDashboard",
+        "summary": "Live events for the signed-in merchant's dashboard, as Server-Sent Events.",
+        "tags": [
+          "Dashboard"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "An open event stream. The schema is the JSON in each frame’s `data:` line.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardEvent"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "description": "The response is `text/event-stream` and stays open. Each frame is `id: <n>`, `event: <type>`, `data: <DashboardEvent as JSON>`, then a blank line; `event:` repeats `data.type`, so a client can validate every frame — heartbeats included — against `DashboardEvent` alone. A `heartbeat` frame is sent every 15000ms so an idle stream survives proxies; clients ignore it. `id:` is a monotonic cursor; the server does not yet replay past events for a `Last-Event-ID` header, so a reconnecting client starts fresh. Authentication and role are checked before the first byte, so a refused request is an ordinary `ApiError` response, not a stream. Not callable through a generated JSON client (the Kotlin/Swift `streamDashboard` method would try to parse the whole stream as one object) — use an SSE client such as `EventSource`.\n\nRequires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/wallet": {
