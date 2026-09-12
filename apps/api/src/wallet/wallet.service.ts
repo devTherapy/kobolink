@@ -38,6 +38,25 @@ interface DecideResult<T> {
 }
 
 /**
+ * Thrown out of `insertPosting` when the `postings_idempotency_scope_key_unique`
+ * violation it caught turns out to be a genuine same-key-same-body replay of
+ * a request whose winner has already committed (see `WalletService`'s own
+ * doc comment, "Idempotency has one more race..."), rather than a real
+ * same-key-different-body conflict. `decideTransfer`/`decideTopup` catch
+ * this specifically and return `resolved` — the winner's actual stored
+ * outcome — as their own `DecideResult`, instead of ever throwing
+ * `idempotency_mismatch` for a request that in fact succeeded. A genuine
+ * mismatch never reaches this class: `IdempotencyService.resolveConcurrentWinner`
+ * throws `idempotency_mismatch` itself in that case, which propagates
+ * straight through `insertPosting` uncaught.
+ */
+class ConcurrentIdempotencyReplay extends Error {
+  constructor(readonly resolved: DecideResult<TransferResponse>) {
+    super('wallet: this request lost an insert race to its own already-committed replay')
+  }
+}
+
+/**
  * `GET /api/wallet`, `GET /api/wallet/transactions`, `POST
  * /api/wallet/transfer`, `POST /api/wallet/topup` (`WalletController`) —
  * PLAN.md's B8 row, Phase 2. A wallet is just another `ledger_accounts.kind`
@@ -54,17 +73,50 @@ interface DecideResult<T> {
  * `Idempotency-Key` by coincidence.
  *
  * Concurrency-safety for `transfer`'s "insufficient funds" check follows
- * `PaymentsService.decideVerify`'s own playbook: `SELECT ... FOR UPDATE` on
- * the sender's `ledger_accounts` row serialises concurrent transfers *from
- * the same sender* (the only account whose balance this ever needs to
- * protect — a credit never needs to be refused, so the recipient's account
- * is never locked), and the balance is re-read only after that lock is
+ * `PaymentsService.decideVerify`'s own playbook: a row lock on the sender's
+ * `ledger_accounts` row serialises concurrent transfers *from the same
+ * sender* (the only account whose balance this ever needs to protect — a
+ * credit never needs to be refused, so the recipient's account is never
+ * explicitly locked), and the balance is re-read only after that lock is
  * held, so a second transfer queued behind the first sees the first's
  * now-committed debit rather than a stale balance. See
  * `test/wallet-transfer-concurrency.integration.test.ts` for the
- * deterministic proof (a held-open raw `FOR UPDATE`, not a hopeful
- * `Promise.all`) that this is a real, closed race, not just one that
- * usually doesn't lose.
+ * deterministic proof (a held-open raw lock, not a hopeful `Promise.all`)
+ * that this is a real, closed race, not just one that usually doesn't lose.
+ *
+ * That lock is taken `FOR NO KEY UPDATE`, deliberately not `FOR UPDATE`: a
+ * transfer's credit leg inserts a `ledger_entries` row referencing the
+ * *recipient's* account, and Postgres's own foreign-key check takes a
+ * `FOR KEY SHARE` lock on that referenced row to validate it — so two
+ * mutual concurrent transfers (A pays B while B pays A) each hold their own
+ * sender lock and then each need `FOR KEY SHARE` on the *other's* account,
+ * which the other is holding as its own sender lock. `FOR UPDATE` conflicts
+ * with `FOR KEY SHARE`, so that is a real, deterministic Postgres deadlock
+ * (confirmed empirically in review) — one side gets killed by Postgres's
+ * deadlock detector after `deadlock_timeout` and surfaces a bare 500.
+ * `FOR NO KEY UPDATE` still conflicts with itself and with `FOR UPDATE`/
+ * `FOR SHARE` — so it still fully serialises two transfers *from the same
+ * sender*, which is the only guarantee this lock exists to give — but it
+ * does not conflict with `FOR KEY SHARE`, so it never contends with the
+ * other side's FK check, in a two-party mutual pair or any longer cycle
+ * (A→B→C→A, …): every wait edge in that lock graph would have to be a
+ * `FOR KEY SHARE` blocking a `FOR NO KEY UPDATE` (or vice versa), and that
+ * pair never conflicts, so no cycle can form. See
+ * `test/wallet-transfer-mutual-deadlock.integration.test.ts` for the
+ * deterministic, repeated proof.
+ *
+ * Idempotency has one more race than `PaymentsService.decideVerify` needs
+ * to close: unlike `checkout_sessions` (whose row `decideVerify` re-reads
+ * `FOR UPDATE` and can short-circuit on `postingId !== null` before ever
+ * attempting a second posting insert for the same reference), a
+ * transfer/top-up has no equivalent per-request row to re-check — so a
+ * second request racing in on the very same `(scope, key)` can lose the
+ * sender-account lock, block until the first commits, and only then
+ * discover — via `postings_idempotency_scope_key_unique` — that it is a
+ * true replay. `insertPosting` handles exactly that by asking
+ * `IdempotencyService.resolveConcurrentWinner` for the winner's already-
+ * committed answer instead of asserting a mismatch; see its own doc
+ * comment and `test/wallet-transfer-idempotency-race.integration.test.ts`.
  */
 @Injectable()
 export class WalletService {
@@ -162,8 +214,16 @@ export class WalletService {
     // now-current balance instead of racing this one on a stale read — the
     // exact mechanism `decideVerify`'s own `FOR UPDATE` on `checkout_sessions`/
     // `links` serialises on, applied to the row whose balance this decision
-    // actually depends on.
-    await tx.select({ id: schema.ledgerAccounts.id }).from(schema.ledgerAccounts).where(eq(schema.ledgerAccounts.id, senderAccount.id)).for('update')
+    // actually depends on. `FOR NO KEY UPDATE`, not `FOR UPDATE` — see this
+    // class's own doc comment for why: it still fully conflicts with itself
+    // (same-sender transfers stay serialised) but never conflicts with the
+    // `FOR KEY SHARE` a mutual transfer's credit-leg FK check takes on this
+    // same row, which is what closes the two-party deadlock.
+    await tx
+      .select({ id: schema.ledgerAccounts.id })
+      .from(schema.ledgerAccounts)
+      .where(eq(schema.ledgerAccounts.id, senderAccount.id))
+      .for('no key update')
 
     const balanceKobo = await computeWalletBalance(tx, senderAccount.id)
     if (balanceKobo < dto.amountKobo) {
@@ -179,7 +239,13 @@ export class WalletService {
       recipientDisplayName: recipient.displayName,
       note: dto.note ?? null,
     }
-    const postingRow = await this.insertPosting(tx, 'transfer', currentUser.id, idempotencyKey, metadata)
+    let postingRow: typeof schema.postings.$inferSelect
+    try {
+      postingRow = await this.insertPosting(tx, 'transfer', currentUser.id, idempotencyKey, dto, metadata)
+    } catch (error) {
+      if (error instanceof ConcurrentIdempotencyReplay) return error.resolved
+      throw error
+    }
 
     await tx.insert(schema.ledgerEntries).values([
       { postingId: postingRow.id, accountId: senderAccount.id, amountKobo: -dto.amountKobo },
@@ -217,7 +283,13 @@ export class WalletService {
       recipientDisplayName: currentUser.displayName,
       note: null,
     }
-    const postingRow = await this.insertPosting(tx, 'topup', currentUser.id, idempotencyKey, metadata)
+    let postingRow: typeof schema.postings.$inferSelect
+    try {
+      postingRow = await this.insertPosting(tx, 'topup', currentUser.id, idempotencyKey, dto, metadata)
+    } catch (error) {
+      if (error instanceof ConcurrentIdempotencyReplay) return error.resolved
+      throw error
+    }
 
     await tx.insert(schema.ledgerEntries).values([
       { postingId: postingRow.id, accountId: externalAccount.id, amountKobo: -dto.amountKobo },
@@ -240,17 +312,26 @@ export class WalletService {
    * transaction (see that method's own doc comment for why a plain
    * `tx.insert` can't recover from the same collision). A
    * `postings_idempotency_scope_key_unique` violation is a different
-   * failure — two concurrent calls racing the *same* (scope, key) onto two
-   * different bodies — and is never retried: it is thrown directly as
-   * `idempotency_mismatch`, exactly `decideVerify`'s own handling of the
-   * identical constraint, so `IdempotencyService.run`'s wrapping
-   * transaction rolls back this loser's work in full.
+   * failure — some request, concurrently or previously, already committed a
+   * posting for this exact `(scope, key)`. It is never retried by minting a
+   * new reference (that would produce a second posting for one key, exactly
+   * what this constraint exists to prevent); instead
+   * `IdempotencyService.resolveConcurrentWinner` re-reads that committed
+   * request's stored outcome. If `requestBody` hashes the same as the
+   * winner's did, this is a genuine replay racing in mid-flight (see
+   * `WalletService`'s own doc comment) and we throw
+   * `ConcurrentIdempotencyReplay` so `decideTransfer`/`decideTopup` can
+   * return the winner's real outcome instead of a fabricated mismatch. If it
+   * hashes differently, `resolveConcurrentWinner` itself throws
+   * `idempotency_mismatch` — exactly `decideVerify`'s own handling of the
+   * identical constraint — which propagates straight through.
    */
   private async insertPosting(
     tx: DbTransaction,
     kind: 'transfer' | 'topup',
     idempotencyScope: string,
     idempotencyKey: string,
+    requestBody: unknown,
     metadata: PostingWalletMetadata,
   ): Promise<typeof schema.postings.$inferSelect> {
     for (let attempt = 0; attempt < MAX_REFERENCE_ATTEMPTS; attempt++) {
@@ -264,6 +345,13 @@ export class WalletService {
       } catch (error) {
         if (isUniqueViolation(error, POSTINGS_REFERENCE_UNIQUE_CONSTRAINT)) continue
         if (isUniqueViolation(error, POSTINGS_IDEMPOTENCY_SCOPE_KEY_CONSTRAINT)) {
+          const replayed = await this.idempotency.resolveConcurrentWinner<TransferResponse>(idempotencyScope, idempotencyKey, requestBody)
+          if (replayed !== undefined) {
+            throw new ConcurrentIdempotencyReplay({ status: replayed.status, body: replayed.body })
+          }
+          // No committed row at all — the locking that should guarantee one
+          // exists here didn't (or hasn't yet); fail closed exactly as
+          // before rather than guess.
           throw new ApiErrorException({
             code: 'idempotency_mismatch',
             message: 'This Idempotency-Key was already used with a different request.',

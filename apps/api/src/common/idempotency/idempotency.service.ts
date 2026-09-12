@@ -84,6 +84,33 @@ export class IdempotencyService {
     }
   }
 
+  /**
+   * For a caller whose own `compute()` lost a race to a *different*,
+   * downstream uniqueness constraint before ever reaching this service's own
+   * `idempotency_keys` insert — B8's `WalletService.insertPosting` catching
+   * `postings_idempotency_scope_key_unique` is the motivating case. That
+   * constraint firing means some other request already committed a posting
+   * under this exact `(scope, key)`, which — because `postings` and
+   * `idempotency_keys` are always written in the same transaction (`run`
+   * above) — means that other request's `idempotency_keys` row is committed
+   * too: `run`'s own doc comment ("Race handling") already re-reads and
+   * replays in the mirror-image case (losing the `idempotency_keys` insert
+   * itself); this is that exact same replay, reachable mid-`compute()`
+   * instead of only at the top. Returns the winner's stored outcome when
+   * `requestBody` hashes to the same value the winner's did (a genuine
+   * replay); throws `idempotency_mismatch` via `replay()` when it does not
+   * (a genuine same-key-different-body conflict — never silently swallowed);
+   * returns `undefined` only if no committed row exists at all yet, which
+   * the locking that leads here should make unreachable in practice, but is
+   * not this method's place to assume.
+   */
+  async resolveConcurrentWinner<T>(scope: string, key: string, requestBody: unknown): Promise<IdempotencyOutcome<T> | undefined> {
+    const requestHash = hashRequestBody(requestBody)
+    const existing = await this.lookup(scope, key)
+    if (existing === undefined) return undefined
+    return this.replay<T>(existing, requestHash)
+  }
+
   private async lookup(scope: string, key: string): Promise<typeof schema.idempotencyKeys.$inferSelect | undefined> {
     const [row] = await this.db.db
       .select()
