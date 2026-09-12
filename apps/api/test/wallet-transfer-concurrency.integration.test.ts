@@ -3,33 +3,39 @@ import { API, TransferResponseSchema, ApiErrorSchema } from '@kobolink/contracts
 import { Client, Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { type ApiTestContext, startApiTestContext } from './support/api-test-context.js'
+import { waitForBlockedBackendCount } from './support/lock-race.js'
 import { registerCustomer, registerMerchant } from './support/register-user.js'
 
 /**
- * The double-spend race `decideTransfer`'s `SELECT ... FOR UPDATE` on the
- * sender's `ledger_accounts` row exists to close (`wallet.service.ts`'s own
- * doc comment). B5's reviewer explicitly called out that a "concurrent"
- * test built from two `Promise.all`-wrapped calls only *hopes* to catch a
- * race — it usually doesn't lose, because both requests typically clear
- * every step before either commits, well clear of the actual contention
- * window. This file forces the contention deterministically instead,
- * exactly `checkout-verify.integration.test.ts`'s "deterministically forces
- * the getOrCreateAccount unique-violation race" test does for B5's own
- * hardest concurrency bug: a dedicated raw connection holds
- * `SELECT ... FOR UPDATE` open on the sender's `ledger_accounts` row
+ * The double-spend race `decideTransfer`'s row lock (`FOR NO KEY UPDATE`)
+ * on the sender's `ledger_accounts` row exists to close
+ * (`wallet.service.ts`'s own doc comment). B5's reviewer explicitly called
+ * out that a "concurrent" test built from two `Promise.all`-wrapped calls
+ * only *hopes* to catch a race — it usually doesn't lose, because both
+ * requests typically clear every step before either commits, well clear of
+ * the actual contention window. This file forces the contention
+ * deterministically instead, exactly `checkout-verify.integration.test.ts`'s
+ * "deterministically forces the getOrCreateAccount unique-violation race"
+ * test does for B5's own hardest concurrency bug: a dedicated raw
+ * connection holds a lock open on the sender's `ledger_accounts` row
  * *before* either real transfer request is sent, so both real requests are
  * queued behind it at the Postgres lock-manager level — proven by polling
- * `pg_stat_activity` for a genuinely blocked backend, not by a fixed
- * `sleep` the test just hopes was long enough — and only released once
- * both are provably waiting. Whichever one Postgres then admits first
- * commits its debit; the other's own `SELECT ... FOR UPDATE` (issued by
+ * `pg_stat_activity` for a genuinely blocked backend (`waitForBlockedBackendCount`,
+ * shared with the other wallet concurrency tests via `support/lock-race.ts`),
+ * not by a fixed `sleep` the test just hopes was long enough — and only
+ * released once both are provably waiting. Whichever one Postgres then
+ * admits first commits its debit; the other's own row lock (issued by
  * `decideTransfer` itself, once it gets the lock) blocks in turn until the
  * first is done, then re-reads the now-current (already-debited) balance —
  * so it is a live decision on fresh data, never a stale one — and is
  * correctly refused for insufficient funds. If the lock did nothing, both
  * requests would have read the *same* pre-debit balance and both would
  * succeed, overdrawing the sender; this test fails loudly in exactly that
- * shape if the lock is ever removed or narrowed.
+ * shape if the lock is ever removed or narrowed. The raw hold below still
+ * uses `FOR UPDATE` (stronger than the app's own `FOR NO KEY UPDATE`, so it
+ * still conflicts and forces the same queueing) — only the app's own lock
+ * mode needed to change, to close the separate mutual-deadlock bug
+ * `wallet-transfer-mutual-deadlock.integration.test.ts` covers.
  */
 describe('POST /api/wallet/transfer — deterministic double-spend race (real Postgres via Testcontainers)', () => {
   let ctx: ApiTestContext | undefined
@@ -60,29 +66,6 @@ describe('POST /api/wallet/transfer — deterministic double-spend race (real Po
 
   function pool(): Pool {
     return new Pool({ connectionString: getCtx().connectionString })
-  }
-
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  /** Same technique as `checkout-verify.integration.test.ts`'s own copy — polls a dedicated connection until some *other* backend is genuinely waiting on a lock. */
-  async function waitForBlockedBackendCount(activity: Pool, atLeast: number, timeoutMs = 5_000): Promise<number> {
-    const deadline = Date.now() + timeoutMs
-    let last = 0
-    while (Date.now() < deadline) {
-      const result = await activity.query<{ count: number }>(
-        `select count(*)::int as count
-         from pg_stat_activity
-         where datname = current_database()
-           and wait_event_type = 'Lock'
-           and pid <> pg_backend_pid()`,
-      )
-      last = result.rows[0]?.count ?? 0
-      if (last >= atLeast) return last
-      await sleep(15)
-    }
-    return last
   }
 
   it('two transfers racing the same balance, forced onto the same lock: exactly one succeeds, the other is a clean insufficient_funds, and the sender is never overdrawn', async () => {

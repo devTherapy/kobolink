@@ -3,6 +3,7 @@ import { API, ApiErrorSchema, TransferResponseSchema } from '@kobolink/contracts
 import { Client, Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { type ApiTestContext, startApiTestContext } from './support/api-test-context.js'
+import { waitForBlockedBackendCount } from './support/lock-race.js'
 import { registerCustomer } from './support/register-user.js'
 
 /**
@@ -63,28 +64,6 @@ describe('POST /api/wallet/transfer — mutual concurrent transfers never deadlo
 
   function pool(): Pool {
     return new Pool({ connectionString: getCtx().connectionString })
-  }
-
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  async function waitForBlockedBackendCount(activity: Pool, atLeast: number, timeoutMs = 5_000): Promise<number> {
-    const deadline = Date.now() + timeoutMs
-    let last = 0
-    while (Date.now() < deadline) {
-      const result = await activity.query<{ count: number }>(
-        `select count(*)::int as count
-         from pg_stat_activity
-         where datname = current_database()
-           and wait_event_type = 'Lock'
-           and pid <> pg_backend_pid()`,
-      )
-      last = result.rows[0]?.count ?? 0
-      if (last >= atLeast) return last
-      await sleep(15)
-    }
-    return last
   }
 
   async function runMutualTransferRound(round: number): Promise<void> {
