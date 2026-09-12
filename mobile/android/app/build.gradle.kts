@@ -179,8 +179,23 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
 
+    // -- M2: session storage --
+    // EncryptedSharedPreferences (AES256-GCM values, AES256-SIV keys, backed
+    // by a Keystore-resident MasterKey) is the only allowed home for the
+    // mobile session token — PLAN.md's M2 done-when.
+    implementation("androidx.security:security-crypto:1.1.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
+
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))
+    // Instrumented tests for EncryptedTokenStore: EncryptedSharedPreferences
+    // needs a real Android Keystore, which only exists on a device/emulator,
+    // not the JVM unit-test sandbox above.
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:core:1.7.0")
 }
