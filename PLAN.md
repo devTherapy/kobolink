@@ -63,7 +63,7 @@ edits `packages/contracts` directly.
 | B2 | Auth: register, login, logout, session guard, argon2id, login rate limit | B1 | Integration tests cover wrong password, unknown user, expired session, revoked session, rate limit trip | done |
 | B3 | Links API: create (with collision retry), list, get, update status | B2 | A link created via the API is readable by code; a second merchant gets 404, not 403 | done |
 | B4 | Public link resolution `GET /api/links/:code/public`, unauthenticated | B3 | Returns only fields the checkout page renders; disabled/expired/paid resolve to the right state | done |
-| B5 | Payments as **ledger postings**: initialize, verify, idempotency | B4 | Entries balance to zero; replaying the same idempotency key is a no-op, not a double charge | todo |
+| B5 | Payments as **ledger postings**: initialize, verify, idempotency | B4 | Entries balance to zero; replaying the same idempotency key is a no-op, not a double charge | done |
 | B6 | SSE `/api/stream/dashboard` fed by Postgres `LISTEN/NOTIFY` | B5 | Two subscribers both receive an event; a dropped connection reconnects; heartbeat keeps proxies from killing it | todo |
 | B7 | OpenAPI document generated from the Zod schemas | B5 | Spec validates; `packages/contracts` and the spec cannot disagree | todo |
 | B8 | **Phase 2** — wallet accounts, balance derivation, P2P transfer, QR payload | B5 | Transfer is atomic; insufficient funds rejected; balance = sum of entries | todo |
