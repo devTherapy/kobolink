@@ -115,6 +115,19 @@ describe('Table', () => {
     expect(onRowClick).toHaveBeenCalledTimes(2)
   })
 
+  it('never carries a base outline-none/outline-hidden alongside focus-visible:outline on the row action button (focus state)', () => {
+    // A base `outline-none`/`outline-hidden` unconditionally zeroes
+    // Tailwind's `--tw-outline-style` custom property, which silently
+    // defeats `focus-visible:outline-2` below it — it would never draw a
+    // ring even while `:focus-visible` genuinely matches. See the note in
+    // `ui/Field.tsx` for the full mechanism.
+    render(<Table columns={columns} rows={rows} rowKey={(row) => row.id} emptyState="No rows" onRowClick={vi.fn()} />)
+    const actionButton = screen.getByRole('button', { name: 'Ankara set' })
+    expect(actionButton.className).toMatch(/focus-visible:outline-2/)
+    expect(actionButton.className).not.toMatch(/\boutline-none\b/)
+    expect(actionButton.className).not.toMatch(/\boutline-hidden\b/)
+  })
+
   it('does not double-fire when a nested interactive element inside a row handles its own click', async () => {
     const user = userEvent.setup()
     const onRowClick = vi.fn()

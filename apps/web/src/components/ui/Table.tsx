@@ -237,7 +237,13 @@ function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
                 disabled={disabled}
                 onClick={() => onRowClick?.(row)}
                 className={cn(
-                  'w-full touch-manipulation px-4 py-3 outline-none',
+                  // Deliberately no base `outline-none`/`outline-hidden`
+                  // here — either zeroes Tailwind's `--tw-outline-style`
+                  // custom property unconditionally, so the
+                  // `focus-visible:outline-2` below never renders a visible
+                  // ring even when `:focus-visible` genuinely matches — see
+                  // the fuller note on this in `ui/Field.tsx`.
+                  'w-full touch-manipulation px-4 py-3',
                   column.align === 'right' ? 'text-right' : 'text-left',
                   'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--color-brand)',
                   'disabled:cursor-not-allowed',

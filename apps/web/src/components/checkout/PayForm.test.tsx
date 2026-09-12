@@ -116,6 +116,20 @@ describe('PayForm — amount_mismatch', () => {
     expect(amountInput.getAttribute('aria-describedby')).toBe(error.id)
     expect(amountInput).toHaveAttribute('aria-invalid', 'true')
   })
+
+  it('never carries a base outline-none/outline-hidden alongside focus-visible:outline on the amount input (focus state)', () => {
+    // A base `outline-none`/`outline-hidden` unconditionally zeroes
+    // Tailwind's `--tw-outline-style` custom property, which silently
+    // defeats `focus-visible:outline-2` below it — it would never draw a
+    // ring even while `:focus-visible` genuinely matches. See the note on
+    // this in `ui/Field.tsx`.
+    const openLink = { ...link, amountKobo: null }
+    render(<PayForm link={openLink} />)
+    const amountInput = screen.getByLabelText('Amount')
+    expect(amountInput.className).toMatch(/focus-visible:outline-2/)
+    expect(amountInput.className).not.toMatch(/\boutline-none\b/)
+    expect(amountInput.className).not.toMatch(/\boutline-hidden\b/)
+  })
 })
 
 describe('PayForm — a single-use link paid by someone else between load and pay', () => {
