@@ -663,6 +663,230 @@
           }
         }
       }
+    },
+    "/api/wallet": {
+      "get": {
+        "operationId": "getWallet",
+        "summary": "The signed-in user's own wallet: account id, currency and balance derived from the ledger.",
+        "tags": [
+          "Wallet"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The wallet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/wallet/transactions": {
+      "get": {
+        "operationId": "listWalletTransactions",
+        "summary": "The signed-in user's wallet transfers and top-ups, newest first.",
+        "tags": [
+          "Wallet"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of wallet transactions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletTransactionListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/wallet/transfer": {
+      "post": {
+        "operationId": "transferMoney",
+        "summary": "P2P transfer to another user's wallet by phone number. Money-moving; idempotent.",
+        "tags": [
+          "Wallet"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Client-chosen key for one logical money-moving attempt. A replayed key returns the original result.",
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The posted transfer and the sender’s updated wallet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The recipient, amount and optional note.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/wallet/topup": {
+      "post": {
+        "operationId": "topUpWallet",
+        "summary": "Simulated funding into the signed-in user’s own wallet. No real money enters the system. Money-moving; idempotent.",
+        "tags": [
+          "Wallet"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Client-chosen key for one logical money-moving attempt. A replayed key returns the original result.",
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The posted top-up and the updated wallet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The amount to credit.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopUpRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
     }
   },
   "components": {

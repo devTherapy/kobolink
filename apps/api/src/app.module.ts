@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module.js'
 import { LinksModule } from './links/links.module.js'
 import { OpenApiModule } from './openapi/openapi.module.js'
 import { PaymentsModule } from './payments/payments.module.js'
+import { WalletModule } from './wallet/wallet.module.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // `.env.local`/`.env` are documented in both `apps/api/.env.example` and
@@ -37,6 +38,7 @@ const repoRoot = path.resolve(here, '../../..')
     AuthModule,
     LinksModule,
     PaymentsModule,
+    WalletModule,
     DashboardModule,
     OpenApiModule,
     // Every real feature module goes above this line — NotFoundModule's
