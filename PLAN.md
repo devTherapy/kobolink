@@ -99,7 +99,7 @@ static files. No component ships with half its states.
 
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
-| M0 | Scaffold both apps; generate Swift + Kotlin models from the OpenAPI document; API client | B7 | A model change in contracts regenerates and breaks the build if incompatible | todo |
+| M0 | Scaffold both apps; generate Swift + Kotlin models from the OpenAPI document; API client | B7 | A model change in contracts regenerates and breaks the build if incompatible | done — Android half only (Kotlin models via openapi-generator, Retrofit client), verified the acceptance bar with a real contract-field rename that broke `compileDebugKotlin`; iOS deferred, no Xcode available in this environment |
 | M1 | Deep-link wiring: Associated Domains + `autoVerify` intent filter, URL parsing, routing | M0 F8 | Android: `adb shell pm get-app-links com.folusayo.kobolink` reports verified on the emulator | todo |
 | M2 | Login | M0 B2 | Token stored in Keychain / EncryptedSharedPreferences, never in plain storage | todo |
 | M3 | Checkout screen — the deep-link landing | M1 B4 | Tapping a link opens the app on the right link; Dark Mode and large Dynamic Type both hold | todo |
