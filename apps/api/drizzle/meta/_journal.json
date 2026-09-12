@@ -29,6 +29,13 @@
       "when": 1789132958999,
       "tag": "0003_ledger_entries_posting_same_transaction",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789166629695,
+      "tag": "0004_checkout_sessions",
+      "breakpoints": true
     }
   ]
 }

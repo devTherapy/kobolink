@@ -13,6 +13,7 @@ const migrationsFolder = path.resolve(here, '../drizzle')
 const byName = (a: string, b: string): number => a.localeCompare(b)
 
 const EXPECTED_TABLES = [
+  'checkout_sessions',
   'idempotency_keys',
   'ledger_accounts',
   'ledger_entries',

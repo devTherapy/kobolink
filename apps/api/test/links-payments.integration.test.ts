@@ -4,12 +4,13 @@ import { type ApiTestContext, startApiTestContext } from './support/api-test-con
 import { registerCustomer, registerMerchant } from './support/register-user.js'
 
 /**
- * `GET /api/links/:code/payments` — PLAN.md's B3 row. B5 (checkout
- * initialize/verify) has not landed, so no `link_payment` posting can exist
- * yet for any link; this feature implements the endpoint's shape, authz and
- * merchant-scoping now and always answers a correctly-shaped **empty** page
- * — see `LinksService.payments`'s own doc comment and this PR's description
- * for exactly what B5 needs to wire in.
+ * `GET /api/links/:code/payments` — PLAN.md's B3 row: shape, authz and
+ * merchant-scoping, exercised here against a link that has never been paid
+ * (so a correctly-shaped **empty** page is still the right answer). B5 has
+ * since landed the real write path (`checkout.initialize`/`checkout.verify`)
+ * and its own read-side coverage — a link with a mix of successful and
+ * declined payments — lives in
+ * `checkout-payments-listing.integration.test.ts`.
  */
 describe('GET /api/links/:code/payments (real Postgres via Testcontainers)', () => {
   let ctx: ApiTestContext | undefined

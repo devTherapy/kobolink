@@ -1,11 +1,24 @@
 import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import type { ExtractTablesWithRelations } from 'drizzle-orm'
 import { sql } from 'drizzle-orm'
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { drizzle, type NodePgDatabase, type NodePgTransaction } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import * as schema from './schema/index.js'
 
 export type Database = NodePgDatabase<typeof schema>
+
+/** What `Database['transaction']` hands its callback — same query surface as `Database`, scoped to one transaction. */
+export type DbTransaction = NodePgTransaction<typeof schema, ExtractTablesWithRelations<typeof schema>>
+
+/**
+ * Anything that can run a Drizzle query: the pooled `Database` for a plain
+ * read, or a `DbTransaction` for a step that must share a transaction with
+ * other writes (B5's `PaymentsService` is the first caller that needs this —
+ * a posting and its ledger entries, or a `checkout_sessions` claim, must all
+ * run against the same transaction, not a fresh pooled connection).
+ */
+export type Executor = Database | DbTransaction
 
 /**
  * Owns the Postgres pool and the Drizzle client built on top of it. One
