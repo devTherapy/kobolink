@@ -20,8 +20,20 @@ export const LINKS_TABLE_COLUMNS: TableColumn<PaymentLink>[] = [
   {
     key: 'link',
     header: 'Link',
+    // `Table` is an auto-layout `<table>`: a nowrap cell's minimum content
+    // width is its full, untruncated string width, so `truncate` alone (no
+    // constrained width anywhere in the ancestor chain) never actually
+    // clips anything — the column just grows to fit whatever the longest
+    // title/description happens to be. `LinkDescriptionSchema` allows up to
+    // 500 characters, so this is not a hypothetical: a realistic
+    // description overflowed the Link column to 954px wide, pushing every
+    // other column off a 1024px (and even a 1440px) desktop viewport. A
+    // hard `max-w-*` on this wrapping div gives `truncate`'s
+    // overflow-hidden/ellipsis something concrete to clip against — and
+    // caps what the table's automatic column-width algorithm sees as this
+    // column's content width in the first place.
     render: (link) => (
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex min-w-0 max-w-[22rem] flex-col gap-0.5">
         <span className="truncate font-medium text-(--color-ink)">{link.title}</span>
         {link.description ? (
           <span className="truncate text-[13px] text-(--color-ink-3)">{link.description}</span>

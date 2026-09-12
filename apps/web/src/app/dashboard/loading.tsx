@@ -18,7 +18,7 @@ import { LINKS_TABLE_COLUMNS } from '@/components/dashboard/LinksTable'
 export default function DashboardLoading() {
   return (
     <div className="flex flex-col gap-6">
-      <Skeleton shape="line" width="14rem" className="h-6" aria-label="Loading dashboard" />
+      <Skeleton shape="line" width="14rem" aria-label="Loading dashboard" />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Array.from({ length: 3 }, (_unused, index) => (

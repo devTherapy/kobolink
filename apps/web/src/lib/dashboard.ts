@@ -1,6 +1,6 @@
-import { cookies as nextCookies } from 'next/headers'
 import type { DashboardStats, LinkListResponse } from '@kobolink/contracts'
 import { ApiRequestError, client } from './api'
+import { resolveCookieHeader } from './session'
 
 export interface DashboardData {
   stats: DashboardStats
@@ -15,22 +15,10 @@ export interface DashboardData {
  * it can say something accurate instead of Next's blank generic error page.
  */
 export class DashboardUnavailableError extends Error {
-  constructor(message = "We couldn't reach Kobolink's servers.") {
-    super(message)
+  constructor(message = "We couldn't reach Kobolink's servers.", options?: ErrorOptions) {
+    super(message, options)
     this.name = 'DashboardUnavailableError'
   }
-}
-
-/**
- * Same seam as `src/lib/session.ts`'s `resolveCookieHeader`: accepting an
- * explicit `cookieHeader` (rather than always reading `next/headers` itself)
- * is what makes this callable from a plain unit test without mocking
- * `next/headers`.
- */
-async function resolveCookieHeader(explicit: string | undefined): Promise<string> {
-  if (explicit !== undefined) return explicit
-  const store = await nextCookies()
-  return store.toString()
 }
 
 /**
@@ -55,9 +43,12 @@ export async function loadDashboardData(cookieHeader?: string): Promise<Dashboar
     ])
     return { stats, links }
   } catch (error) {
-    if (error instanceof ApiRequestError) throw new DashboardUnavailableError(error.error.message)
+    if (error instanceof ApiRequestError) throw new DashboardUnavailableError(error.error.message, { cause: error })
     // A raw `fetch` failure (connection refused, DNS, ...) never produces an
     // `ApiRequestError` at all — same "could not load the dashboard" story.
-    throw new DashboardUnavailableError()
+    // Still worth keeping `cause`: a real contract drift (a `ZodError` from
+    // `request()`'s schema parse) lands here too, and without `cause` that
+    // bug would only ever be visible as "couldn't reach Kobolink's servers."
+    throw new DashboardUnavailableError(undefined, { cause: error })
   }
 }
