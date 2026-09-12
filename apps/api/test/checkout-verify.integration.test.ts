@@ -6,7 +6,7 @@ import {
   PaymentLinkSchema,
   VerifyCheckoutResponseSchema,
 } from '@kobolink/contracts'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { type ApiTestContext, startApiTestContext } from './support/api-test-context.js'
 import { registerMerchant } from './support/register-user.js'
@@ -61,6 +61,33 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
 
   function pool(): Pool {
     return new Pool({ connectionString: getCtx().connectionString })
+  }
+
+  function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  /**
+   * Polls `pg_stat_activity` (on its own connection, never the one doing
+   * the holding) until some *other* backend is genuinely waiting on a lock,
+   * or the timeout elapses. This is what makes "the concurrent request is
+   * really blocked behind our held-open transaction" an assertion the test
+   * proves rather than a fixed `sleep` the test just hopes was long enough.
+   */
+  async function waitForBlockedBackend(activity: Pool, timeoutMs = 5_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const result = await activity.query<{ count: number }>(
+        `select count(*)::int as count
+         from pg_stat_activity
+         where datname = current_database()
+           and wait_event_type = 'Lock'
+           and pid <> pg_backend_pid()`,
+      )
+      if ((result.rows[0]?.count ?? 0) > 0) return true
+      await sleep(15)
+    }
+    return false
   }
 
   it('200 success: posts two balanced ledger entries (merchant_receivable credited, external_funding debited) and updates the link counters', async () => {
@@ -274,13 +301,22 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
     }
   })
 
-  it('concurrent first-time payments across 8 distinct links/merchants: getOrCreateAccount race never surfaces as a 500 — all succeed with exactly one balanced posting each', async () => {
-    // Every one of these is the *first ever* payment for its own merchant,
-    // and all 8 additionally race to create the singleton `external_funding`
-    // account (there is only ever one, across every merchant) — the exact
-    // shape of the race `getOrCreateAccount` has to recover from. Firing
-    // these with `Promise.all`, not sequential `await`s, is what actually
-    // exercises the race: sequential calls never see a concurrent insert.
+  it('smoke test — concurrent first-time payments across 8 distinct links/merchants all succeed with exactly one balanced posting each (does NOT pin the getOrCreateAccount race — see the deterministic test below for that)', async () => {
+    // NOTE: despite the docstring this test originally shipped with, this
+    // does not reliably exercise `getOrCreateAccount`'s unique-violation
+    // recovery path. By the time this test runs, an earlier test in this
+    // file has already created the `external_funding` singleton, so
+    // `findAccount` finds it and no insert (let alone a racing one) is ever
+    // attempted for it; and all 8 merchants are distinct, so
+    // `ledger_accounts_owner_kind_unique` can never fire between them
+    // either — there is no pair of concurrent inserts here that target the
+    // same row. What's left is 8 merchant_receivable creates that don't
+    // conflict with each other or anything else, so this passes identically
+    // against the pre-fix code. It's still a reasonable smoke test for
+    // "many concurrent first payments don't do something else broken", so
+    // it stays — but the test named "deterministically forces the
+    // getOrCreateAccount unique-violation race" below is what actually pins
+    // the `bbf9ce9` fix.
     const LINK_COUNT = 8
     const references: string[] = []
     const merchantIds: string[] = []
@@ -335,7 +371,120 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
     }
   })
 
-  it('concurrent verify calls reusing the same Idempotency-Key for two different references on the same link: one succeeds, the other is a clean idempotency_mismatch, never a raw 500', async () => {
+  it('deterministically forces the getOrCreateAccount unique-violation race: a held-open raw insert on ledger_accounts_owner_kind_unique blocks the real verify call, which recovers the winner\'s row on 200 instead of a raw 500', async () => {
+    // A brand-new merchant, never paid before — its `merchant_receivable`
+    // account does not exist yet, so `verify`'s own `getOrCreateAccount`
+    // call is guaranteed to attempt a real insert for
+    // `(kind: 'merchant_receivable', ownerUserId: merchant.userId)` rather
+    // than short-circuiting on `findAccount`. That sidesteps both problems
+    // the smoke test above has: no earlier test could have already created
+    // this specific owner's account, and we control the exact row a second,
+    // real insert collides with instead of hoping 8 distinct owners
+    // incidentally collide on the singleton.
+    const merchant = await registerMerchant(getCtx(), 'verify-forced-account-race@example.test')
+    const code = await createLink(merchant.cookie, { amountKobo: 500_000, isReusable: true })
+    const reference = await initialize(code, 500_000)
+
+    // A dedicated raw connection (not the `Pool` the app itself uses) holds
+    // one transaction open with an uncommitted insert claiming
+    // `(merchant_receivable, merchant.userId)` — exactly the row `verify`'s
+    // `getOrCreateAccount` is about to try to create. Under READ COMMITTED,
+    // the app's own `findAccount` re-read can't see this uncommitted row,
+    // so it will not short-circuit; it will attempt the same insert and
+    // collide with us at the Postgres level, not "eventually, if the timing
+    // lines up" — that is the difference between this test and the smoke
+    // test above.
+    const rawClient = new Client({ connectionString: getCtx().connectionString })
+    await rawClient.connect()
+    const activity = pool()
+    try {
+      await rawClient.query('BEGIN')
+      const winnerAccountId = randomUUID()
+      await rawClient.query(
+        `insert into ledger_accounts (id, owner_user_id, kind) values ($1, $2, 'merchant_receivable')`,
+        [winnerAccountId, merchant.userId],
+      )
+
+      // Fire the real endpoint call concurrently — its transaction's insert
+      // for this exact (owner, kind) pair is now queued behind ours at the
+      // Postgres index level and cannot proceed until we commit or roll
+      // back.
+      // `verify(...)` returns a supertest `Test`, which — like
+      // superagent generally — does not actually dispatch the HTTP request
+      // until something calls `.then`/`.end` on it. Storing it in a plain
+      // variable and awaiting it only later (after the polling below) would
+      // silently never send the request during the window we need it
+      // in-flight; wrapping it in `Promise.resolve` forces that `.then` call
+      // now, so the request is genuinely on the wire before we start polling.
+      const verifyPromise = Promise.resolve(verify(reference))
+
+      // Prove the block is real before touching anything — a genuinely
+      // different backend must be sitting in `pg_stat_activity` waiting on
+      // a lock. If this never becomes true, the race was never engaged at
+      // all and the rest of the test would otherwise pass for the wrong
+      // reason.
+      const blocked = await waitForBlockedBackend(activity)
+      expect(blocked).toBe(true)
+
+      // Release the lock. The real request's queued insert now fails with
+      // a genuine 23505 on `ledger_accounts_owner_kind_unique` — this is
+      // the exact unique-violation `getOrCreateAccount`'s catch block has
+      // to recover from by re-reading and returning our winner's row on the
+      // still-live outer transaction, rather than a raw 500 from an
+      // aborted one (the pre-`bbf9ce9` bug).
+      await rawClient.query('COMMIT')
+
+      const response = await verifyPromise
+      expect(response.status).toBe(200)
+      const body = VerifyCheckoutResponseSchema.parse(response.body)
+      expect(body.payment.status).toBe('success')
+      expect(body.payment.moneyMoved).toBe(true)
+
+      const db = pool()
+      try {
+        // Exactly one merchant_receivable account for this merchant — the
+        // race did not duplicate it — and it is *our* row: the real
+        // request's insert lost and recovered the winner's id rather than
+        // somehow squeezing in a second row.
+        const accounts = await db.query<{ id: string; count: number }>(
+          `select id, count(*) over ()::int as count from ledger_accounts where kind = 'merchant_receivable' and owner_user_id = $1`,
+          [merchant.userId],
+        )
+        expect(accounts.rows).toHaveLength(1)
+        expect(accounts.rows[0]?.count).toBe(1)
+        expect(accounts.rows[0]?.id).toBe(winnerAccountId)
+
+        // The posting the real request produced points its
+        // merchant_receivable leg at that same winner account, and the two
+        // entries still balance to zero.
+        const entries = await db.query<{ amount_kobo: string; account_id: string; kind: string }>(
+          `select e.amount_kobo, e.account_id, a.kind
+           from ledger_entries e
+           join postings p on p.id = e.posting_id
+           join ledger_accounts a on a.id = e.account_id
+           where p.reference = $1`,
+          [reference],
+        )
+        expect(entries.rows).toHaveLength(2)
+        expect(entries.rows.reduce((total, row) => total + Number(row.amount_kobo), 0)).toBe(0)
+        const merchantLeg = entries.rows.find((row) => row.kind === 'merchant_receivable')
+        expect(merchantLeg?.account_id).toBe(winnerAccountId)
+        expect(Number(merchantLeg?.amount_kobo)).toBe(500_000)
+      } finally {
+        await db.end()
+      }
+    } finally {
+      await activity.end()
+      // If the test failed before COMMIT above, this transaction is still
+      // open — end() alone would leave it dangling on the pool until the
+      // connection is torn down; roll it back explicitly so a failure here
+      // never holds a lock into the next test.
+      await rawClient.query('ROLLBACK').catch(() => undefined)
+      await rawClient.end()
+    }
+  })
+
+  it('same link — concurrent verify calls reusing the same Idempotency-Key for two different references: one succeeds, the other is a clean idempotency_mismatch, never a raw 500', async () => {
     const merchant = await registerMerchant(getCtx(), 'verify-concurrent-idem-race@example.test')
     const code = await createLink(merchant.cookie, { amountKobo: 500_000, isReusable: true })
     const firstReference = await initialize(code, 500_000, 'racer-one@example.test')
@@ -343,11 +492,17 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
     const key = idempotencyKey()
 
     // Both calls pass `IdempotencyService.lookup` before either has
-    // committed (no row exists yet for `key`), lock two *different*
-    // `checkout_sessions` rows — so the `FOR UPDATE` above never serialises
-    // them — and then race the `postings` insert on the same
-    // `(idempotencyScope, idempotencyKey)`. Fired with `Promise.all`, not
-    // sequential `await`s, so the race is real.
+    // committed (no row exists yet for `key`) and lock two *different*
+    // `checkout_sessions` rows, so the session-level `FOR UPDATE` never
+    // serialises them — but both references share this *one* link, and
+    // `decideVerify` also takes `FOR UPDATE` on the link row itself, so in
+    // practice this pair *is* serialised there: the second transaction
+    // blocks on the link lock until the first commits, and only reaches the
+    // `postings` insert after the winner has already landed. That still
+    // validly exercises the catch-and-rethrow path below (the loser's
+    // insert genuinely conflicts and genuinely gets caught), but it is not
+    // a DB-level race at the `postings` insert itself — see the
+    // "two different links" variant right after this one for that.
     const [first, second] = await Promise.all([verify(firstReference, key), verify(secondReference, key)])
 
     const statuses = [first.status, second.status].sort((a, b) => a - b)
@@ -373,6 +528,64 @@ describe('POST /api/checkout/verify (real Postgres via Testcontainers)', () => {
         key,
       ])
       expect(idempotencyRows.rows[0]?.count).toBe(1)
+    } finally {
+      await db.end()
+    }
+  })
+
+  it('two different links — concurrent verify calls reusing the same Idempotency-Key for two different links/references: no link-level lock to serialise them, so this is the real DB-level race on postings_idempotency_scope_key_unique', async () => {
+    // Two distinct links (and, incidentally, two distinct merchants) means
+    // `decideVerify`'s `FOR UPDATE` locks — one on `checkout_sessions`, one
+    // on `links` — are all on different rows for the two calls. Nothing
+    // serialises them: both transactions can genuinely run concurrently
+    // all the way to the `postings` insert, which is where
+    // `(idempotency_scope, idempotency_key)` — identical for both, on
+    // purpose — actually collides. Unlike the `getOrCreateAccount` race,
+    // this conflict is guaranteed by construction (both requests target the
+    // exact same key), not by hitting a microseconds-wide timing window: at
+    // most one insert can ever win, so this reliably produces a genuine
+    // concurrent 200/422 split without needing a held-open raw transaction
+    // to force it.
+    const firstMerchant = await registerMerchant(getCtx(), 'verify-concurrent-idem-race-link-a@example.test')
+    const secondMerchant = await registerMerchant(getCtx(), 'verify-concurrent-idem-race-link-b@example.test')
+    const firstCode = await createLink(firstMerchant.cookie, { amountKobo: 500_000, isReusable: true })
+    const secondCode = await createLink(secondMerchant.cookie, { amountKobo: 500_000, isReusable: true })
+    const firstReference = await initialize(firstCode, 500_000, 'racer-one@example.test')
+    const secondReference = await initialize(secondCode, 500_000, 'racer-two@example.test')
+    const key = idempotencyKey()
+
+    const [first, second] = await Promise.all([verify(firstReference, key), verify(secondReference, key)])
+
+    const statuses = [first.status, second.status].sort((a, b) => a - b)
+    expect(statuses).toEqual([200, 422])
+
+    const success = first.status === 200 ? first : second
+    const mismatch = first.status === 422 ? first : second
+    const successBody = VerifyCheckoutResponseSchema.parse(success.body)
+    expect(successBody.payment.status).toBe('success')
+    expect(successBody.payment.moneyMoved).toBe(true)
+    expect(ApiErrorSchema.parse(mismatch.body).code).toBe('idempotency_mismatch')
+
+    const db = pool()
+    try {
+      const postings = await db.query<{ count: number }>(`select count(*)::int as count from postings where idempotency_key = $1`, [
+        key,
+      ])
+      expect(postings.rows[0]?.count).toBe(1)
+      const idempotencyRows = await db.query<{ count: number }>(`select count(*)::int as count from idempotency_keys where key = $1`, [
+        key,
+      ])
+      expect(idempotencyRows.rows[0]?.count).toBe(1)
+
+      // The winner's own posting/entries still balance to zero regardless
+      // of which of the two references it turned out to be.
+      const winningReference = successBody.payment.reference
+      const entries = await db.query<{ amount_kobo: string }>(
+        `select e.amount_kobo from ledger_entries e join postings p on p.id = e.posting_id where p.reference = $1`,
+        [winningReference],
+      )
+      expect(entries.rows).toHaveLength(2)
+      expect(entries.rows.reduce((total, row) => total + Number(row.amount_kobo), 0)).toBe(0)
     } finally {
       await db.end()
     }
