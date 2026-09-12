@@ -1,7 +1,6 @@
 package com.folusayo.kobolink.api
 
 import com.folusayo.kobolink.BuildConfig
-import com.folusayo.kobolink.generated.api.apis.HealthApi
 import com.folusayo.kobolink.generated.api.apis.LinksApi
 import com.folusayo.kobolink.generated.api.infrastructure.Serializer
 import kotlinx.serialization.json.Json
@@ -16,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * Builds the Retrofit client against every request/response model
  * `openApiGenerate` produced from `apps/api/openapi.json` (see
  * app/build.gradle.kts). Nothing here hand-writes a DTO: the interfaces
- * ([LinksApi], [HealthApi], ...) and the models they carry come entirely
+ * ([LinksApi], ...) and the models they carry come entirely
  * from the OpenAPI document, so this file is the "one working call" proof
  * the M0 acceptance bar asks for, not a place that reintroduces
  * hand-written shapes.
@@ -52,5 +51,4 @@ object ApiClientProvider {
     }
 
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
-    val health: HealthApi by lazy { retrofit.create(HealthApi::class.java) }
 }

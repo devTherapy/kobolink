@@ -76,13 +76,23 @@ private val DarkColors = darkColorScheme(
 /**
  * The app's single M3 theme entry point. Honors Dark theme as a first-class
  * scheme (never a quick invert — see the separate Light/Dark role sets
- * above) and Dynamic Color on Android 12+, matching the platform guidance in
- * .claude/skills/impeccable/reference/android.md.
+ * above).
+ *
+ * Dynamic Color (Android 12+ Material You) is deliberately OFF by default.
+ * It derives `primary`/`secondary`/`tertiary` — everywhere the hand-tuned
+ * brand palette in Color.kt lives — from the device wallpaper, and
+ * CLAUDE.md's non-negotiable is "the brand accent is never green": a
+ * green-ish wallpaper would silently produce a green accent on every
+ * Android 12+ device. [MainActivity] calls `KobolinkTheme { ... }` with no
+ * arguments, so this default is what every real user gets. `dynamicColor`
+ * stays a parameter only so a future, deliberate opt-in (e.g. a settings
+ * toggle) doesn't require re-plumbing the color-scheme branch — it must
+ * never be flipped to `true` as a default again.
  */
 @Composable
 fun KobolinkTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current

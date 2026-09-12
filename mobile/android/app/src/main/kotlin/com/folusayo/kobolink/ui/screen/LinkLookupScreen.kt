@@ -88,7 +88,10 @@ fun LinkLookupScreen(resolveLink: suspend (String) -> Result<PublicLinkResponse>
 
             OutlinedTextField(
                 value = code,
-                onValueChange = { if (it.length <= 8) code = it.trim() },
+                onValueChange = {
+                    val trimmed = it.trim()
+                    if (trimmed.length <= 8) code = trimmed
+                },
                 label = { Text("Link code") },
                 placeholder = { Text("e.g. 7hK2mQ9x") },
                 singleLine = true,
@@ -172,7 +175,11 @@ private fun ResolvedCard(response: PublicLinkResponse) {
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
             Text(
-                text = "State: ${response.state}",
+                // .value is the actual OpenAPI enum string ("already-paid"),
+                // not the generated Kotlin constant's own name
+                // (`alreadyMinusPaid`) — .toString()/string interpolation on
+                // the enum itself would render the latter.
+                text = "State: ${response.state.value}",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
