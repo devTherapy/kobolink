@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand accent, matched to docs/DESIGN-SPEC.md (the "brand" CSS token,
+         #1F44D8). Used only for the launcher icon background and the
+         pre-Compose window background; every in-app color comes from the M3
+         ColorScheme in ui/theme/Color.kt, never a raw hex reference like
+         this one. -->
+    <color name="brand">#1F44D8</color>
+</resources>

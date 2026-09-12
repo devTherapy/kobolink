@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Everything the user actually sees is Compose Material 3 (see
+      ui/theme/Theme.kt for the real M3 ColorScheme). This platform theme
+      only covers the sliver of window before Compose takes over: no action
+      bar, and a background that matches the M3 light surface so there is no
+      flash of white/black before the first frame.
+    -->
+    <style name="Theme.Kobolink" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FEFBFF</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
