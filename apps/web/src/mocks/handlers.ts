@@ -322,11 +322,19 @@ export const handlers = [
     return respond('PaymentLink', link, 201)
   }),
 
-  http.get(API.links.collection, () =>
+  http.get(API.links.collection, ({ request }) => {
+    // Mirrors `auth.me` just above: a real `LinksController` sits behind
+    // `SessionGuard`+`MerchantGuard`, so a missing/revoked session cookie
+    // must fail here too — otherwise this mock can't tell F3's dashboard
+    // apart from a merchant who was never signed in at all.
+    const cookie = readSessionCookie(request)
+    if (cookie === null || cookie === REVOKED_SESSION_TOKEN) {
+      return errorResponse('unauthenticated', 'Your session has expired. Please sign in again.')
+    }
     // README: "Only the caller's links, newest first." linkStore is
     // insertion-ordered (oldest first), so reverse it.
-    respond('LinkListResponse', { items: Array.from(linkStore.values()).reverse(), nextCursor: null }),
-  ),
+    return respond('LinkListResponse', { items: Array.from(linkStore.values()).reverse(), nextCursor: null })
+  }),
 
   http.get(API.links.item(':code'), ({ params }) => {
     const linkOrError = requireLink(codeParam(params))
@@ -496,7 +504,16 @@ export const handlers = [
   }),
 
   // ---- dashboard ----------------------------------------------------------
-  http.get(API.dashboard.stats, () => respond('DashboardStats', computeDashboardStats())),
+  http.get(API.dashboard.stats, ({ request }) => {
+    // Same guard as `links.collection` — a real `dashboard/stats` endpoint
+    // is merchant-scoped, so this mock must fail the same way on a
+    // missing/revoked cookie instead of answering for whoever happens to ask.
+    const cookie = readSessionCookie(request)
+    if (cookie === null || cookie === REVOKED_SESSION_TOKEN) {
+      return errorResponse('unauthenticated', 'Your session has expired. Please sign in again.')
+    }
+    return respond('DashboardStats', computeDashboardStats())
+  }),
   // API.dashboard.stream is Server-Sent Events, not a JSON response body —
   // MSW's http handlers do not model SSE. Left for F7, which wires the SSE
   // client and needs a streaming mock, not a `respond()`-shaped one.

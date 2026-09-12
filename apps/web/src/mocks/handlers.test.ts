@@ -36,11 +36,17 @@ async function postJson(
   return { status: response.status, json }
 }
 
-async function getJson(path: string): Promise<{ status: number; json: unknown }> {
-  const response = await fetch(`${ORIGIN}${path}`)
+async function getJson(
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; json: unknown }> {
+  const response = await fetch(`${ORIGIN}${path}`, { headers })
   const json: unknown = await response.json()
   return { status: response.status, json }
 }
+
+/** `Cookie` header for a signed-in session — `/api/links` and `/api/dashboard/stats` are merchant-scoped and now guard on it, same as `/api/auth/me`. */
+const SESSION_COOKIE_HEADER = { cookie: `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}` }
 
 async function patchJson(path: string, body: unknown): Promise<{ status: number; json: unknown }> {
   const response = await fetch(`${ORIGIN}${path}`, {
@@ -257,7 +263,7 @@ describe('the numbers agree with the lists beneath them', () => {
     const { json: payments } = await getJson(`/api/links/${code}/payments`)
     expect((payments as { items: unknown[] }).items).toHaveLength(1)
 
-    const { json: stats } = await getJson('/api/dashboard/stats')
+    const { json: stats } = await getJson('/api/dashboard/stats', SESSION_COOKIE_HEADER)
     // The seeded default link contributes 3 payments / 5_550_000 (state.ts);
     // this test's link, reusable, is still payable and adds a fourth.
     expect(stats).toMatchObject({
@@ -284,7 +290,7 @@ describe('the numbers agree with the lists beneath them', () => {
 describe('GET /api/links: newest first', () => {
   it('lists a newly created link before the seeded default', async () => {
     await postJson('/api/links', { title: 'A Second Link' })
-    const { json } = await getJson('/api/links')
+    const { json } = await getJson('/api/links', SESSION_COOKIE_HEADER)
     const items = (json as { items: { title: string }[] }).items
     expect(items[0]?.title).toBe('A Second Link')
   })
@@ -404,6 +410,37 @@ describe('auth: me honours the forwarded session cookie', () => {
     const json = (await response.json()) as { user: { email: string } }
     expect(typeof json.user.email).toBe('string')
     expect(json.user.email.length).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * A real `LinksController`/dashboard-stats endpoint sits behind
+ * `SessionGuard`+`MerchantGuard` — this mock has to fail the same way on a
+ * missing/revoked cookie, or F3's `loadDashboardData` (which forwards the
+ * cookie by hand from a Server Component, see `src/lib/dashboard.ts`) could
+ * have its forwarding silently broken with nothing here to notice.
+ */
+describe('links.list and dashboard.stats: merchant-scoped, honour the forwarded session cookie', () => {
+  it('GET /api/links 401s with no cookie at all', async () => {
+    const { status, json } = await getJson('/api/links')
+    expect(status).toBe(401)
+    expect(json).toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('GET /api/links 200s for a request carrying a valid session cookie', async () => {
+    const { status } = await getJson('/api/links', SESSION_COOKIE_HEADER)
+    expect(status).toBe(200)
+  })
+
+  it('GET /api/dashboard/stats 401s with no cookie at all', async () => {
+    const { status, json } = await getJson('/api/dashboard/stats')
+    expect(status).toBe(401)
+    expect(json).toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('GET /api/dashboard/stats 200s for a request carrying a valid session cookie', async () => {
+    const { status } = await getJson('/api/dashboard/stats', SESSION_COOKIE_HEADER)
+    expect(status).toBe(200)
   })
 })
 

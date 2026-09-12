@@ -36,7 +36,14 @@ export function Skeleton(props: SkeletonProps) {
       <tr aria-hidden="true" className={props.className}>
         {Array.from({ length: props.columns }, (_unused, index) => (
           <td key={index} className="px-4 py-3">
-            <div className={cn(SHIMMER, 'h-4 w-full')} />
+            {/* Column 0 in every `Table` usage so far (`LinksTable`'s Link
+                column) carries the row's title/description and is
+                proportionally the widest — a `w-full` bar in every cell made
+                the skeleton equal-width while the real content was not,
+                producing a visible reflow the moment data replaced it.
+                A narrower bar in every other column approximates that shape
+                without `Skeleton` needing to know each column's real width. */}
+            <div className={cn(SHIMMER, 'h-4', index === 0 ? 'w-3/4' : 'w-1/2')} />
           </td>
         ))}
       </tr>
