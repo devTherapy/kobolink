@@ -1,0 +1,77 @@
+package com.folusayo.kobolink.deeplink
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * Mirrors `packages/contracts/tests/routes.test.ts`'s `parseLinkCode`
+ * matrix exactly, so the Android and web/API sides of the URL contract are
+ * proven to agree rather than merely assumed to. Any accepted/rejected
+ * input that diverges here from that file is a real cross-platform bug.
+ */
+class DeepLinkTest {
+
+    @Test
+    fun `extracts the code from every shape a deep link can arrive in`() {
+        val accepted = listOf(
+            "https://pay.folusayo.com/l/aBcDeFgH",
+            "https://pay.folusayo.com/l/aBcDeFgH/",
+            "https://pay.folusayo.com/l/aBcDeFgH?utm=whatsapp#x",
+            "http://localhost:3000/l/aBcDeFgH",
+            "/l/aBcDeFgH",
+            "/l/aBcDeFgH?x=1",
+            "kobolink://l/aBcDeFgH",
+        )
+        for (input in accepted) {
+            assertEquals("expected a code from $input", "aBcDeFgH", parseLinkCode(input))
+        }
+    }
+
+    @Test
+    fun `returns null for anything that is not exactly a valid code at that path`() {
+        val rejected = listOf(
+            "https://pay.folusayo.com/dashboard",
+            "https://pay.folusayo.com/.well-known/apple-app-site-association",
+            "https://pay.folusayo.com/l/",
+            "https://pay.folusayo.com/l/abcdefg0", // '0' is outside the alphabet
+            "https://pay.folusayo.com/l/aBcDeFgH/extra",
+            "https://pay.folusayo.com/links/aBcDeFgH",
+            "kobolink://dashboard",
+            "",
+            "not a url",
+        )
+        for (input in rejected) {
+            assertNull("expected null for $input", parseLinkCode(input))
+        }
+    }
+
+    @Test
+    fun `is case-sensitive and length-exact, matching the OpenAPI code pattern`() {
+        assertEquals(8, LinkCode.LENGTH)
+        assertEquals(true, LinkCode.isValid("aBcDeFgH"))
+        assertEquals(false, LinkCode.isValid("aBcDeFg")) // 7 chars
+        assertEquals(false, LinkCode.isValid("aBcDeFgHx")) // 9 chars
+        assertEquals(false, LinkCode.isValid("aBcDeFg0")) // '0' excluded
+        assertEquals(false, LinkCode.isValid("aBcDeFgO")) // 'O' excluded
+        assertEquals(false, LinkCode.isValid("aBcDeFg1")) // '1' excluded
+        assertEquals(false, LinkCode.isValid("aBcDeFgI")) // 'I' excluded
+        assertEquals(false, LinkCode.isValid("aBcDeFgl")) // lowercase 'l' excluded
+    }
+
+    @Test
+    fun `never throws on adversarial input`() {
+        val adversarial = listOf(
+            "://",
+            "https://",
+            "kobolink://",
+            "l/aBcDeFgH",
+            "https://pay.folusayo.com/l/aBcDeFgH?".repeat(50),
+            "\u0000/l/aBcDeFgH",
+        )
+        for (input in adversarial) {
+            // The assertion is simply that this doesn't throw.
+            parseLinkCode(input)
+        }
+    }
+}

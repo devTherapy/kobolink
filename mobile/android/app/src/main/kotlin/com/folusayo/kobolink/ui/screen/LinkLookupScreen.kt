@@ -25,6 +25,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.folusayo.kobolink.deeplink.LinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
 import com.folusayo.kobolink.money.Kobo
@@ -55,6 +57,23 @@ private sealed interface LookupState {
  * and render the `PublicLinkResponse` OpenAPI-generated model produced by
  * `openApiGenerate`. Nothing here is a hand-written DTO.
  *
+ * M1's deep-link stand-in: [initialCode], when non-null, is the code
+ * [MainActivity][com.folusayo.kobolink.MainActivity] extracted from an
+ * incoming App Link. It pre-fills the field and auto-triggers the same
+ * lookup a manual entry would, so tapping a shared payment link exercises
+ * the real resolution endpoint even though there is no checkout screen yet.
+ *
+ * **What M3 needs to replace here** (PLAN.md: "Checkout screen — the
+ * deep-link landing"): the manual-entry form and its `LookupState.Failed`/
+ * `Resolved` cards below are this stub's job, not the checkout screen's. M3
+ * should call `resolveLink` (or its successor) directly from the code
+ * `MainActivity` hands it and render the real checkout UI for the
+ * `payable`/`disabled`/`expired`/`already-paid` states in `state.value` —
+ * this screen's card layouts are placeholders, not a design to carry
+ * forward. The [initialCode] plumbing in `MainActivity`
+ * (`codeFrom`/`onNewIntent`/`launchMode="singleTask"`) is the part that
+ * *should* carry forward unchanged.
+ *
  * M3 only: outlined text field with the floating label on the outline,
  * fully-rounded filled button, filled-tonal result card, Material Symbols
  * (filled/solid) icons, 48dp-minimum touch targets, laid out inside the
@@ -62,10 +81,29 @@ private sealed interface LookupState {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LinkLookupScreen(resolveLink: suspend (String) -> Result<PublicLinkResponse>) {
-    var code by remember { mutableStateOf("") }
+fun LinkLookupScreen(
+    resolveLink: suspend (String) -> Result<PublicLinkResponse>,
+    initialCode: String? = null,
+) {
+    var code by remember { mutableStateOf(initialCode.orEmpty()) }
     var state by remember { mutableStateOf<LookupState>(LookupState.Idle) }
     val scope = rememberCoroutineScope()
+
+    // Fires once per distinct deep-link code — including a second link
+    // tapped while this screen is already showing, since MainActivity's
+    // onNewIntent updates the same state that becomes this key. A manually
+    // typed code never re-triggers this (the user's own "Look up" tap
+    // handles that), and a plain launcher open leaves initialCode null so
+    // nothing runs.
+    LaunchedEffect(initialCode) {
+        val deepLinkCode = initialCode ?: return@LaunchedEffect
+        code = deepLinkCode
+        state = LookupState.Loading
+        state = resolveLink(deepLinkCode).fold(
+            onSuccess = { LookupState.Resolved(it) },
+            onFailure = { LookupState.Failed(it.message ?: "Something went wrong.") },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -81,7 +119,11 @@ fun LinkLookupScreen(resolveLink: suspend (String) -> Result<PublicLinkResponse>
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Paste a link's 8-character code to resolve it against the live API.",
+                text = if (initialCode != null) {
+                    "Opened from a payment link. This stand-in screen shows what the real API resolved — M3 replaces it with the actual checkout."
+                } else {
+                    "Paste a link's 8-character code to resolve it against the live API."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -90,7 +132,7 @@ fun LinkLookupScreen(resolveLink: suspend (String) -> Result<PublicLinkResponse>
                 value = code,
                 onValueChange = {
                     val trimmed = it.trim()
-                    if (trimmed.length <= 8) code = trimmed
+                    if (trimmed.length <= LinkCode.LENGTH) code = trimmed
                 },
                 label = { Text("Link code") },
                 placeholder = { Text("e.g. 7hK2mQ9x") },
@@ -113,7 +155,7 @@ fun LinkLookupScreen(resolveLink: suspend (String) -> Result<PublicLinkResponse>
                         )
                     }
                 },
-                enabled = code.length == 8 && state != LookupState.Loading,
+                enabled = code.length == LinkCode.LENGTH && state != LookupState.Loading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),
