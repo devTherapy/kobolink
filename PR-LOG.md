@@ -20,3 +20,4 @@ here. Read top to bottom to follow how the implementation was built.
 | 13 | F2 | Auth screens, session handling, route protection | https://github.com/devTherapy/kobolink/pull/20 | 2026-09-11 |
 | 14 | B5 | Payments as ledger postings — initialize, verify, idempotency | https://github.com/devTherapy/kobolink/pull/25 | 2026-09-12 |
 | 15 | B7 | OpenAPI document generated from packages/contracts Zod schemas | https://github.com/devTherapy/kobolink/pull/27 | 2026-09-12 |
+| 16 | B6 | SSE dashboard stream fed by Postgres LISTEN/NOTIFY | https://github.com/devTherapy/kobolink/pull/28 | 2026-09-12 |
