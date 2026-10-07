@@ -10,6 +10,11 @@ describe('DashboardLoading — Done when: loading is a skeleton shaped like the 
     expect(document.querySelector('svg')).not.toBeInTheDocument()
   })
 
+  it('holds the New link CTA\u2019s place with a skeleton, so the header does not jump when it arrives', () => {
+    render(<DashboardLoading />)
+    expect(screen.getByLabelText('Loading actions')).toBeInTheDocument()
+  })
+
   it('renders the real table header with skeleton rows underneath, marked busy', () => {
     render(<DashboardLoading />)
 

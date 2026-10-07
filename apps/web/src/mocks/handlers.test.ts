@@ -252,7 +252,11 @@ describe('public resolve computes state with resolveLink(), not a hardcoded "pay
 
 describe('the numbers agree with the lists beneath them', () => {
   it('after create -> initialize -> verify, dashboard stats, the link counters, and the payments list all agree', async () => {
-    const { json: created } = await postJson('/api/links', { title: 'Handmade Beads', amountKobo: 750_00, isReusable: true })
+    const { json: created } = await postJson(
+      '/api/links',
+      { title: 'Handmade Beads', amountKobo: 750_00, isReusable: true },
+      SESSION_COOKIE_HEADER,
+    )
     const code = (created as { code: string }).code
 
     await payLink(code, 750_00)
@@ -289,7 +293,7 @@ describe('the numbers agree with the lists beneath them', () => {
 
 describe('GET /api/links: newest first', () => {
   it('lists a newly created link before the seeded default', async () => {
-    await postJson('/api/links', { title: 'A Second Link' })
+    await postJson('/api/links', { title: 'A Second Link' }, SESSION_COOKIE_HEADER)
     const { json } = await getJson('/api/links', SESSION_COOKIE_HEADER)
     const items = (json as { items: { title: string }[] }).items
     expect(items[0]?.title).toBe('A Second Link')
@@ -458,11 +462,38 @@ describe('a malformed JSON body is validation_failed, not a crash', () => {
   it('POST /api/links with unparseable JSON answers 400, not a generic 500', async () => {
     const response = await fetch(`${ORIGIN}/api/links`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...SESSION_COOKIE_HEADER },
       body: '{not valid json',
     })
     const json: unknown = await response.json()
     expect(response.status).toBe(400)
     expect(json).toMatchObject({ code: 'validation_failed' })
+  })
+})
+
+describe('links.create: session-guarded, field errors keyed by request field', () => {
+  const VALID = { title: 'Wax print bundle', amountKobo: 2_500_000 }
+
+  it('401s with no session cookie, and creates nothing', async () => {
+    const before = linkStore.size
+    const { status, json } = await postJson('/api/links', VALID)
+    expect(status).toBe(401)
+    expect(json).toMatchObject({ code: 'unauthenticated' })
+    expect(linkStore.size).toBe(before)
+  })
+
+  it('201s a valid body and the new link leads the list', async () => {
+    const created = await postJson('/api/links', VALID, SESSION_COOKIE_HEADER)
+    expect(created.status).toBe(201)
+    const { code } = created.json as { code: string }
+
+    const list = await getJson('/api/links', SESSION_COOKIE_HEADER)
+    expect((list.json as { items: { code: string }[] }).items[0]?.code).toBe(code)
+  })
+
+  it('400s an out-of-range amount with fields.amountKobo, per the contract', async () => {
+    const { status, json } = await postJson('/api/links', { title: 'Too cheap', amountKobo: 50 }, SESSION_COOKIE_HEADER)
+    expect(status).toBe(400)
+    expect(json).toMatchObject({ code: 'validation_failed', fields: { amountKobo: [expect.any(String)] } })
   })
 })

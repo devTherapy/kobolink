@@ -47,6 +47,8 @@ const FIELD_LABELS: Record<string, string> = {
   password: 'Password',
   displayName: 'Full name',
   phone: 'Phone number',
+  title: 'Title',
+  description: 'Description',
 }
 
 /**
@@ -59,6 +61,7 @@ interface HumanizableIssue {
   code: string
   message: string
   minimum?: unknown
+  maximum?: unknown
 }
 
 /**
@@ -86,6 +89,11 @@ export function humanizeFieldIssue(field: string, issue: HumanizableIssue): stri
       return `${label} must be at least ${minimum} characters.`
     }
     return `${label} is required.`
+  }
+
+  if (issue.code === 'too_big') {
+    const maximum = typeof issue.maximum === 'number' ? issue.maximum : undefined
+    if (maximum !== undefined) return `${label} must be at most ${maximum} characters.`
   }
 
   if (issue.code === 'invalid_format' || issue.code === 'invalid_string') {

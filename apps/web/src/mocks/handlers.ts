@@ -304,8 +304,23 @@ export const handlers = [
 
   // ---- links ------------------------------------------------------------
   http.post(API.links.collection, async ({ request }) => {
+    // Same guard as `GET` just below: `LinksController` is session-guarded for
+    // writes too, so a missing/revoked cookie fails here the same way.
+    const cookie = readSessionCookie(request)
+    if (cookie === null || cookie === REVOKED_SESSION_TOKEN) {
+      return errorResponse('unauthenticated', 'Your session has expired. Please sign in again.')
+    }
     const parsed = CreateLinkRequestSchema.safeParse(await readJson(request))
-    if (!parsed.success) return errorResponse('validation_failed', 'That link could not be created.')
+    // `fields` keyed by request field (`amountKobo`, `expiresAt`, ...) — the
+    // contract's own shape for `validation_failed` — so a screen can put each
+    // message beside its input. A code collision (`conflict`) is not
+    // simulated here: it is a property of the real allocator, and tests that
+    // need it override this handler with `server.use(...)`.
+    if (!parsed.success) {
+      return errorResponse('validation_failed', 'That link could not be created.', {
+        fields: zodIssuesToFields(parsed.error),
+      })
+    }
     const code = newLinkCode()
     const link = exampleLink({
       code,

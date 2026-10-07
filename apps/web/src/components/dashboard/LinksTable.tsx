@@ -90,7 +90,7 @@ export function LinksTable({ links }: { links: PaymentLink[] }) {
             as="h3"
             icon={<LinkIcon />}
             title="No links yet"
-            body="Once you create a payment link, it will show up here with its status and payment count."
+            body="Choose “New link” above to create your first payment link. It will show up here with its status and payment count."
           />
         }
       />

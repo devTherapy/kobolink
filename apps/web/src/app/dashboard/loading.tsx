@@ -18,7 +18,11 @@ import { LINKS_TABLE_COLUMNS } from '@/components/dashboard/LinksTable'
 export default function DashboardLoading() {
   return (
     <div className="flex flex-col gap-6">
-      <Skeleton shape="line" width="14rem" aria-label="Loading dashboard" />
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <Skeleton shape="line" width="14rem" aria-label="Loading dashboard" />
+        {/* The size of the "New link" button it stands in for (h-11, ~6rem). */}
+        <Skeleton shape="block" height="2.75rem" width="6rem" aria-label="Loading actions" />
+      </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Array.from({ length: 3 }, (_unused, index) => (

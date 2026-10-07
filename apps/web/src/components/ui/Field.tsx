@@ -24,7 +24,9 @@ export interface FieldTextProps extends FieldSharedProps {
   // `'password'` added for F2's login/register forms — masked input, plain
   // native `<input type="password">` semantics, nothing else about the
   // field changes.
-  type?: 'text' | 'email' | 'tel' | 'password' | undefined
+  // `'date'` added for F4's optional expiry — the native picker, whose value
+  // is always `YYYY-MM-DD` or `''`.
+  type?: 'text' | 'email' | 'tel' | 'password' | 'date' | undefined
   value: string
   onChange: (value: string) => void
 }

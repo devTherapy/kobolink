@@ -3,6 +3,7 @@ import { getSession } from '@/lib/session'
 import { loadDashboardData } from '@/lib/dashboard'
 import { StatStrip } from '@/components/dashboard/StatStrip'
 import { LinksTable } from '@/components/dashboard/LinksTable'
+import { NewLinkButton } from '@/components/dashboard/NewLinkButton'
 
 export const metadata: Metadata = {
   title: 'Dashboard',
@@ -31,6 +32,11 @@ export const dynamic = 'force-dynamic'
  * `cache()`, so this and the layout share the one request instead of paying
  * for it twice.
  *
+ * `NewLinkButton` (F4) is the page's one client island: the CTA, the drawer and
+ * the create form. Creating a link calls `router.refresh()`, which re-runs
+ * this server render — that is how the table and stat strip pick up the new
+ * link without a full reload.
+ *
  * `getSession()` and `loadDashboardData()` depend on nothing but the
  * incoming request's own cookie — neither result feeds the other — so they
  * run concurrently via `Promise.all` rather than as two sequential `await`s,
@@ -43,7 +49,10 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-[23px] font-semibold text-(--color-ink)">Welcome back, {displayName}.</h1>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <h1 className="text-[23px] font-semibold text-(--color-ink)">Welcome back, {displayName}.</h1>
+        <NewLinkButton />
+      </div>
       <StatStrip stats={stats} />
       <LinksTable links={links.items} />
     </div>
