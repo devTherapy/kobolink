@@ -49,4 +49,29 @@ class RoutingTest {
         assertEquals(Destination.Link("abc12345"), route(SessionState.SignedOut(), "abc12345"))
         assertEquals(Destination.Link("abc12345"), route(SessionState.SignedIn(ngozi), "abc12345"))
     }
+
+    /**
+     * M1 review (e). A payer who taps a shared link, is not a merchant and presses Back must
+     * leave the app, not land on the merchant login screen they never asked for. Only a device
+     * that actually holds a merchant session has somewhere to go back to.
+     */
+    @Test
+    fun `back from a link with no merchant session leaves the app`() {
+        assertEquals(BackAction.LeaveApp, backFromLink(SessionState.SignedOut()))
+        assertEquals(BackAction.LeaveApp, backFromLink(SessionState.SignedOut("Your session ended.")))
+    }
+
+    @Test
+    fun `back from a link while signed in returns to home`() {
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.SignedIn(ngozi)))
+    }
+
+    @Test
+    fun `back from a link while a stored session is unconfirmed returns to that session, not out of the app`() {
+        // Resolving and Offline both mean a token is stored: this is a merchant's device,
+        // and dropping the app would strand them mid-check. The next screen is the one
+        // that confirms (or fails to confirm) the session.
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.Resolving))
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.Offline("no connection")))
+    }
 }

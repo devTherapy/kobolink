@@ -28,3 +28,11 @@ fun route(session: SessionState, deepLinkCode: String?): Destination {
         is SessionState.SignedIn -> Destination.Home(session.user)
     }
 }
+
+/** TEMPORARY red-phase stub: M1's behaviour, Back always clears the link. */
+sealed interface BackAction {
+    data object DismissLink : BackAction
+    data object LeaveApp : BackAction
+}
+
+fun backFromLink(session: SessionState): BackAction = BackAction.DismissLink
