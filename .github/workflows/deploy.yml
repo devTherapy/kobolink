@@ -3,11 +3,13 @@
 # on pushing a version tag (v*), and the jobs additionally refuse any ref that
 # is not main or a v* tag.
 #
-# It is inert until the repository owner adds the GitHub secret FLY_API_TOKEN
-# (docs/DEPLOY.md): without it the first step fails with a clear message
-# before anything is built or contacted.
+# It is inert until the repository owner adds FLY_API_TOKEN as an ENVIRONMENT
+# secret of the `production` environment (docs/DEPLOY.md, step 2): without it
+# the first step fails with a clear message before anything is built or
+# contacted.
 #
-#   secrets   FLY_API_TOKEN      an ORGANISATION-scoped Fly token:
+#   environment secret (production, NOT a repository secret)
+#             FLY_API_TOKEN      an ORGANISATION-scoped Fly token:
 #                                  fly tokens create org --name github-deploy --expiry 8760h
 #                                One workflow deploys two apps (api and web). An
 #                                app-scoped `fly tokens create deploy` token is
@@ -18,11 +20,14 @@
 #             EXPECTED_APP_ID    <APPLE_TEAM_ID>.com.folusayo.kobolink
 #             SMOKE_LINK_CODE    (optional) a real link code to render-check
 #
-# The `production` environment below is where the owner MUST add the real
-# protection (Settings -> Environments -> production): deployment branches and
-# tags limited to `main` and `v*`, plus a required reviewer. The `if:` ref
-# guard alone does not stop a v* tag pushed on an unreviewed commit, because a
-# tag push runs the workflow file from the tagged commit (docs/DEPLOY.md, step 2).
+# Why an ENVIRONMENT secret: a tag push runs this file from the tagged commit,
+# so whoever can push a tag can edit this workflow (drop the `if:` guard and
+# `environment: production`). A repository secret would still be handed to
+# that run. Only environment secrets are gated by the environment's rules, so
+# the token lives there and `production` has a REQUIRED REVIEWER (that, or a
+# tag ruleset limiting who can create v* tags, is the control that matters;
+# limiting branches/tags alone does not stop a v* tag on an unreviewed
+# commit). Do not also create a repository secret of the same name.
 #
 # Order: api first (its release_command migrates the database), then web, then
 # the post-deploy smoke test as its own job, so it can be re-run alone when
@@ -56,7 +61,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
-            echo "::error title=FLY_API_TOKEN is not set::Add the repository secret FLY_API_TOKEN (an organisation-scoped Fly token) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
+            echo "::error title=FLY_API_TOKEN is not set::Add FLY_API_TOKEN as an environment secret of the production environment (an organisation-scoped Fly token; not a repository secret) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
             exit 1
           fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

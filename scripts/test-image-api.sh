@@ -133,7 +133,9 @@ fi
 pass "node dist/main.js boots and /api/health answers 200 against Postgres"
 
 # Fly's private network (<app>.internal) is IPv6-only, so the server must
-# accept connections on an IPv6 address, not just 0.0.0.0.
+# accept connections on an IPv6 address, not just 0.0.0.0. This probes ::1
+# inside the container, so it needs IPv6 loopback there: a host/Docker setup
+# that disables IPv6 gives a false FAIL, never a false PASS.
 docker exec "$API" wget -q -O /dev/null "http://[::1]:3001/api/health" \
   || fail "the api does not answer on IPv6 ([::1]:3001); Fly's .internal network would not reach it"
 pass "the api answers on IPv6"

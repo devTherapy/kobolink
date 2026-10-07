@@ -26,24 +26,34 @@ commands anyone with a token can run.
 - [ ] **1. Create the Fly.io account and add payment** at https://fly.io (a
       card is required before machines can run). Install `flyctl` and run
       `fly auth login` on your machine.
-- [ ] **2. Create an organisation-scoped Fly token and store it as the GitHub
-      secret `FLY_API_TOKEN`.** Run `fly tokens create org --name github-deploy
-      --expiry 8760h` (needs only your account, from step 1), then GitHub ->
-      Settings -> Secrets and variables -> Actions -> New repository secret ->
-      `FLY_API_TOKEN`. **Why org-scoped, not `fly tokens create deploy`:** one
-      workflow deploys two apps, and an app-scoped deploy token is valid for
-      one app only, so the second deploy would be rejected. The trade-off is a
-      wider token (it can act on every app in your Fly organisation, not just
-      these two). The narrower alternative is one deploy token per app in two
-      secrets (`FLY_API_TOKEN_API`, `FLY_API_TOKEN_WEB`); that needs a small
-      change to `deploy.yml` and is listed under "Follow-ups". Until the secret
-      exists the deploy workflow fails immediately with a clear message and
-      deploys nothing. **Also restrict the `production` environment** (Settings
-      -> Environments -> production -> Deployment branches and tags): allow only
-      `main` and the tag pattern `v*`, and add yourself as a required reviewer.
-      The workflow's own `v*` guard is not enough: a tag can point at any commit,
-      and a tag push runs the workflow file from the tagged commit, so a tag
-      on an unreviewed commit would otherwise deploy it with the token.
+- [ ] **2. Create the `production` GitHub environment, then put the Fly token
+      in it as an ENVIRONMENT secret named `FLY_API_TOKEN`.** In order:
+      1. GitHub -> Settings -> Environments -> New environment -> `production`.
+      2. **Required reviewers: add yourself.** This is the control that matters:
+         the deploy job then pauses for your approval before it can read the
+         token. Optionally also set "Deployment branches and tags" to `main` and
+         `v*`; on its own that does NOT stop a `v*` tag pushed on an unreviewed
+         commit, because a tag can point at any commit and a tag push runs the
+         workflow file from the tagged commit. (Alternatively or additionally,
+         add a tag ruleset limiting who can create `v*` tags.)
+      3. Run `fly tokens create org --name github-deploy --expiry 8760h` (needs
+         only your account, from step 1), then in that environment: Environment
+         secrets -> Add environment secret -> `FLY_API_TOKEN`.
+      4. **Do NOT also create a repository-level secret of that name.** Only
+         environment secrets are gated by the environment's rules; a repository
+         secret is handed to any workflow run, and a tag push could edit
+         `deploy.yml` (remove `environment: production` and the `if:` guard)
+         and still receive it.
+
+      **Why org-scoped, not `fly tokens create deploy`:** one workflow deploys
+      two apps, and an app-scoped deploy token is valid for one app only, so the
+      second deploy would be rejected. The trade-off is a wider token (it can
+      act on every app in your Fly organisation, not just these two), which is
+      one more reason the reviewer gate matters. The narrower alternative is one
+      deploy token per app in two environment secrets (`FLY_API_TOKEN_API`,
+      `FLY_API_TOKEN_WEB`); that needs a small change to `deploy.yml` and is
+      listed under "Follow-ups". Until the secret exists the deploy job fails
+      immediately with a clear message and deploys nothing.
 - [ ] **3. Add the GitHub Actions variables** (Settings -> ... -> Variables):
       `DOMAIN` = `pay.folusayo.com`, `EXPECTED_APP_ID` =
       `<APPLE_TEAM_ID>.com.folusayo.kobolink`, optionally `SMOKE_LINK_CODE`.
@@ -154,7 +164,7 @@ by the release command on every api deploy; to run them by hand:
 
 ## Each deploy
 
-Either from GitHub Actions (preferred, needs `FLY_API_TOKEN`) or by hand.
+Either from GitHub Actions (preferred, needs the `production` environment secret `FLY_API_TOKEN`) or by hand.
 
 **GitHub Actions** (`.github/workflows/deploy.yml`) runs only on a manual
 dispatch (Actions -> deploy -> Run workflow) or when a tag `v*` is pushed,
@@ -205,15 +215,17 @@ exist but are never run automatically.
 | `NEXT_PUBLIC_DASHBOARD_HEARTBEAT_MS` | web | build arg (inlined at build) |
 | `DASHBOARD_HEARTBEAT_MS`, `PORT` | api | env in `apps/api/fly.toml` |
 | `ANDROID_PACKAGE_NAME` | web | env in `apps/web/fly.toml` |
-| `FLY_API_TOKEN` | GitHub | **secret** |
+| `FLY_API_TOKEN` | GitHub, `production` environment | **environment secret** (never a repository secret) |
 | `DOMAIN`, `EXPECTED_APP_ID`, `SMOKE_LINK_CODE` | GitHub | variables |
 
 Why `API_ORIGIN` is a **build** argument: Next evaluates `rewrites()` during
 `next build` and freezes the result in `.next/routes-manifest.json`. Setting
 `API_ORIGIN` only when the server starts would leave the proxy pointing at the
 build-time default (`localhost:3001`) and every `/api/*` call would fail in
-production. `scripts/test-image-associations.sh` proves the baked-in value is
-the one that is used.
+production. `API_ORIGIN` is also read at RUNTIME for server-side fetches
+(`apps/web/src/lib/api.ts`), which is why `apps/web/fly.toml` sets it in both
+`[build.args]` and `[env]`. `scripts/test-image-associations.sh` builds with one
+value and runs with another to prove each path uses the one it should.
 
 Why the heartbeat is 15000 and must stay under 30000: Next's `/api/*` proxy
 drops a proxied connection that is idle for 30 seconds. The dashboard SSE
@@ -236,9 +248,11 @@ browser treats 2.5x the interval of silence as a dead stream.
   downtime for that app. The web app never auto-stops, on purpose (cold starts
   and Apple's CDN fetch).
 - **Org-wide token.** The single `FLY_API_TOKEN` is organisation-scoped (see
-  owner checklist step 2 for why). Restrict the `production` environment to
-  `main` and `v*` tags with a required reviewer (step 2), or a tag on any
-  commit can deploy.
+  owner checklist step 2 for why). It must live only as an environment secret
+  of `production`, with a required reviewer: that reviewer (or a tag ruleset
+  limiting who can create `v*` tags) is what stops a `v*` tag on an unreviewed
+  commit from deploying. Limiting branches/tags alone does not, and a
+  repository-level secret of the same name would bypass all of it.
 - **A debug-keystore fingerprint in `ANDROID_SHA256_FINGERPRINTS`** lets debug
   builds claim your domain; keep it only for the M1 `adb` check (step 4).
 - **Pooled Postgres strings** silently break the live dashboard stream (see
@@ -251,13 +265,19 @@ Proven by running, against the BUILT images, on a developer machine
 the api; both create only `kobolink-x3-*` things and remove them):
 
 - **web image:** both `/.well-known/*` files answer 200, `application/json`, no
-  redirect, with exact JSON; `/api/*` reaches the origin baked in at build time;
+  redirect, with exact JSON. The script builds the image with one stub API as
+  `API_ORIGIN` and runs it with a DIFFERENT stub as `API_ORIGIN`, and each
+  stub records its requests, so the two uses are told apart: the browser-facing
+  `/api/*` rewrite reaches the BUILD-time stub and not the runtime one; and
   `/l/ABCDEFGH` (a valid 8-character code) makes its server-side fetch of
-  `/api/links/ABCDEFGH/public` to the build-time origin (the stub API records
-  the request), renders Next's 404 from the stub's 404, and the container log
-  has no missing-module error. What this does NOT cover: a link that exists
-  (the stub never returns one), so the rest of the checkout page's server-side
-  code path is not exercised.
+  `/api/links/ABCDEFGH/public` to the RUNTIME `process.env.API_ORIGIN` (read in
+  `apps/web/src/lib/api.ts`) and not the build-time one, renders Next's 404 from
+  the stub's 404, and the container log has no missing-module error. In
+  production `apps/web/fly.toml` sets the same value in both `[build.args]` and
+  `[env]`; the web Dockerfile's runtime stage sets neither, so `[env]` is what
+  makes server-side fetches work. NOT covered: a link that exists (the stub
+  never returns one), so the rest of the checkout page's server-side code path
+  is not exercised.
 - **api image:** as the runtime user, `nanoid` resolves to the lockfile's major
   version (5) from the api's context and from `packages/contracts`'s context
   (npm nests that copy under each workspace; the first version of the
