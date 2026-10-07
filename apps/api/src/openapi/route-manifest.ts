@@ -257,9 +257,11 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'streamDashboard',
     summary: "Live events for the signed-in merchant's dashboard, as Server-Sent Events.",
     description:
-      'The response is `text/event-stream` and stays open. Each frame is `id: <n>`, `event: <type>`, ' +
+      'The response is `text/event-stream` and stays open. It opens with a `: open` comment line, so a ' +
+      'proxy forwards the response head at once; a parser must ignore comment lines (any line starting ' +
+      'with `:`), as every SSE parser does. After that, each event frame is `id: <n>`, `event: <type>`, ' +
       '`data: <DashboardEvent as JSON>`, then a blank line; `event:` repeats `data.type`, so a client can ' +
-      'validate every frame — heartbeats included — against `DashboardEvent` alone. A `heartbeat` frame is ' +
+      'validate every event frame — heartbeats included — against `DashboardEvent` alone. A `heartbeat` frame is ' +
       `sent every ${SSE_HEARTBEAT_MS}ms so an idle stream survives proxies; clients ignore it. \`id:\` is a ` +
       'monotonic cursor; the server does not yet replay past events for a `Last-Event-ID` header, so a ' +
       'reconnecting client starts fresh. Authentication and role are checked before the first byte, so a ' +
