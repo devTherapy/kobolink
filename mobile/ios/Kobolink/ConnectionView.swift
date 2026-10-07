@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The first screen: which server this build talks to, and whether it
 /// answers. A real screen for later rows to replace; for now it proves the
-/// generated client reaches the API.
+/// generated client reaches the API. It lives inside `RootView`'s navigation stack.
 struct ConnectionView: View {
     let host: String
     @State private var checker: ConnectionChecker
@@ -14,26 +14,24 @@ struct ConnectionView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    LabeledContent("Server", value: host)
-                    StatusRow(status: checker.status)
-                } footer: {
-                    Text("Kobolink checks that its server is up before you rely on it.")
-                }
-
-                Section {
-                    Button("Check again") {
-                        Task { await checker.check() }
-                    }
-                    .disabled(checker.status == .checking)
-                }
+        List {
+            Section {
+                LabeledContent("Server", value: host)
+                StatusRow(status: checker.status)
+            } footer: {
+                Text("Kobolink checks that its server is up before you rely on it.")
             }
-            .navigationTitle("Kobolink")
-            .refreshable { await checker.check() }
-            .task { await checker.check() }
+
+            Section {
+                Button("Check again") {
+                    Task { await checker.check() }
+                }
+                .disabled(checker.status == .checking)
+            }
         }
+        .navigationTitle("Kobolink")
+        .refreshable { await checker.check() }
+        .task { await checker.check() }
     }
 }
 
@@ -108,14 +106,18 @@ struct MisconfiguredView: View {
 }
 
 #Preview("Reachable") {
-    ConnectionView(host: "pay.folusayo.com", checker: ConnectionChecker(api: PreviewHealth(result: nil)))
+    NavigationStack {
+        ConnectionView(host: "pay.folusayo.com", checker: ConnectionChecker(api: PreviewHealth(result: nil)))
+    }
 }
 
 #Preview("Unreachable") {
-    ConnectionView(
-        host: "localhost",
-        checker: ConnectionChecker(api: PreviewHealth(result: .unreachable(.cannotConnectToHost)))
-    )
+    NavigationStack {
+        ConnectionView(
+            host: "localhost",
+            checker: ConnectionChecker(api: PreviewHealth(result: .unreachable(.cannotConnectToHost)))
+        )
+    }
 }
 
 private struct PreviewHealth: HealthChecking {

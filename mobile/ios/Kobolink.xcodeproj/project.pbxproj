@@ -15,6 +15,7 @@
 		0A0000000000000000000015 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		0A0000000000000000000016 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		0A0000000000000000000017 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		0A000000000000000000001B /* Kobolink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Kobolink.entitlements; sourceTree = "<group>"; };
 		0A0000000000000000000018 /* KobolinkKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KobolinkKit; sourceTree = "<group>"; };
 		0A0000000000000000000019 /* OpenAPITooling */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenAPITooling; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -78,6 +79,7 @@
 				0A0000000000000000000015 /* Base.xcconfig */,
 				0A0000000000000000000016 /* Debug.xcconfig */,
 				0A0000000000000000000017 /* Release.xcconfig */,
+				0A000000000000000000001B /* Kobolink.entitlements */,
 			);
 			path = Config;
 			sourceTree = "<group>";

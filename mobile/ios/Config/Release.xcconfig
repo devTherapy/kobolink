@@ -5,4 +5,9 @@
 // Release device build in Xcode's Signing settings.)
 INFOPLIST_FILE = Kobolink/Info.plist
 
+// Universal links: applinks:pay.folusayo.com. This is the only configuration that references the
+// entitlement, because a free personal team cannot sign it (Debug builds, including every Simulator
+// run, stay entitlement-free). Release needs a paid Apple Developer Program team; see README.md.
+CODE_SIGN_ENTITLEMENTS = Config/Kobolink.entitlements
+
 SWIFT_COMPILATION_MODE = wholemodule

@@ -3,27 +3,23 @@ import SwiftUI
 
 @main
 struct KobolinkApp: App {
-    private let launch: Result<APIConfiguration, APIConfiguration.Problem>
+    private let home: RootView.Home
 
     init() {
         do {
-            launch = .success(try APIConfiguration())
+            let configuration = try APIConfiguration()
+            home = .connection(
+                host: configuration.host,
+                checker: ConnectionChecker(api: KobolinkAPIClient(configuration: configuration))
+            )
         } catch {
-            launch = .failure(error)
+            home = .misconfigured(error)
         }
     }
 
     var body: some Scene {
         WindowGroup {
-            switch launch {
-            case .success(let configuration):
-                ConnectionView(
-                    host: configuration.host,
-                    checker: ConnectionChecker(api: KobolinkAPIClient(configuration: configuration))
-                )
-            case .failure(let problem):
-                MisconfiguredView(problem: problem)
-            }
+            RootView(home: home)
         }
     }
 }
