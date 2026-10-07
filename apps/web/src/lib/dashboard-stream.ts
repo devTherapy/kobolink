@@ -5,6 +5,8 @@ import {
   SSE_HEARTBEAT_MS,
   type DashboardEvent,
 } from '@kobolink/contracts'
+import { client } from './api'
+import { isSessionExpired } from './link-status'
 
 /**
  * The browser end of `GET /api/stream/dashboard` (PLAN.md F7). This file is
@@ -22,6 +24,21 @@ import {
  * silently dead. It also cannot tell the page that anything is wrong. So on
  * every `error` this closes the source and runs its own schedule: jittered
  * exponential backoff, reported honestly as `reconnecting`.
+ *
+ * ## Why a failure is followed by a question
+ *
+ * An `EventSource` `error` carries no HTTP status, so "the API is down" and
+ * "your session ended" and "this account may not have a stream" look the same
+ * to the page — and only the first one is cured by trying again. Retrying a
+ * 401 or a 403 forever left the header saying "Reconnecting… Updates paused"
+ * next to a screen that already knew better. So each failure also asks a
+ * cheap authenticated endpoint who the visitor is (`probeMerchantSession`,
+ * `GET /api/auth/me`): `unauthenticated` → `signed-out`, a signed-in account
+ * that is not a merchant (what `MerchantGuard` refuses with 403) → `stopped`,
+ * and in both cases the retries end. Anything the probe cannot settle — a 5xx,
+ * a dropped connection, a body that does not parse — is treated as the blip it
+ * most likely is, and the backoff carries on. The retry timer is never held
+ * back for the answer, so a slow probe delays nothing.
  *
  * ## Half-open connections
  *
@@ -44,7 +61,30 @@ export const RECONNECT_MAX_MS = 30_000
 /** Silent for this many heartbeat intervals → assume the connection is dead. */
 export const STALE_AFTER_HEARTBEATS = 2.5
 
-export type StreamStatus = 'connecting' | 'live' | 'reconnecting' | 'offline'
+export type StreamStatus = 'connecting' | 'live' | 'reconnecting' | 'offline' | 'signed-out' | 'stopped'
+
+/**
+ * What a failed connection turns out to be about. `signed-out`: the session is
+ * gone (401). `forbidden`: signed in, but not as a merchant (403). `ok`: the
+ * session is fine, so the failure was the connection. `unknown`: no answer
+ * either — treated like `ok`.
+ */
+export type SessionProbe = 'ok' | 'signed-out' | 'forbidden' | 'unknown'
+
+/**
+ * Asks the API who the visitor is, to learn why a stream failed (see the module
+ * comment). `no-store`, so a cached 200 can never hide a session that ended.
+ * A bare 401 from a proxy (no `ApiError` body) is not evidence of anything and
+ * comes back `unknown`, the same rule `isSessionExpired` applies everywhere.
+ */
+export async function probeMerchantSession(): Promise<SessionProbe> {
+  try {
+    const { user } = await client.auth.me({ cache: 'no-store' })
+    return user.role === 'merchant' ? 'ok' : 'forbidden'
+  } catch (error) {
+    return isSessionExpired(error) ? 'signed-out' : 'unknown'
+  }
+}
 
 /** The slice of the browser's `EventSource` this file uses — and what tests fake. */
 export interface EventSourceLike {
@@ -61,6 +101,8 @@ export interface DashboardStreamOptions {
   /** The stream is open again after a gap: events in between are lost, re-read the server. */
   onResync: () => void
   url?: string
+  /** Learns why a stream failed — see `probeMerchantSession`. */
+  probeSession?: () => Promise<SessionProbe>
   /** The server's heartbeat interval; the staleness timeout is a multiple of it. */
   heartbeatMs?: number
   createEventSource?: (url: string) => EventSourceLike
@@ -122,6 +164,7 @@ export function openDashboardStream(options: DashboardStreamOptions): DashboardS
     url = API.dashboard.stream,
     heartbeatMs = configuredHeartbeatMs(),
     createEventSource = (target: string): EventSourceLike => new EventSource(target),
+    probeSession = probeMerchantSession,
     isOnline = browserOnline,
     random = Math.random,
   } = options
@@ -136,6 +179,9 @@ export function openDashboardStream(options: DashboardStreamOptions): DashboardS
   let missedSomething = false
   let status: StreamStatus | null = null
   let closed = false
+  /** A definite 401 / 403: nothing below may reconnect, whatever happens to the network. */
+  let halted = false
+  let probing = false
 
   function setStatus(next: StreamStatus): void {
     if (next === status) return
@@ -173,10 +219,40 @@ export function openDashboardStream(options: DashboardStreamOptions): DashboardS
     setStatus('reconnecting')
     retryTimer = setTimeout(connect, reconnectDelayMs(attempt, random))
     attempt += 1
+    void checkSession()
+  }
+
+  /**
+   * Asks why it failed, once at a time. Only a definite answer changes anything,
+   * and one that arrives after the connection recovered (or after `close()`) is
+   * about a moment that has passed.
+   */
+  async function checkSession(): Promise<void> {
+    if (probing) return
+    probing = true
+    let result: SessionProbe
+    try {
+      result = await probeSession()
+    } catch {
+      result = 'unknown'
+    } finally {
+      probing = false
+    }
+    if (closed || halted || status === 'live') return
+    if (result === 'signed-out') halt('signed-out')
+    else if (result === 'forbidden') halt('stopped')
+  }
+
+  /** Ends the stream for good: no retry, no watchdog, no reconnect on `online`. */
+  function halt(next: 'signed-out' | 'stopped'): void {
+    halted = true
+    clearTimers()
+    dropSource()
+    setStatus(next)
   }
 
   function connect(): void {
-    if (closed) return
+    if (closed || halted) return
     clearTimers()
     dropSource()
     if (!isOnline()) {
@@ -216,7 +292,7 @@ export function openDashboardStream(options: DashboardStreamOptions): DashboardS
   }
 
   const handleOffline = (): void => {
-    if (closed) return
+    if (closed || halted) return
     clearTimers()
     dropSource()
     missedSomething = true
@@ -224,7 +300,7 @@ export function openDashboardStream(options: DashboardStreamOptions): DashboardS
   }
   const handleOnline = (): void => {
     // A stream that is still `live` is left alone; anything else tries now.
-    if (closed || status === 'live') return
+    if (closed || halted || status === 'live') return
     attempt = 0
     connect()
   }

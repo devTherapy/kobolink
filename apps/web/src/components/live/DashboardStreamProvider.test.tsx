@@ -1,7 +1,10 @@
 import { act, render, screen } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  API,
   formatNaira,
+  exampleUser,
   examplePayment,
   exampleLink,
   type DashboardEvent,
@@ -12,6 +15,7 @@ import { LiveDashboard } from '@/components/dashboard/LiveDashboard'
 import { RECONNECT_BASE_MS } from '@/lib/dashboard-stream'
 import { loadDashboardData } from '@/lib/dashboard'
 import { MOCK_SESSION_COOKIE_NAME, MOCK_SESSION_TOKEN } from '@/mocks/handlers'
+import { server } from '@/mocks/server'
 import { FakeEventSource } from '@/test/fake-event-source'
 import { ConnectionStatus } from './ConnectionStatus'
 import { DashboardStreamProvider, REFRESH_DEBOUNCE_MS } from './DashboardStreamProvider'
@@ -62,6 +66,8 @@ describe('live dashboard', () => {
     FakeEventSource.reset()
     router.refresh.mockReset()
     vi.stubGlobal('EventSource', FakeEventSource)
+    // A failed stream asks `/api/auth/me` why; here the session is fine, so a failure is only a blip.
+    server.use(http.get(API.auth.me, () => HttpResponse.json({ user: exampleUser({ role: 'merchant' }) })))
   })
 
   afterEach(() => {
