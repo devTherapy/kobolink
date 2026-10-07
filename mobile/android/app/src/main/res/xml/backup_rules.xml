@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 and below reads this (`android:fullBackupContent`); 12+ reads
+  data_extraction_rules.xml instead. Both exclude the encrypted session-store
+  file: its bytes are already ciphertext (EncryptedTokenStore), so backing it
+  up wouldn't leak plaintext, but Auto Backup restoring it onto a different
+  install — a new device, or a reinstall after the Keystore's own master key
+  was wiped — would hand this app ciphertext it can never decrypt again,
+  since the Keystore key itself never leaves the original device. Simpler to
+  never restore it than to make every read of it handle "undecryptable."
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="kobolink_secure_prefs.xml" />
+</full-backup-content>
