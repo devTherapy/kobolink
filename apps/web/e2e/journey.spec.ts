@@ -161,6 +161,9 @@ test('a stranger pays a new link and the merchant dashboard moves without a relo
   // -- Merchant: the same page, never reloaded, has moved.
   await expect(stat(page, 'Total collected')).toHaveText(formatNaira(AMOUNT_KOBO))
   await expect(stat(page, 'Payments')).toHaveText('1')
+  // The link is single-use, so it is now Paid and no longer payable; the server
+  // counts only links that resolve to `payable` (contracts `resolveLink`).
+  await expect(stat(page, 'Active links')).toHaveText('0')
   await expect(row).toContainText('Paid')
   await expect(row.getByRole('cell').nth(3)).toHaveText('1')
   await expect

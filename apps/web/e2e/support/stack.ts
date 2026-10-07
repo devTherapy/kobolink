@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ANDROID_PACKAGE_NAME } from '@kobolink/contracts'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { assertPortsFree } from './assert-ports-free'
 import { E2E_API_PORT, E2E_WEB_PORT } from './ports'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -17,9 +18,32 @@ const logDir = path.join(webDir, 'test-results', 'stack-logs')
  * handlers 503 without them (by design -- see `.env.example`), and the
  * `associations.spec.ts` guard needs something to compare against. Nothing
  * here is a real Team ID or signing fingerprint.
+ *
+ * The fingerprint is deliberately LOWERCASE: the handler is what uppercases it
+ * (`parseFingerprints`), and `associations.spec.ts` asserts the served value is
+ * uppercase. An uppercase placeholder would pass even if that step were lost.
  */
 export const E2E_APPLE_APP_ID = 'E2ETEAM001.com.folusayo.kobolink'
-const E2E_ANDROID_FINGERPRINT = Array.from({ length: 32 }, () => 'AB').join(':')
+const E2E_ANDROID_FINGERPRINT = Array.from({ length: 32 }, () => 'ab').join(':')
+
+/**
+ * The e2e build lives apart from `apps/web/.next`. `rewrites()` is evaluated at
+ * build time, so the e2e build bakes in the API on `E2E_API_PORT`; written to
+ * the default `.next` it would replace a developer's `next build`/`next start`
+ * output whose `/api` rewrite points at 3001. Nested under `.next/` so the
+ * existing gitignore, eslint and tsconfig exclusions already cover it.
+ * `next.config.ts` reads the same variable.
+ */
+const E2E_DIST_DIR = '.next/e2e'
+
+/**
+ * MSW must never be part of the e2e build. `NEXT_PUBLIC_*` is inlined at build
+ * time and a developer's shell or `apps/web/.env.local` could set it to
+ * `enabled`; Next does not overwrite a variable that is already defined, so an
+ * explicit empty string wins over any dotenv file. Passed to `next build` AND
+ * `next start`.
+ */
+const NO_MOCKING = { NEXT_PUBLIC_API_MOCKING: '' }
 
 export interface RunningStack {
   stop: () => Promise<void>
@@ -54,6 +78,11 @@ export async function startStack(): Promise<RunningStack> {
   }
 
   try {
+    // Before anything is started: a leftover server on these ports would answer
+    // the readiness probes with a stale build and the suite would test the wrong
+    // thing without saying so.
+    await assertPortsFree([E2E_WEB_PORT, E2E_API_PORT])
+
     container = await new PostgreSqlContainer('postgres:17-alpine').start()
     const databaseUrl = container.getConnectionUri()
 
@@ -63,7 +92,7 @@ export async function startStack(): Promise<RunningStack> {
       run('build-api', 'npm', ['run', 'build'], { cwd: apiDir })
       run('build-web', 'npx', ['next', 'build'], {
         cwd: webDir,
-        env: { API_ORIGIN: `http://localhost:${E2E_API_PORT}` },
+        env: { API_ORIGIN: `http://localhost:${E2E_API_PORT}`, NEXT_DIST_DIR: E2E_DIST_DIR, ...NO_MOCKING },
       })
     }
 
@@ -78,6 +107,8 @@ export async function startStack(): Promise<RunningStack> {
       cwd: webDir,
       env: {
         API_ORIGIN: `http://localhost:${E2E_API_PORT}`,
+        NEXT_DIST_DIR: E2E_DIST_DIR,
+        ...NO_MOCKING,
         APPLE_APP_ID: E2E_APPLE_APP_ID,
         ANDROID_PACKAGE_NAME,
         ANDROID_SHA256_FINGERPRINTS: E2E_ANDROID_FINGERPRINT,

@@ -10,10 +10,29 @@ export default defineConfig({
     },
   },
   test: {
-    name: 'web',
-    include: ['src/**/*.test.{ts,tsx}'],
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'web',
+          include: ['src/**/*.test.{ts,tsx}'],
+          environment: 'jsdom',
+          setupFiles: ['./src/test/setup.ts'],
+        },
+      },
+      {
+        // Helpers of the Playwright harness (`e2e/support`). A project of its own
+        // because they use real sockets, which the web project's MSW setup
+        // (`onUnhandledRequest: 'error'`) intercepts. `.unit.ts`, not `.test.ts`:
+        // Playwright's default testMatch would otherwise run these as e2e specs.
+        extends: true,
+        test: {
+          name: 'e2e-support',
+          include: ['e2e/support/**/*.unit.ts'],
+          environment: 'node',
+        },
+      },
+    ],
     css: false,
     restoreMocks: true,
     // The default 5000ms is tight for a `userEvent`-driven form test (real

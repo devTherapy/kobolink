@@ -107,7 +107,7 @@ jobs:
       - name: Install Playwright browsers (only once a workspace depends on it)
         run: |
           if [ -d node_modules/@playwright/test ]; then
-            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium webkit
+            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
           else
             echo "no @playwright/test in the tree yet; skipping browser install"
           fi
