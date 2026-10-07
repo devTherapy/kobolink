@@ -101,7 +101,13 @@ fun linkRefFromSaved(saved: String?): LinkRef = when {
  *   launch Intent is not that: `onNewIntent` replaces the in-process intent, but Android rebuilds a killed activity
  *   with the ORIGINAL launch Intent, so trusting it would reopen link A after the payer had moved on to link B, or
  *   find only a launcher Intent and drop the checkout. Nothing saved means nothing was open (it had been closed).
- * - A fresh start from Recents ([fromHistory]): the Intent is stale, a link from whenever the task began. None.
+ * - A fresh start from Recents ([fromHistory]) on a device that holds a merchant session ([hasMerchantSession]): the
+ *   Intent is stale, a link from whenever the task began, and a merchant's Recents card is the app, not that link.
+ *   None, so [route] falls through to Home.
+ * - A fresh start from Recents with NO merchant session: this is a payer, and the Recents card they tapped is the
+ *   checkout they had open. The same stale-looking Intent is the only record of it, and the alternative is the
+ *   merchant login, the one screen a payer has no use for (M3 review, D3; M2 review #37). Their Intent's link, if it
+ *   has one: a launcher Intent carries none, and that start is the login, correctly.
  * - Otherwise, a fresh start: the Intent's link.
  */
 fun linkToOpenOnCreate(
@@ -110,9 +116,10 @@ fun linkToOpenOnCreate(
     savedLink: LinkRef,
     fromHistory: Boolean,
     intentLink: LinkRef,
+    hasMerchantSession: Boolean,
 ): LinkRef = when {
     checkoutIsOpen -> LinkRef.None
     restoredFromSavedState -> savedLink
-    fromHistory -> LinkRef.None
+    fromHistory && hasMerchantSession -> LinkRef.None
     else -> intentLink
 }

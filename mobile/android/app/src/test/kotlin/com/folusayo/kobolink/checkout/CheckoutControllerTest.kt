@@ -238,6 +238,120 @@ class CheckoutControllerTest {
         assertEquals(CheckoutState.Idle, checkout.state.value)
     }
 
+    // ---- M3 review (b): each half of latest-wins, on its own ---------------------------------
+    //
+    // "Latest wins" is two mechanisms: Job.cancel() abandons the old request, and the generation check drops an
+    // answer that arrives anyway. Each test below fails if exactly one of them is removed. The all-purpose tests
+    // above cannot tell: either mechanism alone makes them pass.
+
+    @Test
+    fun `a superseded lookup is cancelled, not merely ignored`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+
+        checkout.open("AAAAAAAA")
+        runCurrent()
+        checkout.open("BBBBBBBB")
+        runCurrent()
+
+        assertTrue("the request for the old link must be abandoned", gateway.lookups[0].cancelled)
+        assertEquals("the request for the new link must keep running", false, gateway.lookups[1].cancelled)
+    }
+
+    @Test
+    fun `closing cancels the lookup in flight`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        checkout.open("7hK2mQ9x")
+        runCurrent()
+
+        checkout.close()
+        runCurrent()
+
+        assertTrue(gateway.lookups.single().cancelled)
+    }
+
+    @Test
+    fun `leaving a link while its payment request is in flight cancels that request`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout)
+        checkout.pay(payer)
+        runCurrent()
+
+        checkout.open("Zz3Yy4Xx")
+        runCurrent()
+
+        assertTrue(gateway.initializes.single().cancelled)
+    }
+
+    @Test
+    fun `a lookup answer that arrives despite cancellation still cannot overwrite the newer link`() = runTest {
+        val gateway = FakeCheckoutGateway(ignoreCancellation = true)
+        val checkout = controller(gateway)
+
+        checkout.open("AAAAAAAA")
+        runCurrent()
+        checkout.open("BBBBBBBB")
+        runCurrent()
+        gateway.lookups[1].complete(found(link(code = "BBBBBBBB", title = "Link B")))
+        runCurrent()
+
+        // A's call does not notice it was cancelled and hands back its answer anyway.
+        gateway.lookups[0].complete(found(link(code = "AAAAAAAA", title = "Link A")))
+        runCurrent()
+
+        assertEquals("Link B", (checkout.state.value as CheckoutState.Loaded).link.title)
+    }
+
+    @Test
+    fun `an answer that arrives despite cancellation cannot reopen a closed checkout`() = runTest {
+        val gateway = FakeCheckoutGateway(ignoreCancellation = true)
+        val checkout = controller(gateway)
+        checkout.open("7hK2mQ9x")
+        runCurrent()
+        checkout.close()
+
+        gateway.lookups.single().complete(found())
+        runCurrent()
+
+        assertEquals(CheckoutState.Idle, checkout.state.value)
+    }
+
+    @Test
+    fun `a payment answer that arrives despite cancellation cannot land on the link the payer moved to`() = runTest {
+        val gateway = FakeCheckoutGateway(ignoreCancellation = true)
+        val checkout = controller(gateway)
+        loaded(gateway, checkout)
+        checkout.pay(payer)
+        runCurrent()
+        checkout.open("Zz3Yy4Xx")
+        runCurrent()
+
+        gateway.initializes[0].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
+        runCurrent()
+
+        assertEquals(CheckoutState.Loading("Zz3Yy4Xx"), checkout.state.value)
+    }
+
+    @Test
+    fun `a stale re-read after a price change cannot replace the link the payer moved to`() = runTest {
+        val gateway = FakeCheckoutGateway(ignoreCancellation = true)
+        val checkout = controller(gateway)
+        loaded(gateway, checkout)
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent() // the controller is now re-reading the price: lookups[1]
+
+        checkout.open("Zz3Yy4Xx")
+        runCurrent()
+        gateway.lookups[1].complete(found(link(amountKobo = 1_800_000)))
+        runCurrent()
+
+        assertEquals(CheckoutState.Loading("Zz3Yy4Xx"), checkout.state.value)
+    }
+
     // ---- paying ---------------------------------------------------------------------------
 
     private suspend fun TestScope.loaded(
@@ -366,25 +480,6 @@ class CheckoutControllerTest {
         assertEquals(2, gateway.initializes.size)
         assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
         assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
-    }
-
-    @Test
-    fun `a successful attempt is over, so paying the same link again starts a new one`() = runTest {
-        // A reusable link paid twice with the same pre-filled details must make two checkouts. Replaying the first
-        // key would hand back the first reference, and M4 would verify it into a "paid" that never happened.
-        val gateway = FakeCheckoutGateway()
-        val checkout = controller(gateway)
-        loaded(gateway, checkout)
-        checkout.pay(payer)
-        runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
-        runCurrent()
-
-        loaded(gateway, checkout) // the payer taps the link again later
-        checkout.pay(payer)
-        runCurrent()
-
-        assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
     }
 
     @Test
@@ -566,6 +661,215 @@ class CheckoutControllerTest {
         loaded(gateway, checkout)
         payAndAnswer(gateway, checkout, InitializeOutcome.Rejected(Rejection(RejectionKind.NotFound, "No link with that code.")))
         assertEquals(CheckoutState.NotFound("7hK2mQ9x"), checkout.state.value)
+    }
+
+    // ---- M3 review (c): a refused amount is never sent again ------------------------------
+
+    @Test
+    fun `after a price change whose re-read failed, Pay cannot re-submit the stale amount`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout, link(amountKobo = 1_500_000))
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent()
+        gateway.lookups[1].complete(LookupOutcome.Failed(FailureKind.Network))
+        runCurrent()
+        val stale = checkout.state.value
+        assertEquals(PayPhase.PriceChanged(null), (stale as CheckoutState.Loaded).pay)
+
+        // The old amount is still what the loaded link holds, so a tap on Pay would send it again, and loop.
+        checkout.pay(payer)
+        checkout.pay(payer)
+        runCurrent()
+
+        assertEquals("the refused amount must not be sent again", 1, gateway.initializes.size)
+        assertEquals(stale, checkout.state.value)
+        assertTrue("the screen must be told it has no trustworthy price", stale.pay.needsFreshRead)
+    }
+
+    @Test
+    fun `after a failed re-read, Pay is enabled again only by a successful fresh read`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout, link(amountKobo = 1_500_000))
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent()
+        gateway.lookups[1].complete(LookupOutcome.Failed(FailureKind.Network))
+        runCurrent()
+
+        checkout.reload() // the screen's "Reload": a read that fails again changes nothing
+        runCurrent()
+        gateway.lookups[2].complete(LookupOutcome.Failed(FailureKind.Network))
+        runCurrent()
+        checkout.pay(payer)
+        runCurrent()
+        assertEquals(1, gateway.initializes.size)
+
+        checkout.reload()
+        runCurrent()
+        gateway.lookups[3].complete(found(link(amountKobo = 1_800_000)))
+        runCurrent()
+        assertEquals(CheckoutState.Loaded(link(amountKobo = 1_800_000), LinkAvailability.Payable, PayPhase.Idle), checkout.state.value)
+
+        checkout.pay(payer.copy(amountKobo = 1_800_000))
+        runCurrent()
+        assertEquals(2, gateway.initializes.size)
+        assertEquals(1_800_000, gateway.initializes[1].request.first.amountKobo)
+        // A different amount is a different request: it must not be sent under the refused one's key.
+        assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
+    }
+
+    @Test
+    fun `after a successful re-read the new price can be paid`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout, link(amountKobo = 1_500_000))
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent()
+        gateway.lookups[1].complete(found(link(amountKobo = 1_800_000)))
+        runCurrent()
+        assertEquals(false, (checkout.state.value as CheckoutState.Loaded).pay.needsFreshRead)
+
+        checkout.pay(payer.copy(amountKobo = 1_800_000))
+        runCurrent()
+
+        assertEquals(2, gateway.initializes.size)
+        assertEquals(1_800_000, gateway.initializes[1].request.first.amountKobo)
+    }
+
+    @Test
+    fun `no other phase asks for a fresh read`() {
+        val request = InitializeRequest("7hK2mQ9x", 1_500_000, "Tunde Bello", "tunde@example.com")
+        for (phase in listOf(
+            PayPhase.Idle,
+            PayPhase.Submitting,
+            PayPhase.Started("kbl_abcdefghjk", 1_500_000),
+            PayPhase.Rejected("no", emptyMap(), null),
+            PayPhase.PriceChanged(1_800_000),
+            PayPhase.Failed(FailureKind.Network, request),
+        )) {
+            assertEquals("$phase", false, phase.needsFreshRead)
+        }
+        assertEquals(true, PayPhase.PriceChanged(null).needsFreshRead)
+    }
+
+    // ---- M3 review (d): a started payment is shown again, and is never started twice ---------
+
+    private suspend fun TestScope.started(
+        gateway: FakeCheckoutGateway,
+        checkout: CheckoutController,
+        reference: String = "kbl_abcdefghjk",
+    ) {
+        loaded(gateway, checkout)
+        payAndAnswer(gateway, checkout, InitializeOutcome.Started(reference, 1_500_000))
+    }
+
+    @Test
+    fun `reopening the link while its payment is started shows the same reference`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        checkout.open("7hK2mQ9x") // the payer taps the link again
+        runCurrent()
+        assertEquals(CheckoutState.Loading("7hK2mQ9x"), checkout.state.value)
+        gateway.lookups.last().complete(found())
+        runCurrent()
+
+        assertEquals(
+            CheckoutState.Loaded(link(), LinkAvailability.Payable, PayPhase.Started("kbl_abcdefghjk", 1_500_000)),
+            checkout.state.value,
+        )
+    }
+
+    @Test
+    fun `closing and reopening the link still shows the started payment`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        checkout.close() // "Done"
+        loaded(gateway, checkout)
+
+        assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
+    }
+
+    @Test
+    fun `a Pay after reopening a started payment replays its attempt instead of making a second checkout`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+        loaded(gateway, checkout) // reopened
+
+        checkout.pay(payer)
+        runCurrent()
+
+        // Whatever reaches the server carries the SAME idempotency key, so the server answers with the stored
+        // checkout. A new key here is a second pending checkout for the same payment.
+        assertEquals(2, gateway.initializes.size)
+        assertEquals(gateway.initializes[0].request.second, gateway.initializes[1].request.second)
+        gateway.initializes[1].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
+        runCurrent()
+        assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
+    }
+
+    @Test
+    fun `a different link does not inherit a started payment, and forgets it`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        loaded(gateway, checkout, link(code = "Zz3Yy4Xx"))
+        assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
+
+        // Back on the first link, its earlier payment was left behind by the switch: this is a fresh checkout.
+        loaded(gateway, checkout)
+        assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
+        checkout.pay(payer)
+        runCurrent()
+        assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
+    }
+
+    @Test
+    fun `a started payment is not shown over a link that has since stopped being payable`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        loaded(gateway, checkout, availability = LinkAvailability.Disabled)
+
+        assertEquals(CheckoutState.Loaded(link(), LinkAvailability.Disabled, PayPhase.Idle), checkout.state.value)
+    }
+
+    @Test
+    fun `an unreadable link forgets a started payment`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        checkout.openUnreadable()
+        loaded(gateway, checkout)
+
+        assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
+    }
+
+    @Test
+    fun `a fixed-amount link that was repriced is not shown as started at the old price`() = runTest {
+        // The payment was started for 15,000.00 and the link has since been repriced: the reference is still shown
+        // (it exists, and is for that amount), never re-labelled with the new price.
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        started(gateway, checkout)
+
+        loaded(gateway, checkout, link(amountKobo = 1_800_000))
+
+        assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
     }
 
     @Test

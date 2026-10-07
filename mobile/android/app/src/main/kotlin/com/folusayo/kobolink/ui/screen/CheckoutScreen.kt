@@ -67,6 +67,7 @@ import com.folusayo.kobolink.checkout.PayerInput
 import com.folusayo.kobolink.checkout.PayerValidation
 import com.folusayo.kobolink.checkout.formatCheckoutDate
 import com.folusayo.kobolink.checkout.matches
+import com.folusayo.kobolink.checkout.needsFreshRead
 import com.folusayo.kobolink.checkout.merchantInitial
 import com.folusayo.kobolink.checkout.payButtonLabel
 import com.folusayo.kobolink.checkout.priceChangedMessage
@@ -138,7 +139,7 @@ fun CheckoutScreen(
                             NonPayableNotice(state.availability, state.link, onCheckAgain = onReload, onClose = onClose)
                         state.pay is PayPhase.Started ->
                             PaymentStartedStub(link = state.link, started = state.pay, onDone = onClose)
-                        else -> PayableContent(state.link, state.pay, form, onPay)
+                        else -> PayableContent(state.link, state.pay, form, onPay, onReload)
                     }
                 }
             }
@@ -152,6 +153,7 @@ private fun PayableContent(
     pay: PayPhase,
     form: CheckoutFormState,
     onPay: (PayerInput) -> Unit,
+    onReload: () -> Unit,
 ) {
     val focus = LocalFocusManager.current
     val submitting = pay is PayPhase.Submitting
@@ -188,6 +190,19 @@ private fun PayableContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+
+    // The price on this screen was just refused and the re-read failed: there is no amount to show and none to
+    // send. No form, no Pay; the one way forward is to read the link again.
+    if (pay.needsFreshRead) {
+        PayBanner(pay, emptyMap())
+        Button(
+            onClick = onReload,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+        ) {
+            Text("Reload", style = MaterialTheme.typography.labelLarge)
+        }
+        return
     }
 
     val fixedAmount = link.amountKobo

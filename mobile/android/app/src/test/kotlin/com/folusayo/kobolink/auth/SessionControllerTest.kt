@@ -43,6 +43,19 @@ class SessionControllerTest {
         assertEquals(0, api.getMeCalls)
     }
 
+    /** M3 review (D3): `onCreate` asks this before the cold-start check has run, so it cannot read [SessionController.state]. */
+    @Test
+    fun `a stored token means a merchant session even before the check has run`() {
+        assertEquals(false, controllerWith(FakeAuthApi()).first.hasStoredSession())
+        assertEquals(true, controllerWith(FakeAuthApi(), signedInStore()).first.hasStoredSession())
+    }
+
+    @Test
+    fun `a token that cannot be read is not a merchant session, and does not throw`() {
+        val unreadable = RecordingTokenStore(readFailure = IllegalStateException("keystore"))
+        assertEquals(false, controllerWith(FakeAuthApi(), unreadable).first.hasStoredSession())
+    }
+
     @Test
     fun `a valid token resolves to signed in`() = runTest {
         val (controller, _) = controllerWith(FakeAuthApi(meResponse = meSuccess()), signedInStore())

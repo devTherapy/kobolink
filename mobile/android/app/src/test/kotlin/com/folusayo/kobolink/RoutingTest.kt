@@ -61,7 +61,8 @@ class RoutingTest {
         saved: LinkRef = LinkRef.None,
         fromHistory: Boolean = false,
         intent: LinkRef = LinkRef.None,
-    ) = linkToOpenOnCreate(restored, checkoutIsOpen, saved, fromHistory, intent)
+        merchantSession: Boolean = false,
+    ) = linkToOpenOnCreate(restored, checkoutIsOpen, saved, fromHistory, intent, hasMerchantSession = merchantSession)
 
     @Test
     fun `a first launch opens the link in the intent`() {
@@ -90,8 +91,42 @@ class RoutingTest {
     }
 
     @Test
-    fun `a start from Recents does not reopen a stale link`() {
-        assertEquals(LinkRef.None, open(fromHistory = true, intent = a))
+    fun `a merchant's start from Recents does not reopen a stale link`() {
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = a, merchantSession = true))
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.Unreadable, merchantSession = true))
+    }
+
+    /**
+     * M3 review (D3). A payer has no merchant session, so the merchant login is the one screen they have no
+     * business on. Reopening the app from Recents (the task's launch Intent is the link they opened) used to
+     * find "stale link, ignore it" and fall through to that login. The link is what they came for.
+     */
+    @Test
+    fun `a payer's start from Recents opens the checkout, not the merchant login`() {
+        assertEquals(a, open(fromHistory = true, intent = a, merchantSession = false))
+        assertEquals(LinkRef.Unreadable, open(fromHistory = true, intent = LinkRef.Unreadable, merchantSession = false))
+        // Routed, the open link is the checkout whatever the (signed-out) session says.
+        assertEquals(Destination.Link, route(SessionState.SignedOut(), linkOpen = true))
+    }
+
+    @Test
+    fun `a start from Recents with no link in the intent has nothing to open`() {
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.None, merchantSession = false))
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.None, merchantSession = true))
+    }
+
+    @Test
+    fun `the merchant session only matters for a start from Recents`() {
+        // Rotation, process death and a plain first launch decide as before, with or without a merchant session.
+        for (merchant in listOf(true, false)) {
+            assertEquals(LinkRef.None, open(restored = true, checkoutIsOpen = true, saved = a, intent = b, merchantSession = merchant))
+            assertEquals(b, open(restored = true, saved = b, intent = a, merchantSession = merchant))
+            assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, intent = a, merchantSession = merchant))
+            assertEquals(a, open(intent = a, merchantSession = merchant))
+        }
+        // Restored from saved state wins over Recents even for a payer: what was on screen is what comes back.
+        assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, fromHistory = true, intent = a, merchantSession = false))
+        assertEquals(b, open(restored = true, saved = b, fromHistory = true, intent = a, merchantSession = false))
     }
 
     @Test

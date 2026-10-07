@@ -86,7 +86,7 @@ fun rejectionMessage(message: String, moneyMoved: Boolean?): String =
 fun priceChangedMessage(newAmountKobo: Int?): String = if (newAmountKobo != null) {
     "The price of this link changed to ${Kobo.formatNaira(newAmountKobo)}. Check it, then pay again. $NO_MONEY_MOVED"
 } else {
-    "The price of this link changed. Close it and open the link again to see the new price. $NO_MONEY_MOVED"
+    "The price of this link changed, and we couldn't load the new one. Reload to see the new price. $NO_MONEY_MOVED"
 }
 
 /** A button's visible text and what a screen reader says instead (it reads "₦" inconsistently). */

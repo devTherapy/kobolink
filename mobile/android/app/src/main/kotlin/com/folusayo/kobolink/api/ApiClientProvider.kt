@@ -94,6 +94,16 @@ object ApiClientProvider {
             .build()
     }
 
+    /**
+     * The client the money-moving `POST /api/checkout/initialize` goes through: [base] (same pool, same
+     * interceptors) with OkHttp's silent connection-failure retry turned off. That retry can write a POST a second
+     * time on a fresh connection after the first copy already reached the server and created the checkout; when the
+     * second attempt then fails, the app would report a failure for a payment that exists. A payment is sent at most
+     * once per call; any retry is the app's own, under the same idempotency key. (Same rule as the wallet client.)
+     */
+    fun checkoutClient(base: OkHttpClient): OkHttpClient =
+        base.newBuilder().retryOnConnectionFailure(false).build()
+
     private val retrofit: Retrofit by lazy {
         Retrofit.Builder()
             .baseUrl(BuildConfig.API_BASE_URL)
@@ -102,8 +112,16 @@ object ApiClientProvider {
             .build()
     }
 
+    private val checkoutRetrofit: Retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(BuildConfig.API_BASE_URL)
+            .client(checkoutClient(okHttpClient))
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+    }
+
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
-    val checkout: CheckoutApi by lazy { retrofit.create(CheckoutApi::class.java) }
+    val checkout: CheckoutApi by lazy { checkoutRetrofit.create(CheckoutApi::class.java) }
     val auth: AuthApi by lazy { retrofit.create(AuthApi::class.java) }
     val wallet: WalletApi by lazy { retrofit.create(WalletApi::class.java) }
 }

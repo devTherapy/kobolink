@@ -64,6 +64,9 @@ class MainViewModel(
         }
     }
 
+    /** Is a merchant token stored on this device? Answered synchronously, before the cold-start check has run. */
+    fun hasStoredSession(): Boolean = session.hasStoredSession()
+
     fun closeLink() {
         checkout.close()
     }

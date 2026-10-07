@@ -75,6 +75,13 @@ val CheckoutState.code: String?
 val CheckoutState.isOpen: Boolean get() = this !is CheckoutState.Idle
 
 /**
+ * The link on screen is known to be wrong about its price and the re-read that would fix it failed: the amount it
+ * holds is the one the server just refused. Pay must not send it again (it would be refused again, forever), so the
+ * screen offers only a reload, and [CheckoutController.pay] ignores taps until a read succeeds.
+ */
+val PayPhase.needsFreshRead: Boolean get() = this is PayPhase.PriceChanged && newAmountKobo == null
+
+/**
  * Every decision the checkout makes, as plain Kotlin with no Android types, so it runs in JVM unit
  * tests: [com.folusayo.kobolink.MainViewModel] owns one across Activity recreation and only
  * supplies [scope]. Same shape as `SessionController`.
@@ -100,6 +107,15 @@ val CheckoutState.isOpen: Boolean get() = this !is CheckoutState.Idle
  * opened or when the server refuses the request: the server stores a refusal under the key and would
  * replay it to every identical retry, including after the cause (a link switched back on) is gone.
  *
+ * **A started payment is shown again.** When `initialize` answers, the reference is remembered for that link. Reopening
+ * the link (a re-tap, "Done" then back in) shows the same "Payment started" screen instead of an empty form, and a Pay
+ * that reaches the server anyway carries the same key, so it gets that checkout back instead of creating a second one.
+ * It lasts until a different link is opened (or, in M4, until verify settles it).
+ *
+ * **A refused price is never sent twice.** After `amount_mismatch` the loaded link still holds the refused amount. If
+ * the re-read that would correct it fails ([PayPhase.PriceChanged] with no price), [pay] is ignored until a read
+ * succeeds; see [needsFreshRead].
+ *
  * Initialize never posts to the ledger (only `verify` does), so a failure here can honestly say that
  * no money has moved, unless the server itself says otherwise ([Rejection.moneyMoved]).
  */
@@ -114,13 +130,18 @@ class CheckoutController(
     private var generation = 0L
     private var job: Job? = null
     private var attempt: Attempt? = null
+    private var started: StartedPayment? = null
 
     private data class Attempt(val request: InitializeRequest, val key: String)
+
+    /** A checkout `initialize` created for [code]: what a reopened screen shows instead of an empty form. */
+    private data class StartedPayment(val code: String, val phase: PayPhase.Started)
 
     /** Opens [code]: always a fresh lookup, superseding whatever was in flight. */
     fun open(code: String) {
         val mine = supersede()
         if (attempt?.request?.code != code) attempt = null
+        if (started?.code != code) started = null
         _state.value = CheckoutState.Loading(code)
         lookUp(code, mine)
     }
@@ -129,6 +150,7 @@ class CheckoutController(
     fun openUnreadable() {
         supersede()
         attempt = null
+        started = null
         _state.value = CheckoutState.NotFound(code = null)
     }
 
@@ -152,6 +174,7 @@ class CheckoutController(
         val loaded = _state.value as? CheckoutState.Loaded ?: return
         if (loaded.availability != LinkAvailability.Payable) return
         if (loaded.pay is PayPhase.Submitting) return
+        if (loaded.pay.needsFreshRead) return // the price on screen was just refused; only a fresh read lifts this
 
         val request = InitializeRequest(
             code = loaded.link.code,
@@ -175,11 +198,21 @@ class CheckoutController(
             val outcome = gateway.lookup(code)
             if (!isCurrent(mine)) return@launch
             _state.value = when (outcome) {
-                is LookupOutcome.Found -> CheckoutState.Loaded(outcome.link, outcome.availability)
+                is LookupOutcome.Found -> CheckoutState.Loaded(outcome.link, outcome.availability, startedPhaseFor(outcome))
                 LookupOutcome.NotFound -> CheckoutState.NotFound(code)
                 is LookupOutcome.Failed -> CheckoutState.LoadFailed(code, outcome.kind)
             }
         }
+    }
+
+    /**
+     * [PayPhase.Started] if a payment was started for the link just read, so reopening it shows the same
+     * reference. Only over a payable link: a link that has since been switched off or paid says that instead.
+     */
+    private fun startedPhaseFor(found: LookupOutcome.Found): PayPhase {
+        val held = started ?: return PayPhase.Idle
+        if (held.code != found.link.code || found.availability != LinkAvailability.Payable) return PayPhase.Idle
+        return held.phase
     }
 
     private suspend fun applyInitialize(
@@ -190,11 +223,15 @@ class CheckoutController(
     ) {
         when (outcome) {
             is InitializeOutcome.Started -> {
-                // The attempt succeeded and is over. Keeping its key would make the next Pay on this link (a
-                // reusable link paid again, the same details pre-filled) replay THIS reference: no new checkout,
-                // and once M4 verifies it, "paid" for a payment that never happened.
-                attempt = null
-                _state.value = before.copy(pay = PayPhase.Started(outcome.reference, outcome.amountKobo))
+                // The attempt is NOT over: this checkout is pending until M4's verify settles it. Dropping its key
+                // here made the next Pay on the same link (reopened while "Payment started" was showing) a second
+                // pending checkout for one payment. Kept, an identical Pay replays THIS reference from the server,
+                // and reopening the link shows it ([startedPhaseFor]). Both end when a different link is opened.
+                // M4 ends them when verify gives an outcome; until then a reusable link cannot be paid twice from
+                // one session, which is the price of this app being unable to confirm the first payment.
+                val phase = PayPhase.Started(outcome.reference, outcome.amountKobo)
+                started = StartedPayment(request.code, phase)
+                _state.value = before.copy(pay = phase)
             }
 
             is InitializeOutcome.Failed ->

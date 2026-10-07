@@ -89,6 +89,60 @@ class DeepLinkTest {
         }
     }
 
+    /**
+     * M3 review (a). The oracle is `parseLinkCode` in `packages/contracts/src/routes.ts`, run under Node 22 on each of
+     * these inputs (its own test file does not list them; contracts is not this branch's to edit). WHATWG `new URL`
+     * throws on a scheme-less string, so contracts takes it as written and `//evil.example/l/x` fails the `/l/`
+     * prefix; and it never collapses an empty path segment, so `//l/x` and `/l//x` fail too. `java.net.URI` reads a
+     * scheme-less `//host/path` as an authority and `normalize()` collapses `//`, which accepted all of these.
+     */
+    @Test
+    fun `rejects scheme-less authority links and doubled slashes, as contracts does`() {
+        val rejected = listOf(
+            "//evil.example/l/aBcDeFgH",
+            "//pay.folusayo.com/l/aBcDeFgH",
+            "//l/aBcDeFgH",
+            "https://pay.folusayo.com//l/aBcDeFgH",
+            "https://pay.folusayo.com/l//aBcDeFgH",
+            "http://pay.folusayo.com//l/aBcDeFgH",
+            "/l//x",
+            "/l//aBcDeFgH",
+            "kobolink://l//x",
+            "kobolink://l//aBcDeFgH",
+            "kobolink:///l/aBcDeFgH",
+            "kobolink:/l/aBcDeFgH",
+            "kobolink://x/l/aBcDeFgH",
+            "kobolink://L/aBcDeFgH", // a non-special scheme's host keeps its case in WHATWG
+            "kobolink://l:80/aBcDeFgH", // WHATWG `host` keeps the port, so contracts reads "/l:80/aBcDeFgH"
+            "kobolink://l",
+            "kobolink:///aBcDeFgH",
+            "l/aBcDeFgH",
+        )
+        val wronglyAccepted = rejected.filter { parseLinkCode(it) != null }
+        assertEquals("contracts rejects these, the app accepted them", emptyList<String>(), wronglyAccepted)
+    }
+
+    /** The other half of the oracle run: shapes contracts accepts must keep working, or "stricter" becomes "broken". */
+    @Test
+    fun `still accepts the shapes contracts accepts that normalisation used to make work`() {
+        val accepted = listOf(
+            "https://pay.folusayo.com/l/aBcDeFgH//", // trailing slashes are all trimmed
+            "/l/aBcDeFgH//",
+            "kobolink://l/aBcDeFgH/",
+            "kobolink://l/aBcDeFgH?x=1#y",
+            "KOBOLINK://l/aBcDeFgH", // schemes are case-insensitive
+            "HTTPS://pay.folusayo.com/l/aBcDeFgH",
+            "https://pay.folusayo.com/l/./aBcDeFgH", // dot-segments collapse inside a full URL (and only there)
+            "https://pay.folusayo.com/x/../l/aBcDeFgH",
+            "https://pay.folusayo.com/l/aBcDeFgH/./",
+            "kobolink://l/./aBcDeFgH",
+            "https://pay.folusayo.com:443/l/aBcDeFgH",
+        )
+        for (input in accepted) {
+            assertEquals("contracts accepts $input", "aBcDeFgH", parseLinkCode(input))
+        }
+    }
+
     @Test
     fun `rejects schemes that are neither http(s) nor the custom scheme, even on the right path`() {
         for (input in listOf("ftp://pay.folusayo.com/l/aBcDeFgH", "content://pay.folusayo.com/l/aBcDeFgH", "javascript:/l/aBcDeFgH")) {
@@ -127,6 +181,16 @@ class DeepLinkTest {
         for (input in rejected) {
             assertNull("contracts rejects $input", parseLinkCode(input))
         }
+
+        // M3 review (a), derived from the same lists so a case added to contracts is covered without a copy: a
+        // doubled slash before the code's path is never a link (contracts keeps the empty segment, so the path no
+        // longer starts "/l/"), and nor is any accepted URL turned into a scheme-less "//authority/..." one.
+        val derived = accepted.flatMap { input ->
+            val pathOnward = "/" + input.substringAfter("//").substringAfter('/') // from the first "/" after any authority
+            listOf(input.replaceFirst("/l/", "//l/"), "//evil.example$pathOnward")
+        }
+        val wronglyAccepted = derived.filter { parseLinkCode(it) != null }
+        assertEquals("contracts rejects these variants, the app accepted them", emptyList<String>(), wronglyAccepted)
     }
 
     @Test

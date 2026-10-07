@@ -45,6 +45,18 @@ class SessionController(private val auth: AuthRepository) {
         check()
     }
 
+    /**
+     * Is a session token stored on this device? Synchronous and independent of [state], which stays
+     * [SessionState.Resolving] until the cold-start check has run: `MainActivity.onCreate` has to decide what a
+     * start from Recents opens before then. Unreadable storage is "no", the same fail-safe [resolve] uses (it
+     * signs out rather than crash).
+     */
+    fun hasStoredSession(): Boolean = try {
+        auth.isSignedIn
+    } catch (e: Exception) {
+        false
+    }
+
     /** Re-runs the check after [SessionState.Offline]; ignored in any other state. */
     suspend fun retry() {
         if (_state.value !is SessionState.Offline) return

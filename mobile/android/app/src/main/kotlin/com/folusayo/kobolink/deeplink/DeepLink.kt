@@ -102,13 +102,17 @@ fun parseLinkCode(input: String): String? {
     val path = try {
         val uri = URI(beforeQueryAndFragment)
         when (uri.scheme?.lowercase()) {
-            // A bare path such as "/l/aBcDeFgH".
-            null -> uri.rawPath // not normalised: contracts falls back to the raw text for a bare path
-            CUSTOM_SCHEME -> uri.normalize().let { "/${it.host.orEmpty()}${it.rawPath.orEmpty()}" }
+            // No scheme: contracts' `new URL(input)` throws, so it takes the text as written. That is NOT
+            // `uri.rawPath`: java.net.URI reads a scheme-less "//evil.example/l/x" as an authority and a path of
+            // "/l/x", which contracts rejects (the text starts "//", not "/l/").
+            null -> beforeQueryAndFragment
+            // `url.host` keeps a port ("l:80"), java's `host` does not, so a port is a different "host" in contracts.
+            CUSTOM_SCHEME ->
+                if (uri.port != -1) return null else "/${uri.host.orEmpty()}${withoutDotSegments(uri.rawPath.orEmpty())}"
             "https", "http" ->
-                if (uri.host.equals(LINK_HOST, ignoreCase = true)) uri.normalize().rawPath else return null
+                if (uri.host.equals(LINK_HOST, ignoreCase = true)) withoutDotSegments(uri.rawPath.orEmpty()) else return null
             else -> return null
-        }.orEmpty()
+        }
     } catch (e: URISyntaxException) {
         beforeQueryAndFragment
     }
@@ -116,4 +120,29 @@ fun parseLinkCode(input: String): String? {
     if (!path.startsWith(LINK_PATH_PREFIX)) return null
     val rest = path.removePrefix(LINK_PATH_PREFIX).trimEnd('/')
     return rest.takeIf(LinkCode::isValid)
+}
+
+/**
+ * What WHATWG URL parsing does to the path of a URL that has a scheme: `.` and `..` segments are resolved, and
+ * NOTHING ELSE is. In particular an empty segment survives, so `//l/x` stays `//l/x` and does not match `/l/`.
+ * `java.net.URI.normalize()` is not this: it also collapses runs of slashes, which made
+ * `https://pay.folusayo.com//l/aBcDeFgH` a valid link here and an invalid one in contracts.
+ */
+private fun withoutDotSegments(path: String): String {
+    if (!path.startsWith("/")) return path
+    val kept = ArrayList<String>()
+    val segments = path.split('/')
+    for (index in 1 until segments.size) {
+        val segment = segments[index]
+        val isLast = index == segments.lastIndex
+        when (segment) {
+            "." -> if (isLast) kept += ""
+            ".." -> {
+                if (kept.isNotEmpty()) kept.removeAt(kept.lastIndex)
+                if (isLast) kept += ""
+            }
+            else -> kept += segment
+        }
+    }
+    return "/" + kept.joinToString("/")
 }
