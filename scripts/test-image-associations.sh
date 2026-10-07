@@ -34,7 +34,9 @@ command -v docker >/dev/null || fail "docker is required"
 command -v node >/dev/null || fail "node is required"
 
 # Never clobber something we did not create.
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+# (Exit-status checks, not `docker ... | grep -q`: under pipefail grep -q can
+# close the pipe early and make a real match read as "not found".)
+if docker container inspect "$CONTAINER" >/dev/null 2>&1; then
   fail "a container named $CONTAINER already exists; remove it yourself and re-run"
 fi
 
@@ -53,17 +55,21 @@ cleanup() {
 trap cleanup EXIT
 
 # A stand-in for apps/api on a free host port, so the proxy check needs no
-# database. Answers GET /api/health the way the real controller does.
+# database. Answers GET /api/health the way the real controller does, 404s
+# everything else, and logs every request path so the test can prove which
+# requests really reached it.
 node -e '
   const http = require("node:http");
+  const fs = require("node:fs");
   const s = http.createServer((req, res) => {
+    fs.appendFileSync(process.argv[1], req.url + "\n");
     res.setHeader("content-type", "application/json");
     if (req.url === "/api/health") return res.end(JSON.stringify({ status: "ok" }));
     res.statusCode = 404;
     res.end(JSON.stringify({ code: "not_found", message: "stub" }));
   });
   s.listen(0, "0.0.0.0", () => { console.log(s.address().port); });
-' >"$work/stub-port" &
+' "$work/stub-requests" >"$work/stub-port" &
 stub_pid=$!
 disown "$stub_pid"
 for _ in $(seq 1 50); do
@@ -140,16 +146,19 @@ body=$(curl -sS "$base/api/health" || true)
   || fail "/api/health through the web image did not reach the build-time API_ORIGIN (got: ${body:-nothing})"
 pass "/api/* proxies to the API_ORIGIN baked in at build time"
 
-# The standalone server must be able to load the app's code at request time.
-# /l/[code] is rendered by a server component that imports @kobolink/contracts
-# and the typed API client; with the stub answering 404 it must render Next's
-# not-found page (404), not crash (500) on a missing module in the traced tree.
-code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/l/ABCDEFGHJK")
-[ "$code" = "404" ] || fail "/l/<code> returned HTTP $code, expected the 404 not-found page"
+# /l/[code] is a server component: it validates the code, then fetches the
+# link from API_ORIGIN at request time. ABCDEFGH is a valid 8-character code
+# from the real alphabet, so the page genuinely makes that server-side fetch;
+# the stub answers 404, which must render Next's not-found page (404), not
+# crash (500) on a module missing from the traced tree.
+code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/l/ABCDEFGH")
+[ "$code" = "404" ] || fail "/l/ABCDEFGH returned HTTP $code, expected the 404 not-found page"
+grep -qx '/api/links/ABCDEFGH/public' "$work/stub-requests" \
+  || fail "the stub API never received GET /api/links/ABCDEFGH/public; the server-side fetch did not happen"
 if docker logs "$CONTAINER" 2>&1 | grep -qE 'Cannot find module|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND'; then
   docker logs "$CONTAINER" >&2 || true
   fail "the web container logged a missing module"
 fi
-pass "/l/[code] renders (404 via the stub) with no missing-module errors"
+pass "/l/ABCDEFGH fetched /api/links/ABCDEFGH/public from API_ORIGIN, rendered 404, no missing-module errors"
 
 printf '\n\033[32mImage association checks passed\033[0m\n'

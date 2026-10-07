@@ -38,8 +38,12 @@ commands anyone with a token can run.
       secrets (`FLY_API_TOKEN_API`, `FLY_API_TOKEN_WEB`); that needs a small
       change to `deploy.yml` and is listed under "Follow-ups". Until the secret
       exists the deploy workflow fails immediately with a clear message and
-      deploys nothing. Optionally add a protection rule to the `production`
-      environment (Settings -> Environments) so a deploy needs your approval.
+      deploys nothing. **Also restrict the `production` environment** (Settings
+      -> Environments -> production -> Deployment branches and tags): allow only
+      `main` and the tag pattern `v*`, and add yourself as a required reviewer.
+      The workflow's own `v*` guard is not enough: a tag can point at any commit,
+      and a tag push runs the workflow file from the tagged commit, so a tag
+      on an unreviewed commit would otherwise deploy it with the token.
 - [ ] **3. Add the GitHub Actions variables** (Settings -> ... -> Variables):
       `DOMAIN` = `pay.folusayo.com`, `EXPECTED_APP_ID` =
       `<APPLE_TEAM_ID>.com.folusayo.kobolink`, optionally `SMOKE_LINK_CODE`.
@@ -49,8 +53,12 @@ commands anyone with a token can run.
         10-character Team ID from your Apple Developer account; the handler
         refuses the `ABCDE12345` placeholder on purpose) and
         `ANDROID_SHA256_FINGERPRINTS` (uppercase, colon-separated, comma
-        between several: the debug keystore AND the Play App Signing
-        fingerprint)
+        between several: the Play App Signing fingerprint for production. A
+        **debug-keystore** fingerprint may be added only temporarily, to run
+        M1's `adb shell pm get-app-links` check on a debug build, and must be
+        removed before launch: while it is listed, any debug build signed with
+        that keystore (anyone's, if it is the shared default) can claim
+        `pay.folusayo.com` links.)
       - There is no session or cookie signing secret: sessions are opaque
         random tokens looked up by hash (`apps/api/src/auth`), so nothing else
         is required. `NEXT_PUBLIC_IOS_APP_STORE_ID` is optional (a build arg in
@@ -228,8 +236,11 @@ browser treats 2.5x the interval of silence as a dead stream.
   downtime for that app. The web app never auto-stops, on purpose (cold starts
   and Apple's CDN fetch).
 - **Org-wide token.** The single `FLY_API_TOKEN` is organisation-scoped (see
-  owner checklist step 2 for why). Add a protection rule to the `production`
-  environment so a deploy needs your approval.
+  owner checklist step 2 for why). Restrict the `production` environment to
+  `main` and `v*` tags with a required reviewer (step 2), or a tag on any
+  commit can deploy.
+- **A debug-keystore fingerprint in `ANDROID_SHA256_FINGERPRINTS`** lets debug
+  builds claim your domain; keep it only for the M1 `adb` check (step 4).
 - **Pooled Postgres strings** silently break the live dashboard stream (see
   "Postgres").
 
@@ -241,18 +252,23 @@ the api; both create only `kobolink-x3-*` things and remove them):
 
 - **web image:** both `/.well-known/*` files answer 200, `application/json`, no
   redirect, with exact JSON; `/api/*` reaches the origin baked in at build time;
-  `/l/[code]` renders (404 through a stub API) with no missing-module error in
-  the container log.
+  `/l/ABCDEFGH` (a valid 8-character code) makes its server-side fetch of
+  `/api/links/ABCDEFGH/public` to the build-time origin (the stub API records
+  the request), renders Next's 404 from the stub's 404, and the container log
+  has no missing-module error. What this does NOT cover: a link that exists
+  (the stub never returns one), so the rest of the checkout page's server-side
+  code path is not exercised.
 - **api image:** as the runtime user, `nanoid` resolves to the lockfile's major
   version (5) from the api's context and from `packages/contracts`'s context
   (npm nests that copy under each workspace; the first version of the
   Dockerfile left both out and silently resolved nanoid 3, which this test
   caught red before the fix); `node dist/db/migrate.js` applies the migrations
   to a real Postgres; `node dist/main.js` boots and `/api/health` answers 200
-  against that database. The api also listens on IPv6 (needed for `.internal`)
-  and runs as non-root.
-- The web image carries no nested `node_modules` (the lockfile has none for
-  `apps/web`, and `packages/contracts` is bundled into the Next server output).
+  against that database; the running container answers `/api/health` on
+  `[::1]:3001` (Fly's `.internal` network is IPv6) and its `id -u` is not 0.
+- Inspected once by hand, NOT checked by any script: the web image carries no
+  nested `node_modules` (the lockfile has none for `apps/web`, and
+  `packages/contracts` is bundled into the Next server output).
 
 NOT proven: anything on Fly itself. Only written, never executed: both
 `fly.toml` files, `.github/workflows/deploy.yml`, every `fly` command above,

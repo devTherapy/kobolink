@@ -34,12 +34,15 @@ pass() { printf '\033[32mok\033[0m    %s\n' "$1"; }
 command -v docker >/dev/null || fail "docker is required"
 command -v node >/dev/null || fail "node is required"
 
+# Exit-status checks, not `docker ... | grep -q`: under pipefail grep -q can
+# close the pipe early and make a real match read as "not found", which would
+# let the exit cleanup remove something this script did not create.
 for name in "$API" "$DB"; do
-  if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
+  if docker container inspect "$name" >/dev/null 2>&1; then
     fail "a container named $name already exists; remove it yourself and re-run"
   fi
 done
-if docker network ls --format '{{.Name}}' | grep -qx "$NET"; then
+if docker network inspect "$NET" >/dev/null 2>&1; then
   fail "a network named $NET already exists; remove it yourself and re-run"
 fi
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -128,5 +131,16 @@ if [ -z "$healthy" ]; then
   fail "node dist/main.js did not reach a healthy /api/health"
 fi
 pass "node dist/main.js boots and /api/health answers 200 against Postgres"
+
+# Fly's private network (<app>.internal) is IPv6-only, so the server must
+# accept connections on an IPv6 address, not just 0.0.0.0.
+docker exec "$API" wget -q -O /dev/null "http://[::1]:3001/api/health" \
+  || fail "the api does not answer on IPv6 ([::1]:3001); Fly's .internal network would not reach it"
+pass "the api answers on IPv6"
+
+# The image must not run as root.
+uid="$(docker exec "$API" id -u)"
+[ "$uid" != "0" ] || fail "the api container runs as root (uid 0)"
+pass "the api runs as a non-root user (uid $uid)"
 
 printf '\n\033[32mAPI image checks passed\033[0m\n'

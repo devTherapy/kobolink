@@ -18,8 +18,11 @@
 #             EXPECTED_APP_ID    <APPLE_TEAM_ID>.com.folusayo.kobolink
 #             SMOKE_LINK_CODE    (optional) a real link code to render-check
 #
-# The `production` environment below lets the owner add a protection rule
-# (required reviewers, branch/tag restrictions) in Settings -> Environments.
+# The `production` environment below is where the owner MUST add the real
+# protection (Settings -> Environments -> production): deployment branches and
+# tags limited to `main` and `v*`, plus a required reviewer. The `if:` ref
+# guard alone does not stop a v* tag pushed on an unreviewed commit, because a
+# tag push runs the workflow file from the tagged commit (docs/DEPLOY.md, step 2).
 #
 # Order: api first (its release_command migrates the database), then web, then
 # the post-deploy smoke test as its own job, so it can be re-run alone when
