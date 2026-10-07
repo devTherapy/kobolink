@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/session'
+import { DashboardStreamProvider } from '@/components/live/DashboardStreamProvider'
 import { DashboardHeader } from './DashboardHeader'
 
 /**
@@ -11,6 +12,12 @@ import { DashboardHeader } from './DashboardHeader'
  * round trip (via `getSession()`) can tell apart from a valid one. Every
  * route under `/dashboard` shares this one check because they all share
  * this layout — no page beneath it re-implements it.
+ *
+ * It is also where the live stream is mounted (PLAN.md F7): a layout survives
+ * navigation between its pages, so the dashboard and a link's page share one
+ * connection instead of each opening their own. The layout stays a Server
+ * Component; `DashboardStreamProvider` is an island that receives the rendered
+ * tree as `children`.
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await getSession()
@@ -24,9 +31,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   }
 
   return (
-    <div className="min-h-dvh bg-(--color-ground)">
-      <DashboardHeader user={session.user} />
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
-    </div>
+    <DashboardStreamProvider>
+      <div className="min-h-dvh bg-(--color-ground)">
+        <DashboardHeader user={session.user} />
+        <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      </div>
+    </DashboardStreamProvider>
   )
 }

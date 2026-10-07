@@ -6,6 +6,7 @@ import { displayStatus, type PaymentLink } from '@kobolink/contracts'
 import { Card } from '@/components/ui/Card'
 import { StatusPill } from '@/components/ui/Pill'
 import { Switch } from '@/components/ui/Switch'
+import { useLiveLink } from '@/components/live/useLiveLink'
 import { client } from '@/lib/api'
 import { describeStatusFailure, isSessionExpired, signInHref } from '@/lib/link-status'
 
@@ -51,14 +52,37 @@ export type LinkStatusSource = Pick<PaymentLink, 'code' | 'status' | 'isReusable
  *
  * A failure that signing in would fix (the API answered `unauthenticated`)
  * carries a link to `/login?next=` this very page; a retry could never succeed.
+ *
+ * **Live (F7).** `confirmed` is "what the server last said", and the server can
+ * say something new without this switch being touched (a payment exhausts a
+ * single-use link; the link is changed elsewhere). So a newer link — from
+ * `router.refresh()` (new props) or the stream (`useLiveLink`) — replaces
+ * `confirmed` (the "adjust state when a prop changes" pattern, during render, so
+ * there is no frame showing the old value). It waits out an in-flight toggle.
+ *
+ * Status of the stream half: the API does not emit `link.created` /
+ * `link.updated` yet (`DashboardListenerService` only turns payment postings into
+ * events). The client handling is tested against the contract shape but is not
+ * proven end to end; the refresh path (new props) is what works today.
  */
-export function LinkStatusControl({ link }: { link: LinkStatusSource }) {
+export function LinkStatusControl({ link: rendered, asOf }: { link: LinkStatusSource; asOf?: string | undefined }) {
+  // The server's latest word on this link: what the page rendered, or a newer one from the stream.
+  const link = useLiveLink(rendered, asOf)
   const [confirmed, setConfirmed] = useState(link)
+  const [syncedFrom, setSyncedFrom] = useState(link)
   const [status, setOptimisticStatus] = useOptimistic(confirmed.status)
   const [isPending, startTransition] = useTransition()
   const [failure, setFailure] = useState<{ message: string; needsSignIn: boolean } | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const failureId = useId()
+
+  // A newer server answer — a refresh, or a `link.updated` event once the API
+  // emits them — becomes the confirmed state. Not while this switch has a request in
+  // flight: that request's own response is about to say what the server now has.
+  if (link !== syncedFrom) {
+    setSyncedFrom(link)
+    if (!isPending) setConfirmed(link)
+  }
 
   const shown = displayStatus({ ...confirmed, status })
 

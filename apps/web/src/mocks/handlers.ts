@@ -529,9 +529,38 @@ export const handlers = [
     }
     return respond('DashboardStats', computeDashboardStats())
   }),
-  // API.dashboard.stream is Server-Sent Events, not a JSON response body —
-  // MSW's http handlers do not model SSE. Left for F7, which wires the SSE
-  // client and needs a streaming mock, not a `respond()`-shaped one.
+  // API.dashboard.stream is Server-Sent Events, not a JSON response body, so
+  // it cannot go through `respond()`. This answers like the real endpoint
+  // does up to the first byte — `unauthenticated` as an ordinary `ApiError`
+  // for a missing/revoked cookie, otherwise `text/event-stream` — then sends
+  // one contract-shaped `heartbeat` and holds the connection open until the
+  // client goes away, so a mocked dashboard shows `Live` rather than retrying
+  // a 404 forever. It never emits a payment: MSW runs per page, so a payment
+  // made in another tab cannot reach this one's worker. Tests drive the live
+  // dashboard with a fake `EventSource` instead (see `dashboard-stream.test.ts`).
+  http.get(API.dashboard.stream, ({ request }) => {
+    const cookie = readSessionCookie(request)
+    if (cookie === null || cookie === REVOKED_SESSION_TOKEN) {
+      return errorResponse('unauthenticated', 'Your session has expired. Please sign in again.')
+    }
+    const encoder = new TextEncoder()
+    const heartbeat = { type: 'heartbeat', at: new Date().toISOString() }
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(`id: 1\nevent: heartbeat\ndata: ${JSON.stringify(heartbeat)}\n\n`))
+        request.signal.addEventListener('abort', () => {
+          try {
+            controller.close()
+          } catch {
+            // already closed
+          }
+        })
+      },
+    })
+    return new HttpResponse(body, {
+      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform' },
+    })
+  }),
 
   // ---- wallet (Phase 2) -----------------------------------------------------
   http.get(API.wallet.me, () => respond('Wallet', walletFixture())),
