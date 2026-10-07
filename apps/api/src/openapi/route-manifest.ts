@@ -16,10 +16,6 @@ import { API, IDEMPOTENCY_HEADER, SSE_HEARTBEAT_MS, type SchemaName } from '@kob
  *    test, and so does a new feature module whose controller nobody put
  *    here, because nothing in that test is a hand-maintained list of
  *    controllers.
- *
- * `packages/contracts`' `API` object also names `dashboard.stats`, which no
- * controller mounts yet — it is deliberately absent here and the test above
- * is what will demand it the day it gains one.
  */
 
 export type HttpMethod = 'get' | 'post' | 'patch' | 'delete'
@@ -241,6 +237,19 @@ export const ROUTES: readonly RouteDef[] = [
     idempotencyKey: true,
     requestBody: { schema: 'VerifyCheckoutRequest', description: 'The payment reference to verify.' },
     responses: [{ status: 200, schema: 'VerifyCheckoutResponse', description: 'The completed (or declined) payment.' }],
+  },
+  {
+    method: 'get',
+    path: API.dashboard.stats,
+    operationId: 'getDashboardStats',
+    summary: "The signed-in merchant's dashboard stat strip.",
+    description:
+      'Derived from the ledger on every call: `totalCollectedKobo`/`paymentCount` are the sum/count of the ' +
+      "merchant's successful `link_payment` postings, and `activeLinks` counts links that resolve to `payable` " +
+      'at `asOf` (not rows with `status = active`). Read-only; no `Idempotency-Key`.',
+    tags: ['Dashboard'],
+    auth: 'merchant',
+    responses: [{ status: 200, schema: 'DashboardStats', description: 'The stat strip as of `asOf`.' }],
   },
   {
     method: 'get',

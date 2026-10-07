@@ -68,7 +68,7 @@ edits `packages/contracts` directly.
 | B7 | OpenAPI document generated from the Zod schemas | B5 | Spec validates; `packages/contracts` and the spec cannot disagree | done |
 | B8 | **Phase 2** — wallet accounts, balance derivation, P2P transfer, QR payload | B5 | Transfer is atomic; insufficient funds rejected; balance = sum of entries | done — QR payload is a pure encoder with no route yet, since `packages/contracts` has no QR endpoint; the paying side needs none (transfer already takes the two fields a scanned payload decodes to) |
 
-| B9 | `GET /api/dashboard/stats` — `DashboardStats` for the signed-in merchant, derived from ledger entries | B5 | Integration test: totals equal the sum of the merchant's ledger postings; another merchant's postings are excluded; signed-out is 401; the route is in the OpenAPI manifest | todo |
+| B9 | `GET /api/dashboard/stats` — `DashboardStats` for the signed-in merchant, derived from ledger entries | B5 | Integration test: totals equal the sum of the merchant's ledger postings; another merchant's postings are excluded; signed-out is 401; the route is in the OpenAPI manifest | in-review |
 
 **Non-negotiables.** Money is integer kobo. Every movement is a ledger posting —
 no `payments` table with a status column. One `users` table with roles, never a

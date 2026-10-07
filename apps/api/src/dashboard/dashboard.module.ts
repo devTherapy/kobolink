@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common'
 import { AuthModule } from '../auth/auth.module.js'
 import { DashboardListenerService } from './dashboard-listener.service.js'
+import { DashboardStatsController } from './dashboard-stats.controller.js'
+import { DashboardStatsService } from './dashboard-stats.service.js'
 import { DashboardStreamController } from './dashboard-stream.controller.js'
 import { DashboardStreamService } from './dashboard-stream.service.js'
 
 /**
- * PLAN.md's B6 row. Imports `AuthModule` for `SessionGuard`/`MerchantGuard`,
+ * PLAN.md's B6 row (the stream) and B9 row (`GET /api/dashboard/stats`). Imports `AuthModule` for `SessionGuard`/`MerchantGuard`,
  * same convention as `LinksModule`/`PaymentsModule`. `DbModule` needs no
  * import — it is `@Global` (`db.module.ts`'s own doc comment) — so
  * `DashboardListenerService` injects `DbService` the same way every other
@@ -22,7 +24,7 @@ import { DashboardStreamService } from './dashboard-stream.service.js'
  */
 @Module({
   imports: [AuthModule],
-  controllers: [DashboardStreamController],
-  providers: [DashboardStreamService, DashboardListenerService],
+  controllers: [DashboardStreamController, DashboardStatsController],
+  providers: [DashboardStreamService, DashboardListenerService, DashboardStatsService],
 })
 export class DashboardModule {}
