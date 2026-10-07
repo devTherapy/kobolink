@@ -208,6 +208,70 @@ describe('PaymentsSection, live, pages loaded with "Show more"', () => {
     await waitFor(() => expect(payers()).toEqual(names(99, [1, 39])))
   })
 
+  describe('when a refresh collapses the table back to the first page', () => {
+    /** The visitor pressed Show more and reached the end: the button is gone, focus sits on the note. */
+    async function reachTheEnd() {
+      server.use(
+        http.get(API.links.payments(':code'), () => HttpResponse.json({ items: range(21, 40), nextCursor: null })),
+      )
+      const view = render(tree(first, 'c-after-20'))
+      open()
+      await userEvent.click(showMore()!)
+      await waitFor(() => expect(payers()).toEqual(names([1, 40])))
+      const note = screen.getByRole('status', { name: '' })
+      expect(note).toHaveTextContent('20 more payments loaded. Showing 40.')
+      expect(note).toHaveFocus()
+      return { ...view, note }
+    }
+
+    it('announces the collapse in the same status region, politely', async () => {
+      const { rerender, note } = await reachTheEnd()
+      rerender(tree(refreshedFirst, 'c-after-19'))
+
+      expect(payers()).toEqual(names(99, [1, 19]))
+      expect(note).toHaveTextContent('Showing the first page of payments.')
+      expect(note).toHaveAttribute('role', 'status')
+    })
+
+    it('keeps focus where it was: the note stays visible, so the browser has nothing to drop', async () => {
+      const { rerender, note } = await reachTheEnd()
+      rerender(tree(refreshedFirst, 'c-after-19'))
+
+      expect(note).toBeVisible()
+      // An empty note is `empty:hidden`; a focused element that becomes display:none loses focus to <body>.
+      expect(note).not.toBeEmptyDOMElement()
+      expect(note).toHaveFocus()
+    })
+
+    it('does not take focus from a visitor who had moved on', async () => {
+      const { rerender, note } = await reachTheEnd()
+      const elsewhere = document.createElement('button')
+      document.body.append(elsewhere)
+      elsewhere.focus()
+
+      rerender(tree(refreshedFirst, 'c-after-19'))
+      expect(note).toHaveTextContent('Showing the first page of payments.')
+      expect(elsewhere).toHaveFocus()
+      elsewhere.remove()
+    })
+
+    it('says nothing when nothing had been loaded beyond the first page', () => {
+      const { rerender } = render(tree(first, 'c-after-20'))
+      open()
+      rerender(tree(refreshedFirst, 'c-after-19'))
+      expect(screen.queryByText(/showing the first page/i)).toBeNull()
+    })
+
+    it('a later "Show more" replaces the collapse note with the usual count', async () => {
+      serveKeysetPages()
+      const { rerender } = await reachTheEnd()
+      rerender(tree(refreshedFirst, 'c-after-19'))
+      await userEvent.click(showMore()!)
+      await screen.findByText('20 more payments loaded. Showing 40.')
+      expect(screen.queryByText(/showing the first page/i)).toBeNull()
+    })
+  })
+
   it('a request already in flight when the first page changes is discarded, not appended after a gap', async () => {
     let release: () => void = () => undefined
     serveKeysetPages(

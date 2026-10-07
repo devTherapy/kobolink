@@ -55,6 +55,12 @@ const NOTHING_LOADED: LoadedPages = { anchor: '', payments: [], cursor: undefine
  * `<body>` — so focus moves to that same status line, which sits where the
  * button was. (A middle page leaves the button, and focus, in place.)
  *
+ * When a refresh moves the first page and the pages loaded after it are dropped (below), the
+ * table is shorter than the visitor left it. The same status line says so — "Showing the first
+ * page of payments." — until they press Show more again. It is also what keeps focus: after the
+ * last page the note holds focus, and an *empty* note is hidden, which would drop focus to
+ * `<body>`; a note that now says something stays put. Focus is never moved to it from elsewhere.
+ *
  * A failure that signing in would fix (`unauthenticated`) offers a link to
  * `/login?next=` this page instead of a retry that can never succeed.
  *
@@ -94,10 +100,14 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
   // A counter that is new on every accepted load: the focus effect keys on it. The note's running total
   // is derived at render, so it stays true when a live payment changes the list.
   const [loadCount, setLoadCount] = useState(0)
+  // The pages this component fetched were dropped because the first page moved under them (see `anchor`).
+  const collapsed = loaded !== NOTHING_LOADED && loaded.anchor !== anchor
   const loadedNote =
-    older.lastAdded === null
-      ? ''
-      : `${older.lastAdded} more payment${older.lastAdded === 1 ? '' : 's'} loaded. Showing ${payments.length}.`
+    older.lastAdded !== null
+      ? `${older.lastAdded} more payment${older.lastAdded === 1 ? '' : 's'} loaded. Showing ${payments.length}.`
+      : collapsed
+        ? 'Showing the first page of payments.'
+        : ''
   const noteRef = useRef<HTMLParagraphElement>(null)
 
   // The latest list and anchor, for a request that resolves later: it must be judged against the page

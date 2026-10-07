@@ -210,8 +210,14 @@ export const client = {
     // this PR — see the header's server-rendered session, and
     // `LogoutButton`'s plain `client.auth.logout()`) would simply omit
     // `init` and rely on the browser's real cookie jar instead.
-    me: (init?: { headers?: HeadersInit }) =>
-      request<MeResponse>(MeResponseSchema, API.auth.me, { ...(init?.headers ? { headers: init.headers } : {}) }),
+    // `init?.cache`: the live dashboard asks "who am I?" to learn why its stream
+    // failed (`probeMerchantSession`), and a cached answer would hide a session
+    // that has since ended.
+    me: (init?: { headers?: HeadersInit; cache?: RequestCache }) =>
+      request<MeResponse>(MeResponseSchema, API.auth.me, {
+        ...(init?.headers ? { headers: init.headers } : {}),
+        ...(init?.cache ? { cache: init.cache } : {}),
+      }),
     logout: (init?: { headers?: HeadersInit }) =>
       request<void>(VoidSchema, API.auth.logout, {
         method: 'POST',
