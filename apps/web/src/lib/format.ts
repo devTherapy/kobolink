@@ -17,3 +17,20 @@ export function formatShortDate(iso: string): string {
     timeZone: 'Africa/Lagos',
   }).format(new Date(iso))
 }
+
+/**
+ * "14 Jun 2026, 19:20" in Lagos time — for a payments log, where the time of
+ * day is what lets a merchant match a row to a customer's "I just paid".
+ * `formatShortDate` stays date-only for tables that are not a log.
+ */
+export function formatDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-NG', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Africa/Lagos',
+  }).format(new Date(iso))
+}
