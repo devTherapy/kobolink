@@ -68,6 +68,8 @@ edits `packages/contracts` directly.
 | B7 | OpenAPI document generated from the Zod schemas | B5 | Spec validates; `packages/contracts` and the spec cannot disagree | done |
 | B8 | **Phase 2** — wallet accounts, balance derivation, P2P transfer, QR payload | B5 | Transfer is atomic; insufficient funds rejected; balance = sum of entries | done — QR payload is a pure encoder with no route yet, since `packages/contracts` has no QR endpoint; the paying side needs none (transfer already takes the two fields a scanned payload decodes to) |
 
+| B9 | `GET /api/dashboard/stats` — `DashboardStats` for the signed-in merchant, derived from ledger entries | B5 | Integration test: totals equal the sum of the merchant's ledger postings; another merchant's postings are excluded; signed-out is 401; the route is in the OpenAPI manifest | todo |
+
 **Non-negotiables.** Money is integer kobo. Every movement is a ledger posting —
 no `payments` table with a status column. One `users` table with roles, never a
 `merchants` table. Clients never write ledger rows.
@@ -81,8 +83,8 @@ no `payments` table with a status column. One `users` table with roles, never a
 | F0 | Next.js app, design tokens, MSW harness, RTL setup | X1 | A component test renders against a mocked endpoint with no backend running | done |
 | F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | done |
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | done |
-| F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | todo |
-| F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | todo |
+| F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | done — verified against MSW only; `GET /api/dashboard/stats` has no backend yet (B9). 375px shows only the Link column without scrolling (see PR-LOG Follow-ups); the canvas is not in the repo |
+| F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | in-progress |
 | F5 | Link detail: QR, copy, status toggle with optimistic UI, payments table | F3 | Toggle rolls back visibly when the request fails | todo |
 | F6 | Public checkout `/l/[code]` — **server component**, `generateMetadata`, all non-payable states | F0 | The rendered HTML contains the OG title before any JS runs | done |
 | F7 | SSE client → live dashboard | F3 | A payment in another tab moves the numbers without a reload; the stream survives a network blip | todo |
@@ -100,8 +102,8 @@ static files. No component ships with half its states.
 | ID | Feature | Depends | Done when | Status |
 |---|---|---|---|---|
 | M0 | Scaffold both apps; generate Swift + Kotlin models from the OpenAPI document; API client | B7 | A model change in contracts regenerates and breaks the build if incompatible | done — Android half only (Kotlin models via openapi-generator, Retrofit client), verified the acceptance bar with a real contract-field rename that broke `compileDebugKotlin`; iOS deferred, no Xcode available in this environment |
-| M1 | Deep-link wiring: Associated Domains + `autoVerify` intent filter, URL parsing, routing | M0 F8 | Android: `adb shell pm get-app-links com.folusayo.kobolink` reports verified on the emulator | todo |
-| M2 | Login | M0 B2 | Token stored in Keychain / EncryptedSharedPreferences, never in plain storage | todo |
+| M1 | Deep-link wiring: Associated Domains + `autoVerify` intent filter, URL parsing, routing | M0 F8 | Android: `adb shell pm get-app-links com.folusayo.kobolink` reports verified on the emulator | done — Android half only. Code and unit tests merged; the adb verification needs an emulator and the hosted assetlinks.json, so it is deferred to X3. iOS deferred (no Xcode) |
+| M2 | Login | M0 B2 | Token stored in Keychain / EncryptedSharedPreferences, never in plain storage | in-review (PR #37, Android; fix round after reviewer BLOCK) |
 | M3 | Checkout screen — the deep-link landing | M1 B4 | Tapping a link opens the app on the right link; Dark Mode and large Dynamic Type both hold | todo |
 | M4 | Result states: paid, failed, expired, disabled, already paid | M3 B5 | Every failure names what went wrong and whether money moved | todo |
 | M5 | **Phase 2** — wallet home, send money, scan QR | B8 | — | todo |
@@ -126,7 +128,7 @@ They are deliberately not the same design and neither is the web page.
 | X0 | Monorepo (npm workspaces), five CI jobs, hooks, agent definitions | — | A failing test fails a PR | done |
 | X1 | `packages/contracts` — domain types, Zod schemas, money/code/status | X0 | Both apps import it; changing a shape breaks the other side's typecheck | done — verified after B2/F6: renaming `PaymentLink.paymentCount` fails `apps/web` typecheck, renaming `LoginRequest.password` fails `apps/api` typecheck |
 | X2 | Integration: wire web to the real API, mobile to the real API | Wave 2 | MSW handlers deleted from the e2e path; the real journey passes | todo |
-| X3 | Hosting, `pay.folusayo.com`, association smoke test | X2 | `scripts/smoke-associations.sh` green against the real domain, including Apple's CDN copy | todo |
+| X3 | Hosting, `pay.folusayo.com`, association smoke test | X2 | `scripts/smoke-associations.sh` green against the real domain, including Apple's CDN copy; also run M1's `adb shell pm get-app-links` check once hosted | todo |
 | X4 | Release: tag, changelog from the PR trail | X3 | — | todo |
 
 ---

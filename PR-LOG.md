@@ -23,6 +23,11 @@ here. Read top to bottom to follow how the implementation was built.
 | 16 | B6 | SSE dashboard stream fed by Postgres LISTEN/NOTIFY | https://github.com/devTherapy/kobolink/pull/28 | 2026-09-12 |
 | 17 | M0 | Android scaffold, Kotlin models from OpenAPI, API client | https://github.com/devTherapy/kobolink/pull/32 | 2026-09-12 |
 | 18 | B8 | Phase 2 — wallet accounts, balance derivation, P2P transfer, QR payload | https://github.com/devTherapy/kobolink/pull/31 | 2026-09-12 |
+| 19 | fix (B7) | Document GET /api/stream/dashboard; derive the manifest check from AppModule | https://github.com/devTherapy/kobolink/pull/38 | 2026-10-07 |
+| 20 | fix (a11y) | Restore visible focus-visible ring on PayForm amount input and Table row button | https://github.com/devTherapy/kobolink/pull/39 | 2026-10-07 |
+| 21 | fix (F2) | Login/register no longer 500 on a repeated ?next= key | https://github.com/devTherapy/kobolink/pull/41 | 2026-10-07 |
+| 22 | M1 | Android App Links intent filter, URL parsing, routing (Android half) | https://github.com/devTherapy/kobolink/pull/36 | 2026-10-07 |
+| 23 | F3 | Dashboard stat strip and links table | https://github.com/devTherapy/kobolink/pull/35 | 2026-10-07 |
 
 ---
 
@@ -38,5 +43,12 @@ worth a PR yet. Nothing is silently dropped.
 
 | Found in | What | Status |
 |---|---|---|
-| B7 review, B6 merge | `GET /api/stream/dashboard` (added by B6) is absent from B7's OpenAPI route manifest — the checked-in spec under-describes the API | In progress in a separately-started session on `fix/B7-openapi-dashboard-route` |
-| F2 review round 2 | `apps/web`'s login/register pages crash with a 500 on a repeated `?next=` query key (`sameOriginPath` assumes `string`, Next.js can hand it `string[]`) | Dispatching as `fix/f2-next-param-array` |
+| #38 review | `mountedControllers` (apps/api/src/openapi/mounted-routes.ts) dedupes modules by class, so the same module class registered both plainly and via `forRoot`/`register` can hide a controller from the manifest check. Not an issue with today's AppModule | Open, low |
+| #38 review | The generated Kotlin client now has `DashboardApi.streamDashboard(): Response<DashboardEvent>`, which cannot work against an endless SSE stream; only the OpenAPI description warns. Also the description says heartbeat "every 15000ms" but `DASHBOARD_HEARTBEAT_MS` can override it | Open, low; revisit when mobile consumes the stream (M5) |
+| #41 PR body | `/l/[code]` has not been audited for `string[]` query values (same class of crash as the F2 `?next=` bug) | Open; small `fix/` row for the frontend agent |
+| #41 review | No test covers a signed-in visitor hitting `/login?next=/a&next=/b` (expected: redirect to /dashboard); `next-path.ts` comment misstates Next's `searchParams` type | Open, test/doc only |
+| F3 review (#35) | `GET /api/dashboard/stats` has no backend controller, so against the real API every merchant sees the dashboard error screen | Scheduled as PLAN row B9 (before X2) |
+| F3 review (#35) | `lib/dashboard.ts` turns every `ApiRequestError` (incl. 401 and a customer-role 403) into `DashboardUnavailableError`, so the visitor sees "couldn't reach Kobolink's servers" with a retry that cannot succeed; schema drift is reported the same way | Open; `fix/F3-dashboard-error-classes`, frontend agent, reproduce-first |
+| F3 review (#35) | At 375px only the Link column is visible (fixed `max-w-[22rem]`); at 768px 30px of horizontal scroll and the date wraps. Canvas not in repo to compare. Also: `EmptyState as="h3"` skips h2, 7 `role="status"` regions in loading.tsx, `role="alert"` plus focus move in error.tsx, weak assertions in page.test.tsx and LinksTable.test.tsx | Open, low; fold into a future dashboard polish PR |
+| M1 review (#36) | Android deep-link defects confirmed on the reviewer's repro: tapping an already-handled link (or one that failed offline) does nothing; a manual lookup can race a deep-link lookup; the Kotlin parser disagrees with contracts' `parseLinkCode` on `%48`-style encoded characters and on a query string containing a space; `parseLinkCode` accepts any host for URIs delivered by explicit intent; the manifest test is string-matching and `MainActivity.onCreate` rotation regression has no test | Must be fixed in M3 (brief the agent with this list; the M3 screen replaces LinkLookupScreen) |
+| M1 review (#36) | M1's Done-when (`adb shell pm get-app-links com.folusayo.kobolink` reports verified) needs an emulator and hosted assetlinks.json | Deferred to X3: run it once `pay` is hosted and `ANDROID_SHA256_FINGERPRINTS` is set |
