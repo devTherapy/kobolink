@@ -1,29 +1,40 @@
-import { API, IDEMPOTENCY_HEADER, type SchemaName } from '@kobolink/contracts'
+import { API, IDEMPOTENCY_HEADER, SSE_HEARTBEAT_MS, type SchemaName } from '@kobolink/contracts'
 
 /**
- * Every HTTP route this API actually mounts, as of this feature (B7). Two
- * things keep this from drifting on its own:
+ * Every HTTP route this API actually mounts. Two things keep this from
+ * drifting on its own:
  *
  * 1. Every `path` below is built from `API.*` (`@kobolink/contracts`), never
  *    hand-typed — a path the orchestrator changes in `routes.ts` changes
  *    here too, automatically.
- * 2. `route-manifest.spec.ts` reflects the real Nest route metadata off
- *    every controller `AppModule` mounts and asserts it matches this list
- *    exactly, in both directions — a route added to, removed from, or
- *    reshaped in a controller without a matching edit here fails that test.
+ * 2. `route-manifest.spec.ts` walks `AppModule`'s real `@Module({ imports })`
+ *    graph for every controller it mounts (`mountedControllers`), reflects
+ *    the real Nest route and guard metadata off each one (`mountedRoutes`)
+ *    and asserts it matches this list exactly, in both directions — method,
+ *    path *and* `auth`. A route added to, removed from, reshaped or
+ *    re-guarded in a controller without a matching edit here fails that
+ *    test, and so does a new feature module whose controller nobody put
+ *    here, because nothing in that test is a hand-maintained list of
+ *    controllers.
  *
- * `packages/contracts`' own `API` object also names `dashboard.*` paths —
- * B6's own PR left `API.dashboard.stats` unmounted and
- * `API.dashboard.stream` (Server-Sent Events, not a JSON request/response
- * this document's shape describes) out of this manifest; neither is this
- * PR's to add. B8 (`wallet.*`) is wired up below — every route
- * `WalletController` mounts.
+ * `packages/contracts`' `API` object also names `dashboard.stats`, which no
+ * controller mounts yet — it is deliberately absent here and the test above
+ * is what will demand it the day it gains one.
  */
 
 export type HttpMethod = 'get' | 'post' | 'patch' | 'delete'
 
-/** `'none'` needs no credential; `'session'` accepts the web cookie or a mobile bearer token — see `SessionGuard`. */
-export type AuthMode = 'none' | 'session'
+/**
+ * `'none'` needs no credential. `'session'` accepts the web cookie or a
+ * mobile bearer token (`SessionGuard`). `'merchant'` is `'session'` plus the
+ * merchant role (`SessionGuard` then `MerchantGuard`): an authenticated
+ * customer is `forbidden`, not `unauthenticated`. The OpenAPI security
+ * requirement is the same for the last two — role is not a credential —
+ * so the document says which in the operation's `description` instead.
+ * `mounted-routes.ts` derives this same value from the real `@UseGuards`
+ * metadata, which is how the spec checks it.
+ */
+export type AuthMode = 'none' | 'session' | 'merchant'
 
 export interface PathParamDef {
   readonly name: string
@@ -51,6 +62,13 @@ export interface ResponseDef {
   readonly status: number
   readonly schema: SchemaName | InlineSchema | null
   readonly description: string
+  /**
+   * Defaults to `application/json`. `text/event-stream` is Server-Sent
+   * Events: the response never ends, and `schema` then describes the JSON
+   * in each frame's `data:` line rather than one body — see
+   * `streamDashboard` below and `packages/contracts/src/dashboard.ts`.
+   */
+  readonly mediaType?: 'application/json' | 'text/event-stream'
 }
 
 export interface RouteDef {
@@ -59,6 +77,8 @@ export interface RouteDef {
   readonly path: string
   readonly operationId: string
   readonly summary: string
+  /** Longer, Markdown-capable prose for what `summary`'s one line cannot carry. */
+  readonly description?: string
   readonly tags: readonly string[]
   readonly auth: AuthMode
   readonly pathParams?: readonly PathParamDef[]
@@ -144,7 +164,7 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'createLink',
     summary: 'Create a payment link.',
     tags: ['Links'],
-    auth: 'session',
+    auth: 'merchant',
     requestBody: { schema: 'CreateLinkRequest', description: 'The new link.' },
     responses: [{ status: 201, schema: 'PaymentLink', description: 'The created link.' }],
   },
@@ -154,7 +174,7 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'listLinks',
     summary: "The signed-in merchant's links.",
     tags: ['Links'],
-    auth: 'session',
+    auth: 'merchant',
     query: 'PageQuery',
     responses: [{ status: 200, schema: 'LinkListResponse', description: 'One page of links.' }],
   },
@@ -164,7 +184,7 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'getLink',
     summary: "The signed-in merchant's own link, by code.",
     tags: ['Links'],
-    auth: 'session',
+    auth: 'merchant',
     pathParams: [CODE_PARAM],
     responses: [{ status: 200, schema: 'PaymentLink', description: 'The link.' }],
   },
@@ -174,7 +194,7 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'updateLinkStatus',
     summary: 'Enable or disable a link.',
     tags: ['Links'],
-    auth: 'session',
+    auth: 'merchant',
     pathParams: [CODE_PARAM],
     requestBody: { schema: 'UpdateLinkStatusRequest', description: 'The new status.' },
     responses: [{ status: 200, schema: 'PaymentLink', description: 'The updated link.' }],
@@ -185,7 +205,7 @@ export const ROUTES: readonly RouteDef[] = [
     operationId: 'listLinkPayments',
     summary: 'Payments made against one link.',
     tags: ['Links'],
-    auth: 'session',
+    auth: 'merchant',
     pathParams: [CODE_PARAM],
     query: 'PageQuery',
     responses: [{ status: 200, schema: 'PaymentListResponse', description: 'One page of payments.' }],
@@ -221,6 +241,32 @@ export const ROUTES: readonly RouteDef[] = [
     idempotencyKey: true,
     requestBody: { schema: 'VerifyCheckoutRequest', description: 'The payment reference to verify.' },
     responses: [{ status: 200, schema: 'VerifyCheckoutResponse', description: 'The completed (or declined) payment.' }],
+  },
+  {
+    method: 'get',
+    path: API.dashboard.stream,
+    operationId: 'streamDashboard',
+    summary: "Live events for the signed-in merchant's dashboard, as Server-Sent Events.",
+    description:
+      'The response is `text/event-stream` and stays open. Each frame is `id: <n>`, `event: <type>`, ' +
+      '`data: <DashboardEvent as JSON>`, then a blank line; `event:` repeats `data.type`, so a client can ' +
+      'validate every frame — heartbeats included — against `DashboardEvent` alone. A `heartbeat` frame is ' +
+      `sent every ${SSE_HEARTBEAT_MS}ms so an idle stream survives proxies; clients ignore it. \`id:\` is a ` +
+      'monotonic cursor; the server does not yet replay past events for a `Last-Event-ID` header, so a ' +
+      'reconnecting client starts fresh. Authentication and role are checked before the first byte, so a ' +
+      'refused request is an ordinary `ApiError` response, not a stream. Not callable through a generated ' +
+      'JSON client (the Kotlin/Swift `streamDashboard` method would try to parse the whole stream as one ' +
+      'object) — use an SSE client such as `EventSource`.',
+    tags: ['Dashboard'],
+    auth: 'merchant',
+    responses: [
+      {
+        status: 200,
+        schema: 'DashboardEvent',
+        mediaType: 'text/event-stream',
+        description: 'An open event stream. The schema is the JSON in each frame’s `data:` line.',
+      },
+    ],
   },
   {
     method: 'get',

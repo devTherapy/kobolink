@@ -1,4 +1,4 @@
-import { SCHEMAS, type SchemaName } from '@kobolink/contracts'
+import { API, SCHEMAS, type SchemaName } from '@kobolink/contracts'
 import { Validator } from '@seriousme/openapi-schema-validator'
 import { describe, expect, it } from 'vitest'
 import { buildOpenApiDocument } from './build-openapi-document.js'
@@ -45,9 +45,9 @@ describe('buildOpenApiDocument', () => {
     }
   })
 
-  it('marks every session-guarded route with both accepted credentials, and no others', () => {
+  it('marks every guarded route (session or merchant) with both accepted credentials, and no others', () => {
     const document = buildOpenApiDocument()
-    const guarded = ROUTES.filter((route) => route.auth === 'session')
+    const guarded = ROUTES.filter((route) => route.auth !== 'none')
     const open = ROUTES.filter((route) => route.auth === 'none')
 
     for (const route of guarded) {
@@ -58,6 +58,36 @@ describe('buildOpenApiDocument', () => {
       const operation = document.paths[route.path]![route.method] as { security?: unknown }
       expect(operation.security, `${route.method} ${route.path}`).toBeUndefined()
     }
+  })
+
+  it('says in prose which guarded routes also need the merchant role — security alone cannot', () => {
+    const document = buildOpenApiDocument()
+    for (const route of ROUTES) {
+      const operation = document.paths[route.path]![route.method] as { description?: string }
+      if (route.auth === 'merchant') {
+        expect(operation.description, `${route.method} ${route.path}`).toContain('merchant role')
+      } else {
+        expect(operation.description ?? '', `${route.method} ${route.path}`).not.toContain('merchant role')
+      }
+    }
+  })
+
+  it('describes the SSE stream as text/event-stream whose frames are DashboardEvent, not as a JSON body', () => {
+    const document = buildOpenApiDocument()
+    const operation = document.paths[API.dashboard.stream]!.get as {
+      description?: string
+      security?: unknown
+      responses: Record<string, { content?: Record<string, { schema: unknown }> }>
+    }
+
+    expect(operation.responses['200']!.content).toEqual({
+      'text/event-stream': { schema: { $ref: '#/components/schemas/DashboardEvent' } },
+    })
+    expect(operation.responses['200']!.content).not.toHaveProperty('application/json')
+    // The failure path is still ordinary JSON: guards run before the first byte.
+    expect(operation.responses.default!.content).toHaveProperty('application/json')
+    expect(operation.security).toEqual([{ sessionCookie: [] }, { bearerAuth: [] }])
+    expect(operation.description).toContain('Last-Event-ID')
   })
 
   it('building twice from the same contracts produces byte-identical documents (deterministic, not order-dependent)', () => {
