@@ -188,4 +188,29 @@ class WalletHomeTest {
 
         assertEquals(750_000L, home.state.value.wallet!!.balanceKobo)
     }
+
+    @Test
+    fun `a page that arrives after a refresh is dropped, not appended to the new list`() = runTest {
+        val gateway = FakeGateway()
+        gateway.walletResults += Result.success(wallet(1))
+        gateway.pageResults += Result.success(page(entry("p_3", 1), entry("p_2", 1), next = "c1"))
+        val home = home(gateway)
+        home.refresh()
+        advanceUntilIdle()
+
+        gateway.pageGate = kotlinx.coroutines.CompletableDeferred()
+        gateway.pageResults += Result.success(page(entry("p_1", 1), next = "stale-cursor")) // load more, held open
+        home.loadMore()
+        gateway.walletResults += Result.success(wallet(2))
+        gateway.pageResults += Result.success(page(entry("p_9", 1), entry("p_3", 1), next = "c9")) // the refresh
+        home.refresh()
+        advanceUntilIdle()
+        gateway.pageGate!!.complete(Unit)
+        advanceUntilIdle()
+
+        val state = home.state.value
+        assertEquals(listOf("p_9", "p_3"), state.items.map { it.postingId })
+        assertEquals("c9", state.nextCursor)
+        assertFalse(state.loadingMore)
+    }
 }

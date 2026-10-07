@@ -64,6 +64,9 @@ internal class FakeGateway : WalletGateway {
     /** When set, [wallet] suspends until this completes, so a read can be "in flight" while something else happens. */
     var readGate: CompletableDeferred<Unit>? = null
 
+    /** When set, a page request WITH a cursor (load more) suspends until this completes, after taking its stub. */
+    var pageGate: CompletableDeferred<Unit>? = null
+
     var walletCalls = 0
     val pageCursors = mutableListOf<String?>()
 
@@ -77,7 +80,9 @@ internal class FakeGateway : WalletGateway {
 
     override suspend fun transactions(cursor: String?): Result<WalletTransactionListResponse> {
         pageCursors += cursor
-        return pageResults.removeFirstOrNull() ?: Result.failure(WalletReadException("no page stub"))
+        val result = pageResults.removeFirstOrNull() ?: Result.failure(WalletReadException("no page stub"))
+        if (cursor != null) pageGate?.await()
+        return result
     }
 
     override suspend fun transfer(idempotencyKey: String, toPhone: String, amountKobo: Long, note: String?): TransferResult {

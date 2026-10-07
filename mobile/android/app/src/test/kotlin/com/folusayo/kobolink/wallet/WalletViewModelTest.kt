@@ -35,7 +35,7 @@ class WalletViewModelTest {
     }
 
     private fun viewModel(store: PendingAttemptStore = InMemoryPendingAttemptStore()) =
-        WalletViewModel(gateway, newKey = { "key-${++keys}-0123456789" }, pending = store)
+        WalletViewModel(gateway, newKey = { "key-${++keys}-0123456789" }, pending = store).also { it.bindUser("u1") }
 
     private fun WalletViewModel.sendGoodForm() {
         openSend()
@@ -93,7 +93,7 @@ class WalletViewModelTest {
         vm.openSend()
 
         assertEquals(SendPhase.Editing, vm.send.state.value.phase)
-        assertNull(store.load())
+        assertNull(store.load("u1"))
     }
 
     @Test
@@ -117,7 +117,7 @@ class WalletViewModelTest {
         gateway.transferResults += TransferResult.Sent(transferResponse("p_1", 250_000, 750_000))
         after.send.tryAgain()
         assertEquals("replayed under the ORIGINAL key", attempt.key, gateway.transferCalls.last().key)
-        assertNull("settled, nothing left to resolve", store.load())
+        assertNull("settled, nothing left to resolve", store.load("u1"))
     }
 
     @Test
@@ -126,14 +126,14 @@ class WalletViewModelTest {
         val vm = viewModel(store)
         gateway.transferResults += TransferResult.Failed(TransferFailure(TransferFailureKind.RecipientNotFound, MoneyMoved.No))
         vm.sendGoodForm()
-        assertNull(store.load())
+        assertNull(store.load("u1"))
 
         gateway.transferResults += TransferResult.Sent(transferResponse("p_1", 250_000, 750_000))
         vm.send.editAgain()
         vm.send.submit()
         vm.send.confirm()
         assertTrue(vm.send.state.value.phase is SendPhase.Sent)
-        assertNull(store.load())
+        assertNull(store.load("u1"))
     }
 
     @Test
@@ -145,20 +145,46 @@ class WalletViewModelTest {
         vm.sendGoodForm()
 
         assertTrue(vm.send.state.value.phase is SendPhase.Sending)
-        assertEquals("key-1-0123456789", store.load()?.key)
+        assertEquals("key-1-0123456789", store.load("u1")?.key)
     }
 
     @Test
-    fun `sign-out forgets the unresolved payment`() {
+    fun `sign-out keeps the unresolved payment on disk for that user, and shows it to nobody else`() {
         gateway.transferResults += unknownOutcome
         val store = InMemoryPendingAttemptStore()
         val vm = viewModel(store)
         vm.sendGoodForm()
+        val attempt = vm.pendingAttempt.value!!
 
         vm.onSignedOut()
 
-        assertNull(store.load())
+        assertEquals("still on disk", attempt, store.load("u1"))
+        assertNull("not in memory, not on screen", vm.pendingAttempt.value)
         assertEquals(SendPhase.Editing, vm.send.state.value.phase)
+
+        vm.bindUser("u2")
+        assertNull(vm.pendingAttempt.value)
+
+        vm.bindUser("u1")
+        assertEquals(attempt, vm.pendingAttempt.value)
+    }
+
+    @Test
+    fun `a sign-in after a cold start restores the payment even though sign-out never ran`() {
+        gateway.transferResults += unknownOutcome
+        val store = InMemoryPendingAttemptStore()
+        viewModel(store).sendGoodForm()
+
+        // Force-stop / swipe from recents / reboot: a fresh process, a fresh ViewModel, only the disk survives.
+        val reborn = WalletViewModel(gateway, newKey = { "key-${++keys}-0123456789" }, pending = store)
+        assertNull("nothing until a user is bound", reborn.pendingAttempt.value)
+        reborn.bindUser("u1")
+
+        assertEquals("key-1-0123456789", reborn.pendingAttempt.value?.key)
+        gateway.transferResults += TransferResult.Sent(transferResponse("p_1", 250_000, 750_000))
+        reborn.openSend()
+        reborn.send.tryAgain()
+        assertEquals("the ORIGINAL key", "key-1-0123456789", gateway.transferCalls.last().key)
     }
 
     // ---- the balance after a payment ----

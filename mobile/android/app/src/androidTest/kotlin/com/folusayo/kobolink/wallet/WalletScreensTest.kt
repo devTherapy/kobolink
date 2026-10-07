@@ -6,7 +6,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.folusayo.kobolink.auth.AuthenticatedUser
@@ -131,5 +133,24 @@ class WalletScreensTest {
         }
         compose.onNodeWithText("Send money").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("Scan to pay").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun anUnresolvedPaymentIsFlaggedOnHomeAndSigningOutAsksFirst() {
+        var signedOut = false
+        show {
+            WalletHomeScreen(
+                user = AuthenticatedUser("u_1", "ada@example.com", "Ada"),
+                state = HomeState(loadedOnce = true),
+                pending = attempt, onResolvePending = {},
+                onLoad = {}, onRefresh = {}, onLoadMore = {}, onSend = {}, onScan = {}, onLogout = { signedOut = true },
+            )
+        }
+        compose.onNodeWithText("A payment needs checking").assertIsDisplayed()
+        compose.onNodeWithText("Review payment").assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("Sign out").performClick()
+        compose.onNodeWithText("Stay").assertIsDisplayed()
+        assert(!signedOut) { "signing out must not happen until the person confirms" }
     }
 }

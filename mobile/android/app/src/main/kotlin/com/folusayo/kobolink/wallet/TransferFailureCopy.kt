@@ -58,12 +58,10 @@ fun describeFailure(failure: TransferFailure, attempt: TransferAttempt, balanceK
             "Wait a minute, then try sending $amount to $who again."
         TransferFailureKind.ServerError -> "Kobolink had a problem" to
             "Something went wrong on our side while sending $amount to $who. ${tryAgainHint(failure)}"
-        TransferFailureKind.Offline -> when (failure.moneyMoved) {
-            MoneyMoved.No -> "Couldn't reach Kobolink" to
-                "Your phone couldn't connect, so the request to send $amount to $who never went out. Check your connection and try again."
-            else -> "Lost the connection while sending" to
-                "The connection dropped while sending $amount to $who. ${tryAgainHint(failure)}"
-        }
+        TransferFailureKind.Offline -> "Couldn't confirm the payment" to
+            "The connection failed while sending $amount to $who, so we couldn't confirm what happened. ${tryAgainHint(failure)}"
+        TransferFailureKind.SecureStorageFailed -> "Couldn't prepare the payment safely" to
+            "This phone wouldn't save the payment securely before sending, so $amount to $who was not sent. Try again; if it keeps happening, restart the phone."
         TransferFailureKind.Interrupted -> "This payment didn't finish" to
             "The app closed while sending $amount to $who, so we never saw the result. ${tryAgainHint(failure)}"
         TransferFailureKind.Unreadable -> "Kobolink's reply was unreadable" to

@@ -11,4 +11,5 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="kobolink_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="kobolink_pending_payments.xml" />
 </full-backup-content>

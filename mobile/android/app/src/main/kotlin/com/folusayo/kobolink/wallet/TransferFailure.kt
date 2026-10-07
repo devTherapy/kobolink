@@ -1,9 +1,6 @@
 package com.folusayo.kobolink.wallet
 
 import com.folusayo.kobolink.generated.api.models.ApiError
-import java.net.ConnectException
-import java.net.NoRouteToHostException
-import java.net.UnknownHostException
 
 /**
  * Whether money left the sender's wallet. The question every failed transfer
@@ -11,7 +8,12 @@ import java.net.UnknownHostException
  * not the same news (docs/DESIGN-SPEC.md, PLAN.md M4's bar applied here).
  */
 enum class MoneyMoved {
-    /** The server rejected the request before posting, or it never reached the server. */
+    /**
+     * The server SAID it refused the request before posting: an error reply
+     * with a body we could read (or this app never sent it, see
+     * [TransferFailureKind.SecureStorageFailed]). A transport failure is never
+     * this: "could not connect" does not prove an earlier copy did not arrive.
+     */
     No,
 
     /** The server accepted and posted the transfer. */
@@ -33,6 +35,9 @@ enum class TransferFailureKind {
     Offline,
     Unreadable,
     Interrupted,
+
+    /** The device would not durably record the payment, so it was not sent. Nothing left the phone. */
+    SecureStorageFailed,
 }
 
 /**
@@ -71,7 +76,8 @@ data class TransferFailure(
         get() = kind == TransferFailureKind.Offline ||
             kind == TransferFailureKind.RateLimited ||
             kind == TransferFailureKind.ServerError ||
-            kind == TransferFailureKind.Unreadable
+            kind == TransferFailureKind.Unreadable ||
+            kind == TransferFailureKind.SecureStorageFailed
 }
 
 /**
@@ -80,30 +86,27 @@ data class TransferFailure(
  *
  * [status] is the HTTP status, or null when there was no HTTP response.
  * [error] is the parsed `ApiError` body, when there was one. [cause] is the
- * transport exception, when there was no response.
+ * transport exception, when there was no response (unused: every transport
+ * failure classifies the same way).
  *
- * Money-moved rules, in order:
- * 1. The server said `moneyMoved: false` -> No. (B8 sets it on every
- *    rejection that happens inside the transfer decision.)
- * 2. A transport failure before a connection existed (unknown host, refused,
- *    no route) -> No: the request never left the phone. Any other transport
- *    failure (timeout, reset mid-flight) -> Unknown: the server may have
- *    committed before the reply was lost.
- * 3. 4xx other than 408/409 -> No: the server refused it before posting.
- * 4. Everything else (5xx, 408, 409, an unreadable reply) -> Unknown.
+ * Money-moved rules:
+ * - **No** only on a server answer: an error reply whose body was parsed
+ *   (4xx other than 408/409), or any parsed reply that says
+ *   `moneyMoved: false`. Never an idempotency mismatch: that says the key was
+ *   used before, with other details, so an earlier payment may exist.
+ * - **Unknown** for everything else, including EVERY transport exception.
+ *   Even "unknown host" and "connection refused" are not proof the request
+ *   never left: a client that retries on a fresh connection can have delivered
+ *   the first copy before the exception was thrown. (The wallet client turns
+ *   that retry off, but the classification does not lean on it.)
  */
 fun classifyTransferFailure(status: Int?, error: ApiError?, cause: Throwable?): TransferFailure {
-    if (status == null) {
-        val neverSent = cause is UnknownHostException || cause is ConnectException || cause is NoRouteToHostException
-        return TransferFailure(
-            kind = TransferFailureKind.Offline,
-            moneyMoved = if (neverSent) MoneyMoved.No else MoneyMoved.Unknown,
-        )
-    }
+    if (status == null) return TransferFailure(kind = TransferFailureKind.Offline, moneyMoved = MoneyMoved.Unknown)
 
     val serverSaysNoMoney = error?.moneyMoved == false
-    val rejectedBeforePosting = status in 400..499 && status != 408 && status != 409
-    val moneyMoved = if (serverSaysNoMoney || rejectedBeforePosting) MoneyMoved.No else MoneyMoved.Unknown
+    val rejectedBeforePosting = error != null && status in 400..499 && status != 408 && status != 409
+    val keyAlreadyUsed = error?.code == ApiError.Code.idempotency_mismatch
+    val moneyMoved = if (!keyAlreadyUsed && (serverSaysNoMoney || rejectedBeforePosting)) MoneyMoved.No else MoneyMoved.Unknown
 
     fun failure(kind: TransferFailureKind) = TransferFailure(
         kind = kind,

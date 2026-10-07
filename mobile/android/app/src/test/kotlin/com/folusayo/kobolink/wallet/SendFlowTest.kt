@@ -2,6 +2,7 @@ package com.folusayo.kobolink.wallet
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -23,7 +24,9 @@ class SendFlowTest {
     private class Harness(scope: kotlinx.coroutines.CoroutineScope, val gateway: FakeGateway = FakeGateway()) {
         var keyCounter = 0
         val sent = mutableListOf<String>()
-        val flow = SendFlow(gateway, scope, newKey = { "key-${++keyCounter}-0123456789" }, onSent = { sent += it.transaction.postingId })
+        val store = InMemoryPendingAttemptStore()
+        val flow = SendFlow(gateway, scope, newKey = { "key-${++keyCounter}-0123456789" }, store = store, onSent = { sent += it.transaction.postingId })
+            .also { it.bind("u1") }
         val phase get() = flow.state.value.phase
     }
 
@@ -197,21 +200,26 @@ class SendFlowTest {
     }
 
     @Test
-    fun `offline before sending is a fresh payment on retry - new key, same details`() = runTest {
-        val h = harness()
-        h.gateway.transferResults += TransferResult.Failed(classifyTransferFailure(null, null, java.net.UnknownHostException()))
-        h.gateway.transferResults += success
-        h.flow.start(goodForm)
-        h.flow.submit()
-        h.flow.confirm()
-        advanceUntilIdle()
+    fun `a transport failure of ANY kind is retried under the SAME key - even no connection`() = runTest {
+        // OkHttp can re-send a POST on a fresh connection after the first reached the server, and the
+        // exception it then throws can be a ConnectException. 'Never left the phone' is not provable.
+        for (cause in listOf(java.net.ConnectException("refused"), java.net.UnknownHostException("dns"))) {
+            val h = harness()
+            h.gateway.transferResults += TransferResult.Failed(classifyTransferFailure(null, null, cause))
+            h.gateway.transferResults += success
+            h.flow.start(goodForm)
+            h.flow.submit()
+            h.flow.confirm()
+            advanceUntilIdle()
+            assertEquals(MoneyMoved.Unknown, (h.phase as SendPhase.Failed).failure.moneyMoved)
 
-        h.flow.tryAgain()
-        advanceUntilIdle()
+            h.flow.tryAgain()
+            advanceUntilIdle()
 
-        assertEquals(2, h.gateway.transferCalls.size)
-        assertNotEquals(h.gateway.transferCalls[0].key, h.gateway.transferCalls[1].key)
-        assertEquals(h.gateway.transferCalls[0].copy(key = ""), h.gateway.transferCalls[1].copy(key = ""))
+            assertEquals(2, h.gateway.transferCalls.size)
+            assertEquals("same key, same request after $cause", h.gateway.transferCalls[0], h.gateway.transferCalls[1])
+            assertEquals(1, h.keyCounter)
+        }
     }
 
     @Test
@@ -261,7 +269,7 @@ class SendFlowTest {
     }
 
     @Test
-    fun `a reply that lands after the flow was reset is ignored`() = runTest {
+    fun `a reply that lands after sign-out is ignored`() = runTest {
         val h = harness()
         h.gateway.transferResults += success
         h.gateway.gate = CompletableDeferred()
@@ -270,7 +278,7 @@ class SendFlowTest {
         h.flow.confirm()
         assertTrue(h.phase is SendPhase.Sending)
 
-        h.flow.reset() // sign-out / session expiry while the request is in flight
+        h.flow.bind(null) // sign-out / session expiry while the request is in flight
         h.gateway.gate!!.complete(Unit)
         advanceUntilIdle()
 
@@ -290,5 +298,95 @@ class SendFlowTest {
         val failed = h.phase as SendPhase.Failed
         assertEquals(MoneyMoved.Unknown, failed.failure.moneyMoved)
         assertTrue(failed.failure.retryWithSameRequest)
+    }
+
+    @Test
+    fun `a payment that cannot be written to secure storage is not sent`() = runTest {
+        val h = harness()
+        val broken = object : PendingAttemptStore {
+            override fun load(userId: String): TransferAttempt? = null
+            override fun save(userId: String, attempt: TransferAttempt?) = throw java.io.IOException("keystore invalidated")
+        }
+        val flow = SendFlow(h.gateway, kotlinx.coroutines.CoroutineScope(UnconfinedTestDispatcher(testScheduler)), { "key-0123456789abcdef" }, broken)
+        flow.bind("u1")
+        flow.start(goodForm)
+        flow.submit()
+        flow.confirm()
+        advanceUntilIdle()
+
+        assertTrue("an unrecorded payment could be paid twice, so it must not leave the phone", h.gateway.transferCalls.isEmpty())
+        val failed = flow.state.value.phase as SendPhase.Failed
+        assertEquals(TransferFailureKind.SecureStorageFailed, failed.failure.kind)
+        assertEquals(MoneyMoved.No, failed.failure.moneyMoved)
+    }
+
+    @Test
+    fun `the attempt is on disk BEFORE the request leaves, under the user's id`() = runTest {
+        val h = harness()
+        h.gateway.gate = CompletableDeferred()
+        h.gateway.transferResults += success
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+
+        assertTrue(h.phase is SendPhase.Sending)
+        assertEquals("key-1-0123456789", h.store.load("u1")?.key)
+        assertEquals(null, h.store.load("u2"))
+    }
+
+    @Test
+    fun `a settled payment leaves nothing on disk`() = runTest {
+        val h = harness()
+        h.gateway.transferResults += success
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+        advanceUntilIdle()
+        assertEquals(null, h.store.load("u1"))
+    }
+
+    @Test
+    fun `a first success is not flagged as a replay, a retried one is`() = runTest {
+        val h = harness()
+        h.gateway.transferResults += success
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+        advanceUntilIdle()
+        assertEquals(false, (h.phase as SendPhase.Sent).replayed)
+
+        val h2 = harness()
+        h2.gateway.transferResults += TransferResult.Failed(classifyTransferFailure(500, null, null))
+        h2.gateway.transferResults += success
+        h2.flow.start(goodForm)
+        h2.flow.submit()
+        h2.flow.confirm()
+        advanceUntilIdle()
+        h2.flow.tryAgain()
+        advanceUntilIdle()
+        assertEquals(true, (h2.phase as SendPhase.Sent).replayed)
+    }
+
+    @Test
+    fun `the unresolved payment belongs to its user - another user never sees it, the same user gets it back`() = runTest {
+        val h = harness()
+        h.gateway.transferResults += TransferResult.Failed(classifyTransferFailure(500, null, null))
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+        advanceUntilIdle()
+        val attempt = h.flow.pending.value!!
+
+        h.flow.bind(null) // signed out
+        assertEquals(null, h.flow.pending.value)
+        assertEquals(SendState(), h.flow.state.value)
+
+        h.flow.bind("u2")
+        assertEquals("a different user sees nothing", null, h.flow.pending.value)
+        assertEquals(SendPhase.Editing, h.phase)
+
+        h.flow.bind("u1")
+        assertEquals("the same user gets it back, key intact", attempt, h.flow.pending.value)
+        assertEquals(TransferFailureKind.Interrupted, ((h.phase as SendPhase.Failed).failure.kind))
     }
 }

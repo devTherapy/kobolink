@@ -42,10 +42,12 @@ class WalletHome(
     // user's data after a sign-out, or a pre-transfer balance after a transfer.
     private var clears = 0
     private var transfers = 0
+    private var refreshes = 0
 
     fun refresh() {
         if (_state.value.refreshing) return
-        _state.value = _state.value.copy(refreshing = true)
+        refreshes += 1
+        _state.value = _state.value.copy(refreshing = true, loadingMore = false)
         val clearsAtStart = clears
         val transfersAtStart = transfers
         scope.launch {
@@ -82,9 +84,11 @@ class WalletHome(
         if (current.loadingMore || current.refreshing) return
         _state.value = current.copy(loadingMore = true)
         val clearsAtStart = clears
+        val refreshesAtStart = refreshes
         scope.launch {
             val result = gateway.transactions(cursor)
-            if (clears != clearsAtStart) return@launch
+            // A refresh since this page was asked for replaced the list and the cursor: this page is stale.
+            if (clears != clearsAtStart || refreshes != refreshesAtStart) return@launch
             result.fold(
                 onSuccess = { page ->
                     val seen = _state.value.items.mapTo(HashSet()) { it.postingId }

@@ -117,7 +117,21 @@ object ApiClientProvider {
 
     private val retrofit: Retrofit by lazy { newRetrofit(BuildConfig.API_BASE_URL, okHttpClient, json) }
 
-    private val walletRetrofit: Retrofit by lazy { newRetrofit(BuildConfig.API_BASE_URL, okHttpClient, walletJson) }
+    /**
+     * The client wallet requests go through: [base] (same pool, same
+     * interceptors) with OkHttp's silent connection-failure retry turned off.
+     * That retry can write a POST a second time on a fresh connection after
+     * the first copy already reached the server; when the second connect then
+     * fails, the exception says "could not connect" although the transfer
+     * posted. A transfer is sent at most once per call; any retry is the
+     * app's own, under the same idempotency key.
+     */
+    fun walletClient(base: OkHttpClient): OkHttpClient =
+        base.newBuilder().retryOnConnectionFailure(false).build()
+
+    private val walletRetrofit: Retrofit by lazy {
+        newRetrofit(BuildConfig.API_BASE_URL, walletClient(okHttpClient), walletJson)
+    }
 
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
     val auth: AuthApi by lazy { retrofit.create(AuthApi::class.java) }

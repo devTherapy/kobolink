@@ -124,7 +124,7 @@ fun SendMoneyScreen(
             when (phase) {
                 is SendPhase.Editing, is SendPhase.Confirming -> SendFormBody(state, balanceKobo, actions)
                 is SendPhase.Sending -> SendingBody(phase.attempt)
-                is SendPhase.Sent -> SentBody(phase.attempt, phase.response, actions)
+                is SendPhase.Sent -> SentBody(phase.attempt, phase.response, phase.replayed, actions)
                 is SendPhase.Failed -> FailedBody(
                     text = describeFailure(phase.failure, phase.attempt, balanceKobo),
                     failure = phase.failure,
@@ -297,7 +297,7 @@ private fun SendingBody(attempt: TransferAttempt) {
 }
 
 @Composable
-private fun SentBody(attempt: TransferAttempt, response: TransferResponse, actions: SendActions) {
+private fun SentBody(attempt: TransferAttempt, response: TransferResponse, replayed: Boolean, actions: SendActions) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -327,8 +327,15 @@ private fun SentBody(attempt: TransferAttempt, response: TransferResponse, actio
                 textAlign = TextAlign.Center,
             )
         }
+        // A replayed attempt returns the ORIGINAL reply, whose balance was true when the payment first
+        // posted and may be older than other activity since. Never call that "now"; the wallet
+        // screen shows the balance it re-reads.
         Text(
-            text = "Your balance is now ${Kobo.formatNaira(response.wallet.balanceKobo)}.",
+            text = if (replayed) {
+                "This payment went through earlier. Your wallet shows your latest balance."
+            } else {
+                "Your balance is now ${Kobo.formatNaira(response.wallet.balanceKobo)}."
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

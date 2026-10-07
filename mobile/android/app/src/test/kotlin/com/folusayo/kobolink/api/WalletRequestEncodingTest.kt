@@ -74,4 +74,25 @@ class WalletRequestEncodingTest {
         val body = sentBody { api.topUpWallet("key-0123456789abcdef", TopUpRequest(100_000L)) }
         assertEquals("""{"amountKobo":100000}""", body)
     }
+
+    @Test
+    fun `a transfer is never silently re-sent after a dropped connection`() = runTest {
+        // OkHttp's default retryOnConnectionFailure would write the same POST a second time on a
+        // fresh connection; the first may already have posted, and the app could then report
+        // "never sent". The wallet client must send each transfer at most once per call.
+        val client = ApiClientProvider.walletClient(OkHttpClient())
+        val walletApi = ApiClientProvider.newRetrofit(server.url("/").toString(), client, ApiClientProvider.walletJson)
+            .create(WalletApi::class.java)
+        // A first call leaves a pooled keep-alive connection; the server then drops it right after
+        // reading the next request, which is the stale-connection case OkHttp silently retries.
+        server.enqueue(MockResponse().setResponseCode(500))
+        runCatching { walletApi.transferMoney("key-0123456789abcdef", TransferRequest("+2348031234567", 250_000L)) }
+        val before = server.requestCount
+        server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setResponseCode(500))
+
+        runCatching { walletApi.transferMoney("key-0123456789abcdef", TransferRequest("+2348031234567", 250_000L)) }
+
+        assertEquals("exactly one copy of the request reached the server", before + 1, server.requestCount)
+    }
 }

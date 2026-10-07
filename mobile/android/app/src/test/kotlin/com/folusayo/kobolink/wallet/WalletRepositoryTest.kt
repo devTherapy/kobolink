@@ -83,11 +83,11 @@ class WalletRepositoryTest {
     }
 
     @Test
-    fun `no network - the request never left, so no money moved`() = runTest {
+    fun `no network is still an unknown outcome`() = runTest {
         val api = FakeWalletApi(transfer = { _, _ -> throw UnknownHostException("pay.folusayo.com") })
         val failure = failed(repo(api).transfer("k".repeat(16), "+2348031234567", 250_000L, null))
         assertEquals(TransferFailureKind.Offline, failure.kind)
-        assertEquals(MoneyMoved.No, failure.moneyMoved)
+        assertEquals(MoneyMoved.Unknown, failure.moneyMoved)
     }
 
     @Test

@@ -1,11 +1,12 @@
 package com.folusayo.kobolink.wallet
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
 import com.folusayo.kobolink.api.ApiClientProvider
+import com.folusayo.kobolink.auth.openEncryptedPrefs
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -112,19 +113,35 @@ class WalletViewModel(
         send.discardUnresolved()
     }
 
-    /** Sign-out or session end: drop everything about the previous user. */
+    /** The signed-in user's wallet is showing: restore anything of theirs left unresolved on disk. */
+    fun bindUser(userId: String) {
+        send.bind(userId)
+    }
+
+    /**
+     * Sign-out or session end: drop everything about the previous user from
+     * memory. An unresolved payment stays on disk, under their id, and comes
+     * back if they sign in again; nobody else ever sees it.
+     */
     fun onSignedOut() {
         home.clear()
-        send.reset()
+        send.bind(null)
         _route.value = WalletRoute.Home
     }
 
     companion object {
         val Factory = viewModelFactory {
             initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]!!
+                val store = try {
+                    EncryptedPendingAttemptStore(openEncryptedPrefs(app, EncryptedPendingAttemptStore.PREFS_FILE_NAME))
+                } catch (e: Exception) {
+                    // No plaintext fallback: without secure storage no payment can be recorded, so none is sent.
+                    UnavailablePendingAttemptStore(e)
+                }
                 WalletViewModel(
                     gateway = WalletRepository(ApiClientProvider.wallet, ApiClientProvider.json),
-                    pending = SavedStatePendingAttemptStore(createSavedStateHandle()),
+                    pending = store,
                 )
             }
         }

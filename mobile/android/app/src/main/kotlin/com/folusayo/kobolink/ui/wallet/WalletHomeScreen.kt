@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,6 +38,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +95,30 @@ fun WalletHomeScreen(
 ) {
     LaunchedEffect(Unit) { if (!state.loadedOnce && !state.refreshing) onLoad() }
 
+    // Signing out with an unresolved payment is allowed (it stays saved for this account) but never silent.
+    var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    if (confirmSignOut && pending != null) {
+        AlertDialog(
+            onDismissRequest = { confirmSignOut = false },
+            shape = MaterialTheme.shapes.extraLarge,
+            title = { Text("A payment needs checking") },
+            text = {
+                Text(
+                    "${Kobo.formatNaira(pending.amountKobo)} to ${pending.recipientLabel()} may not have finished. " +
+                        "If you sign out, it stays saved for this account and you can resolve it when you sign back in.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmSignOut = false; onLogout() }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Sign out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSignOut = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Stay") }
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -99,7 +127,7 @@ fun WalletHomeScreen(
                     IconButton(onClick = onRefresh, enabled = !state.refreshing) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh balance and activity")
                     }
-                    IconButton(onClick = onLogout) {
+                    IconButton(onClick = { if (pending != null) confirmSignOut = true else onLogout() }) {
                         Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Sign out")
                     }
                 },

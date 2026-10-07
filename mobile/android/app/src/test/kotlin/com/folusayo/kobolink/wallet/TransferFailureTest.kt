@@ -72,13 +72,6 @@ class TransferFailureTest {
     }
 
     @Test
-    fun `an idempotency mismatch is told apart`() {
-        val f = classify(422, error(ApiError.Code.idempotency_mismatch))
-        assertEquals(TransferFailureKind.KeyReusedWithDifferentDetails, f.kind)
-        assertEquals(MoneyMoved.No, f.moneyMoved)
-    }
-
-    @Test
     fun `a 5xx without a no-money flag is unknown and must be replayed, not edited`() {
         val f = classify(500, error(ApiError.Code.`internal`, moneyMoved = null))
         assertEquals(TransferFailureKind.ServerError, f.kind)
@@ -107,12 +100,29 @@ class TransferFailureTest {
     }
 
     @Test
-    fun `no connection at all means the request never left the phone`() {
+    fun `no connection is NOT proof the request never left - it is unknown`() {
         for (cause in listOf(UnknownHostException("no dns"), ConnectException("refused"))) {
             val f = classifyTransferFailure(null, null, cause)
             assertEquals(TransferFailureKind.Offline, f.kind)
-            assertEquals(MoneyMoved.No, f.moneyMoved)
+            assertEquals(MoneyMoved.Unknown, f.moneyMoved)
+            assertTrue(f.retryWithSameRequest)
+            assertFalse(f.canEditAndResend)
         }
+    }
+
+    @Test
+    fun `only a server answer with a parsed body can say no money moved`() {
+        assertEquals(MoneyMoved.Unknown, classify(401, null).moneyMoved)
+        assertEquals(MoneyMoved.Unknown, classify(429, null).moneyMoved)
+        assertEquals(MoneyMoved.Unknown, classify(403, null).moneyMoved) // a proxy's HTML page, say
+        assertEquals(MoneyMoved.No, classify(401, error(ApiError.Code.unauthenticated, moneyMoved = null)).moneyMoved)
+    }
+
+    @Test
+    fun `an idempotency mismatch is not reported as no money taken`() {
+        val f = classify(422, error(ApiError.Code.idempotency_mismatch))
+        assertEquals(TransferFailureKind.KeyReusedWithDifferentDetails, f.kind)
+        assertEquals(MoneyMoved.Unknown, f.moneyMoved)
     }
 
     @Test
@@ -149,6 +159,7 @@ class TransferFailureTest {
             classifyTransferFailure(null, null, SocketTimeoutException()),
             unreadableSuccess(),
             TransferFailure(TransferFailureKind.Interrupted, MoneyMoved.Unknown),
+            TransferFailure(TransferFailureKind.SecureStorageFailed, MoneyMoved.No),
         )
         assertEquals(TransferFailureKind.entries.toSet(), cases.map { it.kind }.toSet())
 

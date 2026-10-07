@@ -2,6 +2,7 @@ package com.folusayo.kobolink.ui.wallet
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.folusayo.kobolink.auth.AuthenticatedUser
@@ -28,6 +29,8 @@ fun SignedInApp(
     val send by viewModel.send.state.collectAsState()
     val cameraAsked by viewModel.cameraPermissionAsked.collectAsState()
     val pending by viewModel.pendingAttempt.collectAsState()
+
+    LaunchedEffect(user.id) { viewModel.bindUser(user.id) }
 
     BackHandler(enabled = route != WalletRoute.Home) { viewModel.back() }
 

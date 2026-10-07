@@ -72,7 +72,8 @@ sealed interface SendPhase {
     data object Editing : SendPhase
     data class Confirming(val attempt: TransferAttempt) : SendPhase
     data class Sending(val attempt: TransferAttempt) : SendPhase
-    data class Sent(val attempt: TransferAttempt, val response: TransferResponse) : SendPhase
+    /** [replayed]: the reply is the stored ORIGINAL of an earlier attempt, so its balance may be old. */
+    data class Sent(val attempt: TransferAttempt, val response: TransferResponse, val replayed: Boolean = false) : SendPhase
     data class Failed(val attempt: TransferAttempt, val failure: TransferFailure) : SendPhase
 }
 
@@ -83,6 +84,7 @@ data class SendState(
     val phase: SendPhase = SendPhase.Editing,
 )
 
+
 /**
  * The send-money state machine, free of Android types so every transition is
  * a JVM test: Editing -> Confirming -> Sending -> Sent | Failed.
@@ -91,19 +93,25 @@ data class SendState(
  * - **One tap, one request.** A request only starts from [SendPhase.Confirming],
  *   and starting it moves to [SendPhase.Sending] in the same step, so a second
  *   tap on the confirm button finds nothing to do.
- * - **One key per payment.** [newKey] is called each time the form is accepted for confirmation. The
- *   only path that reuses a key is [tryAgain], which replays the identical
- *   [TransferAttempt] after a failure whose outcome is not known to be "no".
- * - **No double payment by editing, leaving, or dying.** Until an attempt is
- *   settled (a success, or a failure where no money moved) it is [pending]:
- *   remembered in [store] (which the ViewModel backs with saved state, so it
- *   survives process death), kept by [start] instead of being overwritten,
- *   and offered back as the thing to resolve. The person either replays it
- *   under its own key ([tryAgain]) or says they checked and it did not go
- *   through ([discardUnresolved]). There is no path that quietly forgets it
- *   and lets a second, differently-keyed payment go out.
- * - **No stale write.** A reply that arrives after [reset] (sign-out) is
- *   dropped, so one person's payment never reaches the next person's screen.
+ * - **One key per payment, reused on every retry of it.** [newKey] is called
+ *   each time the form is accepted for confirmation. [tryAgain] replays the
+ *   identical [TransferAttempt] under its own key after ANY failure that is
+ *   not a server's definite refusal, transport errors included: the server
+ *   then returns the original result or, if it never saw the request, posts
+ *   once. A new key is only ever used for a changed payment, or after the
+ *   server answered with a parsed refusal.
+ * - **Nothing is sent that was not first written to disk.** Before a request
+ *   leaves, the attempt is saved to the user-scoped [store] (encrypted, on
+ *   disk). If that save fails the request is NOT sent. Until the payment
+ *   settles (a success, or a server's definite refusal) it stays [pending]:
+ *   it survives leaving the screen, a killed process, a reboot and a
+ *   sign-out, and comes back for the same user. A different user never sees
+ *   it. The only ways out are [tryAgain] or [discardUnresolved], the
+ *   person's explicit "I checked, it did not go through".
+ * - **No double payment by editing.** After an unknown outcome [editAgain]
+ *   does nothing.
+ * - **No stale write.** A reply that arrives after the user changed ([bind])
+ *   is dropped, so one person's payment never reaches the next person's screen.
  */
 class SendFlow(
     private val gateway: WalletGateway,
@@ -121,19 +129,34 @@ class SendFlow(
     /** The attempt whose outcome is not settled, if any: in flight, or failed with the money possibly moved. */
     val pending: StateFlow<TransferAttempt?> = _pending
 
-    // Bumped by reset() so a reply to a request from before it cannot land after.
+    private var userId: String? = null
+
+    // Bumped whenever the user changes so a reply to a request from before cannot land after.
     private var generation = 0
 
-    init {
-        // A new process: the previous one died with a payment unresolved. We
-        // never saw how it ended, so say exactly that and offer the safe replay.
-        store.load()?.let { attempt ->
-            _pending.value = attempt
-            _state.value = SendState(
-                form = SendForm(phone = attempt.toPhone, amount = nairaFieldText(attempt.amountKobo), note = attempt.note.orEmpty(), payeeName = attempt.payeeName),
-                phase = SendPhase.Failed(attempt, TransferFailure(TransferFailureKind.Interrupted, MoneyMoved.Unknown)),
-            )
-        }
+    /**
+     * Tie the flow to the signed-in user (or to nobody, on sign-out). Their
+     * unresolved payment, if the disk holds one, comes back as "we never saw
+     * how it ended"; in-memory state of any previous user is dropped, but
+     * nothing is deleted from disk.
+     */
+    fun bind(newUserId: String?) {
+        if (newUserId == userId) return
+        generation += 1
+        userId = newUserId
+        _pending.value = null
+        _state.value = SendState()
+        val attempt = newUserId?.let { runCatching { store.load(it) }.getOrNull() } ?: return
+        _pending.value = attempt
+        _state.value = SendState(
+            form = SendForm(
+                phone = attempt.toPhone,
+                amount = nairaFieldText(attempt.amountKobo),
+                note = attempt.note.orEmpty(),
+                payeeName = attempt.payeeName,
+            ),
+            phase = SendPhase.Failed(attempt, TransferFailure(TransferFailureKind.Interrupted, MoneyMoved.Unknown)),
+        )
     }
 
     /**
@@ -145,14 +168,6 @@ class SendFlow(
         if (_pending.value != null) return false
         _state.value = SendState(form = form)
         return true
-    }
-
-    /** Sign-out or session end: forget everything, including an unresolved payment, and ignore any reply still on its way. */
-    fun reset() {
-        generation += 1
-        store.save(null)
-        _pending.value = null
-        _state.value = SendState()
     }
 
     /**
@@ -203,24 +218,24 @@ class SendFlow(
     /** "Send" in the confirmation dialog. */
     fun confirm() {
         val phase = _state.value.phase
-        if (phase is SendPhase.Confirming) send(phase.attempt)
+        if (phase is SendPhase.Confirming) send(phase.attempt, replay = false)
     }
 
     /**
-     * "Try again". After an unknown outcome this replays the IDENTICAL request
-     * under the IDENTICAL key, so the server returns the original result if it
-     * did post and posts exactly once if it did not. After a definite "no
-     * money moved" with nothing wrong in the details (offline, rate limit) it
-     * is a fresh payment under a fresh key, since the old key never reached a
-     * decision worth replaying.
+     * "Try again". Unless the server definitively refused the request, this
+     * replays the IDENTICAL request under the IDENTICAL key, whatever went
+     * wrong (a dropped connection, a 5xx, an app restart): the server returns
+     * the original result if it did post and posts exactly once if it did not.
+     * Only after a parsed server refusal that is not about the details
+     * (a rate limit) is it a fresh payment under a fresh key.
      */
     fun tryAgain() {
         val phase = _state.value.phase
         if (phase !is SendPhase.Failed) return
         val failure = phase.failure
         when {
-            failure.retryWithSameRequest -> send(phase.attempt)
-            failure.canEditAndResend && failure.worthTryingAgain -> send(phase.attempt.copy(key = newKey()))
+            failure.retryWithSameRequest -> send(phase.attempt, replay = true)
+            failure.canEditAndResend && failure.worthTryingAgain -> send(phase.attempt.copy(key = newKey()), replay = false)
         }
     }
 
@@ -233,10 +248,18 @@ class SendFlow(
         }
     }
 
-    private fun send(attempt: TransferAttempt) {
-        // Remember it BEFORE the request leaves: if the process dies mid-flight
-        // the next one knows there is a payment to resolve, and under which key.
-        store.save(attempt)
+    private fun send(attempt: TransferAttempt, replay: Boolean) {
+        val user = userId
+        // Write it down BEFORE the request leaves: if the process dies mid-flight the next
+        // one knows there is a payment to resolve, and under which key. If it cannot be
+        // written, nothing is sent: an unrecorded payment could be paid twice.
+        val recorded = user != null && runCatching { store.save(user, attempt) }.isSuccess
+        if (!recorded) {
+            _state.value = _state.value.copy(
+                phase = SendPhase.Failed(attempt, TransferFailure(TransferFailureKind.SecureStorageFailed, MoneyMoved.No)),
+            )
+            return
+        }
         _pending.value = attempt
         _state.value = _state.value.copy(phase = SendPhase.Sending(attempt))
         val started = generation
@@ -253,11 +276,11 @@ class SendFlow(
             when (result) {
                 is TransferResult.Sent -> {
                     settle()
-                    _state.value = _state.value.copy(phase = SendPhase.Sent(attempt, result.response))
+                    _state.value = _state.value.copy(phase = SendPhase.Sent(attempt, result.response, replayed = replay))
                     onSent(result.response)
                 }
                 is TransferResult.Failed -> {
-                    // Only a definite "no money moved" settles it; anything else stays pending.
+                    // Only a server's definite refusal settles it; anything else stays pending.
                     if (result.failure.canEditAndResend) settle()
                     _state.value = _state.value.copy(phase = SendPhase.Failed(attempt, result.failure))
                     onFailed(result.failure)
@@ -267,7 +290,10 @@ class SendFlow(
     }
 
     private fun settle() {
-        store.save(null)
         _pending.value = null
+        val user = userId ?: return
+        // A marker that fails to clear is harmless: it comes back as "may not have finished",
+        // and replaying it returns the original success.
+        runCatching { store.save(user, null) }
     }
 }
