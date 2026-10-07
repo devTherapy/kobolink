@@ -91,10 +91,8 @@ export function DashboardStreamProvider({ children }: { children: ReactNode }) {
           seen.current.add(key)
           // A set of strings, but a tab left open for weeks should not grow it forever.
           if (seen.current.size > MAX_SEEN) {
-            for (const oldest of seen.current) {
-              seen.current.delete(oldest)
-              break
-            }
+            const [oldest] = seen.current
+            if (oldest !== undefined) seen.current.delete(oldest)
           }
         }
         setEvents((previous) => [...previous, event].slice(-MAX_EVENTS))

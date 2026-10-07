@@ -339,7 +339,8 @@ describe('openDashboardStream', () => {
       stream.close()
       expect(source.closed).toBe(true)
       // Not just ignored: detached, so a page that navigates away leaves nothing on `window`.
-      expect(remove.mock.calls.map(([type]) => type).sort()).toEqual(['offline', 'online'])
+      expect(remove.mock.calls.map(([type]) => type)).toEqual(expect.arrayContaining(['offline', 'online']))
+      expect(remove).toHaveBeenCalledTimes(2)
 
       online = false
       windowTarget.dispatchEvent(new Event('offline'))
