@@ -65,6 +65,12 @@ export class DashboardStreamController {
     // closes. This header is nginx-specific and harmless everywhere else.
     res.setHeader('X-Accel-Buffering', 'no')
     res.flushHeaders()
+    // Start the body at once. A proxy that pipes this response (Next's
+    // `/api/*` rewrite) forwards the head only with the first body bytes, so
+    // without this the browser's `EventSource` never fires `open` -- and the
+    // dashboard sits on "Connecting..." -- until the first heartbeat, a full
+    // `SSE_HEARTBEAT_MS` later. A comment line is ignored by every SSE parser.
+    res.write(': open\n\n')
 
     const write = (id: number, event: DashboardEvent): void => {
       res.write(formatSseFrame(id, event))
