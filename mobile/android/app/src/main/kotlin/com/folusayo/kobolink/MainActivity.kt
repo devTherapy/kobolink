@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,16 +19,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.folusayo.kobolink.api.ApiClientProvider
+import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.deeplink.parseLinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
-import com.folusayo.kobolink.generated.api.models.Wallet
-import com.folusayo.kobolink.ui.screen.HomeScreen
 import com.folusayo.kobolink.ui.screen.LinkLookupScreen
 import com.folusayo.kobolink.ui.screen.LoginScreen
 import com.folusayo.kobolink.ui.screen.OfflineScreen
 import com.folusayo.kobolink.ui.screen.toDisplayMessage
 import com.folusayo.kobolink.ui.theme.KobolinkTheme
+import com.folusayo.kobolink.ui.wallet.SignedInApp
+import com.folusayo.kobolink.wallet.WalletViewModel
 import java.io.IOException
 import kotlinx.serialization.SerializationException
 
@@ -37,7 +39,8 @@ import kotlinx.serialization.SerializationException
  * - The payer's deep-link landing ([LinkLookupScreen]; M3 builds the checkout
  *   there) is public. A link code, when present, shows it whether the session
  *   is signed in, signed out, resolving or offline: [route] is the rule.
- * - Merchant sign-in (M2) gates only [HomeScreen] and the wallet.
+ * - Sign-in (M2) gates only the signed-in screens: the wallet home, send
+ *   money and scan to pay ([SignedInApp], M5).
  *
  * `launchMode="singleTask"` (see AndroidManifest.xml) means a link tapped
  * while this activity is already on top delivers here via [onNewIntent]
@@ -53,6 +56,11 @@ class MainActivity : ComponentActivity() {
     // Survives rotation: owns the session (so the cold-start /me check runs once
     // per process, not once per Activity instance) and the dismissed-link marker.
     private val viewModel: MainViewModel by viewModels { MainViewModel.Factory }
+
+    // The wallet screens' state (balance, activity, the send flow). One per
+    // Activity, emptied whenever the session ends so the next person to sign
+    // in never sees the previous one's balance.
+    private val walletViewModel: WalletViewModel by viewModels { WalletViewModel.Factory }
 
     // A plain mutableStateOf, not a StateFlow/ViewModel: read as Compose state
     // so onNewIntent's update recomposes the screen already on screen instead
@@ -80,6 +88,11 @@ class MainActivity : ComponentActivity() {
             KobolinkTheme {
                 val session by viewModel.sessionState.collectAsState()
 
+                // Sign-out, an expired token, or a signed-out cold start: forget the wallet.
+                LaunchedEffect(session is SessionState.SignedIn) {
+                    if (session !is SessionState.SignedIn) walletViewModel.onSignedOut()
+                }
+
                 when (val destination = route(session, deepLinkCode)) {
                     is Destination.Resolving -> ResolvingScreen()
                     is Destination.Offline -> OfflineScreen(message = destination.message, onRetry = viewModel::retry)
@@ -89,9 +102,9 @@ class MainActivity : ComponentActivity() {
                         onLoginSuccess = {},
                         notice = destination.notice,
                     )
-                    is Destination.Home -> HomeScreen(
+                    is Destination.Home -> SignedInApp(
                         user = destination.user,
-                        fetchWallet = ::fetchWallet,
+                        viewModel = walletViewModel,
                         onLogout = viewModel::logout,
                     )
                     is Destination.Link -> {
@@ -125,30 +138,6 @@ class MainActivity : ComponentActivity() {
      */
     private fun codeFrom(intent: Intent?): String? =
         intent?.data?.toString()?.let(::parseLinkCode)
-
-    /**
-     * `GET /api/wallet` — the authenticated call [HomeScreen] uses as its
-     * proof-of-session. Reaches [ApiClientProvider.wallet] the same way
-     * [resolvePublicLink] below reaches [ApiClientProvider.links]; the only
-     * difference is this one only succeeds when [com.folusayo.kobolink.auth.AuthInterceptor]
-     * actually had a token to attach.
-     */
-    private suspend fun fetchWallet(): Result<Wallet> = try {
-        val response = ApiClientProvider.wallet.getWallet()
-        val body = response.body()
-        if (response.isSuccessful && body != null) {
-            Result.success(body)
-        } else {
-            val apiError = response.errorBody()?.string()?.let { raw ->
-                runCatching { ApiClientProvider.json.decodeFromString(ApiError.serializer(), raw) }.getOrNull()
-            }
-            Result.failure(RuntimeException(apiError?.toDisplayMessage() ?: "Couldn't load your wallet (HTTP ${response.code()})."))
-        }
-    } catch (e: IOException) {
-        Result.failure(RuntimeException("Couldn't reach the API. Check the connection and API_BASE_URL.", e))
-    } catch (e: SerializationException) {
-        Result.failure(RuntimeException("The API returned something this app couldn't parse.", e))
-    }
 
     private suspend fun resolvePublicLink(code: String): Result<PublicLinkResponse> = try {
         val response = ApiClientProvider.links.resolvePublicLink(code)

@@ -267,6 +267,18 @@ dependencies {
     // mobile session token — PLAN.md's M2 done-when.
     implementation("androidx.security:security-crypto:1.1.0")
 
+    // -- M5: scan to pay --
+    // CameraX for the viewfinder + frame analysis, ML Kit's BUNDLED barcode
+    // model to read the QR (works offline and on devices without Google Play
+    // services, unlike the unbundled/Code Scanner variants; ~2 MB larger).
+    // Nothing else is added: no navigation library, no extended icon set.
+    implementation("androidx.camera:camera-core:1.5.3")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
@@ -280,4 +292,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
+    // M5 screen checks (WalletScreensTest) — compiled here, never run: no emulator.
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
