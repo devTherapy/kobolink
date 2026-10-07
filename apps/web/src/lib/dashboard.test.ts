@@ -5,6 +5,7 @@ import { MOCK_SESSION_COOKIE_NAME, MOCK_SESSION_TOKEN, REVOKED_SESSION_TOKEN } f
 import { server } from '@/mocks/server'
 import { linkStore, paymentsByCode } from '@/mocks/state'
 import { DashboardUnavailableError, loadDashboardData } from './dashboard'
+import { MerchantAccessError, UnexpectedResponseError } from './read-failure'
 
 /** `redirect()` throws a tagged error; this stands in for it so a test can see where it pointed. */
 vi.mock('next/navigation', () => ({
@@ -96,7 +97,7 @@ describe('loadDashboardData', () => {
       ),
     )
     const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
-    expect(error).toMatchObject({ name: 'MerchantAccessError' })
+    expect(error).toBeInstanceOf(MerchantAccessError)
   })
 
   it('reports a 403 from the links endpoint the same way', async () => {
@@ -106,13 +107,13 @@ describe('loadDashboardData', () => {
       ),
     )
     const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
-    expect(error).toMatchObject({ name: 'MerchantAccessError' })
+    expect(error).toBeInstanceOf(MerchantAccessError)
   })
 
   it('reports a 200 whose body breaks the contract as UnexpectedResponseError, keeping the cause', async () => {
     server.use(http.get(API.dashboard.stats, () => HttpResponse.json({ totalCollectedKobo: 'a lot' })))
     const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
-    expect(error).toMatchObject({ name: 'UnexpectedResponseError' })
+    expect(error).toBeInstanceOf(UnexpectedResponseError)
     expect((error as Error).cause).toBeDefined()
   })
 

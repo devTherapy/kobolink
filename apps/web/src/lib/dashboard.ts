@@ -1,5 +1,6 @@
 import type { DashboardStats, LinkListResponse } from '@kobolink/contracts'
 import { ApiRequestError, client } from './api'
+import { classifyReadFailure } from './read-failure'
 import { resolveCookieHeader } from './session'
 
 export interface DashboardData {
@@ -8,11 +9,15 @@ export interface DashboardData {
 }
 
 /**
- * Thrown by `loadDashboardData` for anything that means "we could not find
- * out what this merchant's dashboard should show" — a transport failure or a
- * 5xx/`rate_limited` response — mirroring `CheckoutUnavailableError` in
- * `./checkout`. `app/dashboard/error.tsx` is what actually renders this, so
+ * Thrown by `loadDashboardData` for the failures worth retrying — a transport
+ * failure or a 5xx/`rate_limited` response — mirroring `CheckoutUnavailableError`
+ * in `./checkout`. `app/dashboard/error.tsx` is what actually renders this, so
  * it can say something accurate instead of Next's blank generic error page.
+ *
+ * It is deliberately *not* the answer for every failure: a session that ended
+ * redirects to sign-in, a customer-role `forbidden` is `MerchantAccessError`
+ * and a body that breaks the contract is `UnexpectedResponseError` (see
+ * `classifyReadFailure`), because a retry cannot fix any of those.
  */
 export class DashboardUnavailableError extends Error {
   constructor(message = "We couldn't reach Kobolink's servers.", options?: ErrorOptions) {
@@ -43,12 +48,12 @@ export async function loadDashboardData(cookieHeader?: string): Promise<Dashboar
     ])
     return { stats, links }
   } catch (error) {
+    // Redirects, or throws `MerchantAccessError` / `UnexpectedResponseError`,
+    // for the failures a retry cannot fix; returns for the ones it can.
+    classifyReadFailure(error, '/dashboard')
     if (error instanceof ApiRequestError) throw new DashboardUnavailableError(error.error.message, { cause: error })
     // A raw `fetch` failure (connection refused, DNS, ...) never produces an
     // `ApiRequestError` at all — same "could not load the dashboard" story.
-    // Still worth keeping `cause`: a real contract drift (a `ZodError` from
-    // `request()`'s schema parse) lands here too, and without `cause` that
-    // bug would only ever be visible as "couldn't reach Kobolink's servers."
     throw new DashboardUnavailableError(undefined, { cause: error })
   }
 }

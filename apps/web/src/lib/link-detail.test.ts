@@ -7,6 +7,7 @@ import { paymentsByCode } from '@/mocks/state'
 import { ApiRequestError } from './api'
 import { LinkDetailUnavailableError, loadLinkDetail } from './link-detail'
 import { describeStatusFailure } from './link-status'
+import { MerchantAccessError, UnexpectedResponseError } from './read-failure'
 
 const VALID_COOKIE = `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}`
 
@@ -132,14 +133,14 @@ describe('loadLinkDetail', () => {
     )
 
     const error = await loadLinkDetail('aBcDeFgH', VALID_COOKIE).catch((caught: unknown) => caught)
-    expect(error).toMatchObject({ name: 'MerchantAccessError' })
+    expect(error).toBeInstanceOf(MerchantAccessError)
   })
 
   it('reports a body that breaks the contract as UnexpectedResponseError, keeping the cause', async () => {
     server.use(http.get(API.links.item(':code'), () => HttpResponse.json({ code: 'aBcDeFgH', title: 42 })))
 
     const error = await loadLinkDetail('aBcDeFgH', VALID_COOKIE).catch((caught: unknown) => caught)
-    expect(error).toMatchObject({ name: 'UnexpectedResponseError' })
+    expect(error).toBeInstanceOf(UnexpectedResponseError)
     expect((error as Error).cause).toBeDefined()
   })
 
