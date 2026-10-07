@@ -4,7 +4,6 @@ import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.AuthResponseUser
 import com.folusayo.kobolink.generated.api.models.LoginRequest
-import com.folusayo.kobolink.generated.api.models.MeResponseUser
 import java.io.IOException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -151,6 +150,3 @@ class AuthRepository(
 
 /** See [AuthenticatedUser]'s doc comment for why this mapping exists at all. */
 private fun AuthResponseUser.toAuthenticatedUser() = AuthenticatedUser(id = id, email = email, displayName = displayName)
-
-/** See [AuthenticatedUser]'s doc comment for why this mapping exists at all. */
-private fun MeResponseUser.toAuthenticatedUser() = AuthenticatedUser(id = id, email = email, displayName = displayName)

@@ -29,6 +29,79 @@ val openApiSpec = rootProject.projectDir.parentFile.parentFile
     .resolve("apps/api/openapi.json")
 val generatedApiPackage = "com.folusayo.kobolink.generated.api"
 val generatedSourcesDir = layout.buildDirectory.dir("generated/openapi")
+val normalizedSpec = layout.buildDirectory.file("openapi/openapi.normalized.json")
+
+// --- Spec normalisation (OpenAPI 3.1 -> 3.0-shaped) before generation ---
+//
+// The document is OpenAPI 3.1 as emitted from Zod. openapi-generator's 3.1
+// support is beta and mis-generates the two constructs Zod's `.nullable()`
+// and `z.literal()` produce:
+//   - `anyOf: [T, {type: "null"}]` on a hoisted inline object becomes an
+//     EMPTY wrapper class, so `counterparty: "Ada"` cannot decode (the
+//     transfer response, the transaction list, and `phone` on login);
+//   - `type: [T, "null"]` becomes a non-null `T` plus a bogus `HashMap`
+//     supertype, so the last page's `nextCursor: null` cannot decode.
+// Both are rewritten to the 3.0 spelling the generator handles (`T` +
+// `nullable: true`); `const: X` becomes the one-value `enum: [X]` it already
+// generated as. Nothing in apps/api/openapi.json or packages/contracts is
+// edited: this only reshapes a copy under build/. Pinned by
+// GeneratedPayloadDecodeTest (decoding) and SpecNormalizationTest (no 3.1-only
+// keyword survives).
+fun normalizeSchemaNode(node: Any?): Any? = when (node) {
+    is Map<*, *> -> {
+        val out = LinkedHashMap<String, Any?>()
+        node.forEach { (k, v) -> out[k as String] = normalizeSchemaNode(v) }
+        val anyOf = out["anyOf"] as? List<*>
+        if (anyOf != null && anyOf.size == 2) {
+            val nullBranch = anyOf.singleOrNull { (it as? Map<*, *>)?.get("type") == "null" }
+            if (nullBranch != null) {
+                val other = anyOf.first { it !== nullBranch } as Map<*, *>
+                out.remove("anyOf")
+                other.forEach { (k, v) -> out.putIfAbsent(k as String, v) }
+                out["nullable"] = true
+            }
+        }
+        val type = out["type"]
+        if (type is List<*> && type.size == 2 && type.contains("null")) {
+            out["type"] = type.first { it != "null" }
+            out["nullable"] = true
+        }
+        if (out.containsKey("const")) {
+            // A one-value string enum is what 3.1 `const` generated as. A
+            // numeric one (QrPayload.v) would generate an enum over
+            // BigDecimal that does not compile, so it is just a number.
+            val constant = out.remove("const")
+            if (constant is String) out["enum"] = listOf(constant)
+        }
+        // 3.1 spells an exclusive bound as a number; 3.0 as a flag beside `minimum`/`maximum`.
+        for ((exclusiveKey, boundKey) in listOf("exclusiveMinimum" to "minimum", "exclusiveMaximum" to "maximum")) {
+            val bound = out[exclusiveKey]
+            if (bound is Number) {
+                out[boundKey] = bound
+                out[exclusiveKey] = true
+            }
+        }
+        // 3.1-only keyword on `fields` maps (string keys); 3.0 rejects it.
+        if (out["propertyNames"] is Map<*, *>) out.remove("propertyNames")
+        out
+    }
+    is List<*> -> node.map { normalizeSchemaNode(it) }
+    else -> node
+}
+
+val normalizeOpenApi = tasks.register("normalizeOpenApi") {
+    inputs.file(openApiSpec)
+    outputs.file(normalizedSpec)
+    doLast {
+        val root = groovy.json.JsonSlurper().parse(openApiSpec)
+        @Suppress("UNCHECKED_CAST")
+        val normalized = normalizeSchemaNode(root) as MutableMap<String, Any?>
+        normalized["openapi"] = "3.0.3"
+        val target = normalizedSpec.get().asFile
+        target.parentFile.mkdirs()
+        target.writeText(groovy.json.JsonOutput.toJson(normalized))
+    }
+}
 
 android {
     namespace = "com.folusayo.kobolink"
@@ -101,7 +174,7 @@ android {
 // fails — a compile error, not a silent runtime bug.
 openApiGenerate {
     generatorName.set("kotlin")
-    inputSpec.set(openApiSpec.absolutePath)
+    inputSpec.set(normalizedSpec.get().asFile.absolutePath)
     outputDir.set(generatedSourcesDir.map { it.asFile.absolutePath })
     packageName.set(generatedApiPackage)
     apiPackage.set("$generatedApiPackage.apis")
@@ -133,6 +206,17 @@ openApiGenerate {
     // the incidental build.gradle/docs/gradlew the generator also emits are
     // harmless clutter, never compiled or committed.
     library.set("jvm-retrofit2")
+
+    // The OpenAPI document types every kobo field as a bare `type: integer`
+    // (packages/contracts bounds them at Number.MAX_SAFE_INTEGER, but the
+    // JSON Schema carries no `format: int64`), which the generator maps to a
+    // 32-bit Int. A wallet balance is a ledger SUM and can pass 2^31-1 kobo
+    // (about 21.4 million naira); the generated Wallet model then fails to
+    // decode (GeneratedPayloadDecodeTest). Widen every integer to Long here
+    // rather than hand-edit generated models. The right long-term fix is
+    // `format: int64` in contracts, which this module does not own.
+    typeMappings.set(mapOf("integer" to "kotlin.Long"))
+
     additionalProperties.set(
         mapOf(
             "library" to "jvm-retrofit2",
@@ -150,6 +234,13 @@ openApiGenerate {
 // Wire the generator into the normal build graph: nobody has to remember to
 // run `openApiGenerate` by hand, and a stale/missing spec fails the build
 // rather than compiling against yesterday's models.
+tasks.named("openApiGenerate") {
+    dependsOn(normalizeOpenApi)
+    // `inputSpec` above is a path string, so Gradle would not otherwise key
+    // the task (or its build-cache entry) on the document's CONTENT: a spec
+    // change could replay yesterday's generated models from the cache.
+    inputs.file(normalizedSpec)
+}
 tasks.withType<KotlinCompile>().configureEach {
     dependsOn("openApiGenerate")
 }
@@ -185,6 +276,18 @@ dependencies {
     // mobile session token — PLAN.md's M2 done-when.
     implementation("androidx.security:security-crypto:1.1.0")
 
+    // -- M5: scan to pay --
+    // CameraX for the viewfinder + frame analysis, ML Kit's BUNDLED barcode
+    // model to read the QR (works offline and on devices without Google Play
+    // services, unlike the unbundled/Code Scanner variants; ~2 MB larger).
+    // Nothing else is added: no navigation library, no extended icon set.
+    implementation("androidx.camera:camera-core:1.5.3")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
@@ -198,4 +301,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
+    // M5 screen checks (WalletScreensTest) — compiled here, never run: no emulator.
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

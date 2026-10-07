@@ -4,6 +4,14 @@
     <!-- The API client (LinksApi.resolvePublicLink, etc.) needs the network. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      M5 "scan to pay". Requested at runtime, only when the person opens the
+      scanner. The camera is optional hardware: a device without one still
+      installs and sends money by typing the recipient's number.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:name=".KobolinkApplication"
         android:allowBackup="true"

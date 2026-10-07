@@ -93,15 +93,47 @@ object ApiClientProvider {
             .build()
     }
 
-    private val retrofit: Retrofit by lazy {
+    /**
+     * The Json the WALLET client encodes requests with. Same as [json] (the
+     * generated client's) except null optional fields are omitted. The
+     * generated Json writes `"note":null` for an absent note; the contract's
+     * `note` is optional, not nullable, so the server answers 400
+     * `validation_failed` and no note-less transfer could ever succeed.
+     *
+     * Scoped to wallet requests on purpose: other requests carry required
+     * nullable fields (a link with no amount) where omitting the key would be
+     * the bug. Decoding is unaffected in practice (explicitNulls only changes
+     * how a missing nullable key is read: as null instead of an error).
+     */
+    val walletJson: Json = Json(from = json) { explicitNulls = false }
+
+    /** Public so a test can build the same client against a MockWebServer and inspect the bytes it sends. */
+    fun newRetrofit(baseUrl: String, client: OkHttpClient, json: Json): Retrofit =
         Retrofit.Builder()
-            .baseUrl(BuildConfig.API_BASE_URL)
-            .client(okHttpClient)
+            .baseUrl(baseUrl)
+            .client(client)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
+
+    private val retrofit: Retrofit by lazy { newRetrofit(BuildConfig.API_BASE_URL, okHttpClient, json) }
+
+    /**
+     * The client wallet requests go through: [base] (same pool, same
+     * interceptors) with OkHttp's silent connection-failure retry turned off.
+     * That retry can write a POST a second time on a fresh connection after
+     * the first copy already reached the server; when the second connect then
+     * fails, the exception says "could not connect" although the transfer
+     * posted. A transfer is sent at most once per call; any retry is the
+     * app's own, under the same idempotency key.
+     */
+    fun walletClient(base: OkHttpClient): OkHttpClient =
+        base.newBuilder().retryOnConnectionFailure(false).build()
+
+    private val walletRetrofit: Retrofit by lazy {
+        newRetrofit(BuildConfig.API_BASE_URL, walletClient(okHttpClient), walletJson)
     }
 
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
     val auth: AuthApi by lazy { retrofit.create(AuthApi::class.java) }
-    val wallet: WalletApi by lazy { retrofit.create(WalletApi::class.java) }
+    val wallet: WalletApi by lazy { walletRetrofit.create(WalletApi::class.java) }
 }

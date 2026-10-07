@@ -33,19 +33,7 @@ import java.io.IOException
 @Suppress("DEPRECATION")
 class EncryptedTokenStore(context: Context) : TokenStore {
 
-    private val prefs: SharedPreferences = run {
-        val masterKey = MasterKey.Builder(context.applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-
-        EncryptedSharedPreferences.create(
-            context.applicationContext,
-            PREFS_FILE_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    private val prefs: SharedPreferences = openEncryptedPrefs(context, PREFS_FILE_NAME)
 
     // commit(), not apply(): apply() returns before the write reaches disk and
     // reports no failure, so a process kill right after logout could resurrect
@@ -77,4 +65,27 @@ class EncryptedTokenStore(context: Context) : TokenStore {
         const val PREFS_FILE_NAME = "kobolink_secure_prefs"
         private const val KEY_TOKEN = "session_token"
     }
+}
+
+/**
+ * The one way this app opens an `EncryptedSharedPreferences` file: AES256-GCM
+ * values, AES256-SIV keys, a Keystore-held AES256-GCM master key. The session
+ * token ([EncryptedTokenStore]) and the pending-payment record
+ * ([com.folusayo.kobolink.wallet.EncryptedPendingAttemptStore]) both come
+ * through here, so there is a single secure-storage recipe and no plain
+ * `getSharedPreferences` for either.
+ */
+@Suppress("DEPRECATION")
+fun openEncryptedPrefs(context: Context, fileName: String): SharedPreferences {
+    val masterKey = MasterKey.Builder(context.applicationContext)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
+
+    return EncryptedSharedPreferences.create(
+        context.applicationContext,
+        fileName,
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
 }
