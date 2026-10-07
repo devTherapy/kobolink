@@ -385,6 +385,11 @@ interface FieldProps {
  * Tailwind pseudo-classes layered on top, scoped with `enabled:` so a
  * disabled/loading field cannot show a hover treatment it cannot act on.
  * `loading` is the seventh — see `FieldProps.loading`.
+ *
+ * Deliberately no base `outline-none`/`outline-hidden`: either zeroes
+ * Tailwind's `--tw-outline-style` custom property unconditionally, so
+ * `focus-visible:outline-2` (which only ever sets width/offset/color) never
+ * renders a visible ring — see the fuller note on this in `ui/Field.tsx`.
  */
 function Field({ id, label, error, loading = false, inputProps }: FieldProps) {
   const errorId = `${id}-error`
@@ -398,7 +403,7 @@ function Field({ id, label, error, loading = false, inputProps }: FieldProps) {
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         aria-busy={loading || undefined}
-        className={`min-h-11 rounded-(--radius-input) border bg-(--color-surface) px-3 text-[14px] text-(--color-ink) outline-none transition-colors placeholder:text-(--color-ink-3) enabled:hover:border-(--color-ink-3) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand) enabled:active:border-(--color-brand) disabled:cursor-not-allowed disabled:bg-(--color-border-soft) disabled:text-(--color-ink-3) ${
+        className={`min-h-11 rounded-(--radius-input) border bg-(--color-surface) px-3 text-[14px] text-(--color-ink) transition-colors placeholder:text-(--color-ink-3) enabled:hover:border-(--color-ink-3) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand) enabled:active:border-(--color-brand) disabled:cursor-not-allowed disabled:bg-(--color-border-soft) disabled:text-(--color-ink-3) ${
           loading ? 'animate-pulse cursor-wait' : ''
         } ${error ? 'border-(--color-danger)' : 'border-(--color-border)'}`}
         {...inputProps}
