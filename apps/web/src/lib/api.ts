@@ -216,8 +216,6 @@ export const client = {
       }),
   },
   links: {
-    list: (query?: PageQuery) =>
-      request<LinkListResponse>(LinkListResponseSchema, API.links.collection, { query: pageQuery(query) }),
     // `async` here is deliberate, not stylistic: it turns
     // `requireValidLinkCode`'s synchronous throw into a rejected Promise, so
     // `client.links.resolve(bad).catch(...)` catches it exactly like it
@@ -243,9 +241,24 @@ export const client = {
         query: pageQuery(query),
       })
     },
+    // `init?.headers` exists for the same reason `auth.me` takes it: F3's
+    // dashboard page calls this from a Server Component, which has no
+    // browser cookie jar behind it, so the merchant-scoped session cookie
+    // only reaches the API if the caller forwards it by hand — see
+    // `src/lib/dashboard.ts`.
+    list: (query?: PageQuery, init?: { headers?: HeadersInit }) =>
+      request<LinkListResponse>(LinkListResponseSchema, API.links.collection, {
+        query: pageQuery(query),
+        ...(init?.headers ? { headers: init.headers } : {}),
+      }),
   },
   dashboard: {
-    stats: () => request<DashboardStats>(DashboardStatsSchema, API.dashboard.stats),
+    // Same `init?.headers` seam as `links.list` just above — this is also a
+    // merchant-scoped read the dashboard's Server Component calls server-side.
+    stats: (init?: { headers?: HeadersInit }) =>
+      request<DashboardStats>(DashboardStatsSchema, API.dashboard.stats, {
+        ...(init?.headers ? { headers: init.headers } : {}),
+      }),
   },
   // Both endpoints are money-moving writes: every call carries its own
   // caller-chosen `Idempotency-Key` (README: "a replayed key returns the
