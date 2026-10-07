@@ -1,8 +1,7 @@
 import { cache } from 'react'
-import { redirect } from 'next/navigation'
 import { LinkCodeSchema, type PaymentLink, type PaymentListResponse } from '@kobolink/contracts'
 import { ApiRequestError, client } from './api'
-import { signInHref } from './link-status'
+import { classifyReadFailure } from './read-failure'
 import { resolveCookieHeader } from './session'
 
 export interface LinkDetailData {
@@ -21,8 +20,9 @@ export type LinkDetailResolution = { found: true; data: LinkDetailData } | { fou
 
 /**
  * Thrown by `loadLinkDetail` for anything that means "we could not find out
- * what this link looks like" — a transport failure or a 5xx — as opposed to
- * `{ found: false }`, which is the API affirmatively answering `not_found`.
+ * what this link looks like" and a retry might help — a transport failure or a
+ * 5xx/`rate_limited` — as opposed to `{ found: false }`, which is the API
+ * affirmatively answering `not_found`.
  * `app/dashboard/links/[code]/error.tsx` renders it; same split as
  * `CheckoutUnavailableError` / `DashboardUnavailableError`.
  */
@@ -50,6 +50,9 @@ export class LinkDetailUnavailableError extends Error {
  * A session that expired between the layout's check and this fetch answers
  * `unauthenticated`; that is "sign in again", not "servers unreachable", so it
  * redirects to the login screen and returns the merchant to this link after.
+ * A customer-role `forbidden` and a body that breaks the contract are likewise
+ * not retryable: they throw `MerchantAccessError` / `UnexpectedResponseError`,
+ * which the page renders itself (see `classifyReadFailure`).
  */
 export const loadLinkDetail = cache(async (code: string, cookieHeader?: string): Promise<LinkDetailResolution> => {
   // A route param is not guaranteed to be a well-formed code; the API client
@@ -66,15 +69,12 @@ export const loadLinkDetail = cache(async (code: string, cookieHeader?: string):
     ])
     return { found: true, data: { link, payments, asOf: new Date().toISOString() } }
   } catch (error) {
-    if (error instanceof ApiRequestError) {
-      if (error.error.code === 'not_found') return { found: false }
-      if (error.error.code === 'unauthenticated') {
-        redirect(signInHref(`/dashboard/links/${code}`))
-      }
-      throw new LinkDetailUnavailableError(error.error.message, { cause: error })
-    }
-    // A raw `fetch` failure never produces an `ApiRequestError` at all; a
-    // `ZodError` from contract drift lands here too, so keep `cause`.
+    if (error instanceof ApiRequestError && error.error.code === 'not_found') return { found: false }
+    // Redirects, or throws `MerchantAccessError` / `UnexpectedResponseError`,
+    // for the failures a retry cannot fix; returns for the ones it can.
+    classifyReadFailure(error, `/dashboard/links/${code}`)
+    if (error instanceof ApiRequestError) throw new LinkDetailUnavailableError(error.error.message, { cause: error })
+    // A raw `fetch` failure never produces an `ApiRequestError` at all.
     throw new LinkDetailUnavailableError(undefined, { cause: error })
   }
 })

@@ -7,6 +7,7 @@ import { paymentsByCode } from '@/mocks/state'
 import { ApiRequestError } from './api'
 import { LinkDetailUnavailableError, loadLinkDetail } from './link-detail'
 import { describeStatusFailure } from './link-status'
+import { MerchantAccessError, UnexpectedResponseError } from './read-failure'
 
 const VALID_COOKIE = `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}`
 
@@ -122,6 +123,35 @@ describe('loadLinkDetail', () => {
     await expect(loadLinkDetail('aBcDeFgH', VALID_COOKIE)).rejects.toThrow(
       'NEXT_REDIRECT:/login?next=%2Fdashboard%2Flinks%2FaBcDeFgH',
     )
+  })
+
+  it('reports a customer-role 403 as MerchantAccessError, not as unreachable servers', async () => {
+    server.use(
+      http.get(API.links.item(':code'), () =>
+        HttpResponse.json({ code: 'forbidden', message: 'Merchant role required.' }, { status: 403 }),
+      ),
+    )
+
+    const error = await loadLinkDetail('aBcDeFgH', VALID_COOKIE).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(MerchantAccessError)
+  })
+
+  it('reports a body that breaks the contract as UnexpectedResponseError, keeping the cause', async () => {
+    server.use(http.get(API.links.item(':code'), () => HttpResponse.json({ code: 'aBcDeFgH', title: 42 })))
+
+    const error = await loadLinkDetail('aBcDeFgH', VALID_COOKIE).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(UnexpectedResponseError)
+    expect((error as Error).cause).toBeDefined()
+  })
+
+  it('keeps a rate-limited response retryable', async () => {
+    server.use(
+      http.get(API.links.payments(':code'), () =>
+        HttpResponse.json({ code: 'rate_limited', message: 'Slow down.' }, { status: 429 }),
+      ),
+    )
+
+    await expect(loadLinkDetail('aBcDeFgH', VALID_COOKIE)).rejects.toThrow(LinkDetailUnavailableError)
   })
 })
 

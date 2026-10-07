@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { getSession } from '@/lib/session'
-import { loadDashboardData } from '@/lib/dashboard'
+import { loadDashboardData, type DashboardData } from '@/lib/dashboard'
+import { noticeForReadFailure } from '@/components/dashboard/ReadFailureNotice'
 import { LiveDashboard } from '@/components/dashboard/LiveDashboard'
 import { NewLinkButton } from '@/components/dashboard/NewLinkButton'
 
@@ -44,7 +45,21 @@ export const dynamic = 'force-dynamic'
  * even start (`async-parallel`).
  */
 export default async function DashboardPage() {
-  const [session, { stats, links }] = await Promise.all([getSession(), loadDashboardData()])
+  let data: DashboardData
+  let session: Awaited<ReturnType<typeof getSession>>
+  try {
+    ;[session, data] = await Promise.all([getSession(), loadDashboardData()])
+  } catch (error) {
+    // The two failures a retry cannot fix (a customer account, a body that
+    // breaks the contract) are rendered here: `error.tsx` only ever sees an
+    // opaque digest in production and could not tell them from "unreachable".
+    // Anything else is rethrown to it — and a session that ended has already
+    // redirected inside `loadDashboardData`.
+    const notice = noticeForReadFailure(error, { subject: 'your dashboard', reloadHref: '/dashboard' })
+    if (notice) return notice
+    throw error
+  }
+  const { stats, links } = data
   const displayName = session?.user.displayName ?? 'there'
 
   return (

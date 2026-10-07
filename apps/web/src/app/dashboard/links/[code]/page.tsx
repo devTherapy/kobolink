@@ -9,7 +9,9 @@ import { LinkStatusControl } from '@/components/dashboard/LinkStatusControl'
 import { PaymentsSection } from '@/components/dashboard/PaymentsSection'
 import { QrCode } from '@/components/dashboard/QrCode'
 import { Card } from '@/components/ui/Card'
-import { loadLinkDetail } from '@/lib/link-detail'
+import { noticeForReadFailure } from '@/components/dashboard/ReadFailureNotice'
+import { loadLinkDetail, type LinkDetailResolution } from '@/lib/link-detail'
+import { MerchantAccessError, UnexpectedResponseError } from '@/lib/read-failure'
 
 /**
  * `/dashboard/links/[code]` — one link: its share URL and QR code, its on/off
@@ -45,13 +47,30 @@ export const dynamic = 'force-dynamic'
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { code } = await params
-  const resolution = await loadLinkDetail(code)
-  return { title: resolution.found ? resolution.data.link.title : 'Link not found' }
+  try {
+    const resolution = await loadLinkDetail(code)
+    return { title: resolution.found ? resolution.data.link.title : 'Link not found' }
+  } catch (error) {
+    // The page renders these two itself (below); a title must not turn them
+    // back into a thrown error. Anything else is for `error.tsx`.
+    if (error instanceof MerchantAccessError || error instanceof UnexpectedResponseError) return { title: 'Link' }
+    throw error
+  }
 }
 
 export default async function LinkDetailPage({ params }: PageProps) {
   const { code } = await params
-  const resolution = await loadLinkDetail(code)
+  let resolution: LinkDetailResolution
+  try {
+    resolution = await loadLinkDetail(code)
+  } catch (error) {
+    // A customer account and a body that breaks the contract cannot be fixed by
+    // a retry, and `error.tsx` could not tell them from "unreachable" anyway
+    // (production strips a thrown error to a digest) — so they render here.
+    const notice = noticeForReadFailure(error, { subject: 'this link', reloadHref: `/dashboard/links/${code}` })
+    if (notice) return notice
+    throw error
+  }
   if (!resolution.found) notFound()
 
   const { link, payments, asOf } = resolution.data
