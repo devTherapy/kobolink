@@ -52,6 +52,13 @@ describe('createLinkWithRetry — a duplicate code retries invisibly', () => {
     expect(create).toHaveBeenCalledTimes(1)
   })
 
+  it('does not retry a 409 whose code is not `conflict` — only a code collision is safe to resubmit', async () => {
+    const create = vi.fn().mockRejectedValue(apiError(409, { code: 'validation_failed', message: 'nope' }))
+
+    await expect(createLinkWithRetry(REQUEST, create)).rejects.toMatchObject({ error: { code: 'validation_failed' } })
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
   it('does not retry a transport failure: the request may have created the link already', async () => {
     const create = vi.fn().mockRejectedValue(apiError(502, { code: 'internal', message: 'Bad Gateway' }, true))
 
