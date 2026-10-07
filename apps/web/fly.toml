@@ -34,7 +34,6 @@ primary_region = "lhr" # nearest large region to Nigeria; keep the api in the sa
 
 [env]
   API_ORIGIN = "http://kobolink-api.internal:3001"
-  NEXT_PUBLIC_LINK_DOMAIN = "pay.folusayo.com"
   # Must equal the package in packages/contracts; the assetlinks handler 503s
   # on anything else. The fingerprints are a secret-managed value (see above).
   ANDROID_PACKAGE_NAME = "com.folusayo.kobolink"

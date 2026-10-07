@@ -26,14 +26,20 @@ commands anyone with a token can run.
 - [ ] **1. Create the Fly.io account and add payment** at https://fly.io (a
       card is required before machines can run). Install `flyctl` and run
       `fly auth login` on your machine.
-- [ ] **2. Create a deploy token and store it as the GitHub secret
-      `FLY_API_TOKEN`.** One secret has to cover two apps, so use an
-      organisation-scoped token (after step 5, apps exist):
-      `fly tokens create org --name github-deploy --expiry 8760h`, then
-      GitHub -> Settings -> Secrets and variables -> Actions -> New repository
-      secret -> `FLY_API_TOKEN`. (Per-app deploy tokens are narrower but would
-      need two secrets; see "Follow-ups".) Until this secret exists the deploy
-      workflow fails immediately with a clear message and deploys nothing.
+- [ ] **2. Create an organisation-scoped Fly token and store it as the GitHub
+      secret `FLY_API_TOKEN`.** Run `fly tokens create org --name github-deploy
+      --expiry 8760h` (needs only your account, from step 1), then GitHub ->
+      Settings -> Secrets and variables -> Actions -> New repository secret ->
+      `FLY_API_TOKEN`. **Why org-scoped, not `fly tokens create deploy`:** one
+      workflow deploys two apps, and an app-scoped deploy token is valid for
+      one app only, so the second deploy would be rejected. The trade-off is a
+      wider token (it can act on every app in your Fly organisation, not just
+      these two). The narrower alternative is one deploy token per app in two
+      secrets (`FLY_API_TOKEN_API`, `FLY_API_TOKEN_WEB`); that needs a small
+      change to `deploy.yml` and is listed under "Follow-ups". Until the secret
+      exists the deploy workflow fails immediately with a clear message and
+      deploys nothing. Optionally add a protection rule to the `production`
+      environment (Settings -> Environments) so a deploy needs your approval.
 - [ ] **3. Add the GitHub Actions variables** (Settings -> ... -> Variables):
       `DOMAIN` = `pay.folusayo.com`, `EXPECTED_APP_ID` =
       `<APPLE_TEAM_ID>.com.folusayo.kobolink`, optionally `SMOKE_LINK_CODE`.
@@ -114,6 +120,25 @@ for you.
 | Fly managed Postgres | `fly mpg create` (see Fly's docs for current flags), then set the connection string it prints | Managed by Fly, billed separately. |
 | Any external Postgres (Neon, Supabase, RDS, ...) | `fly secrets import --app kobolink-api` and paste `DATABASE_URL=postgres://...` | Add `?sslmode=require` as the provider documents. It must be reachable from Fly's network. |
 
+**Use a DIRECT or session-mode connection string only. Never a
+transaction-mode pooler.** The api holds a dedicated `LISTEN` connection for the
+dashboard stream (`apps/api/src/dashboard/dashboard-listener.service.ts`), and
+`DbService` sends `statement_timeout` as a startup parameter. Behind a
+transaction-mode pooler (PgBouncer in transaction mode, Neon's pooled host,
+Supabase's transaction pooler, possibly Fly managed Postgres' pooled string) the
+`LISTEN` itself succeeds but notifications never arrive, and startup parameters
+can be refused. The failure is quiet: `/api/health` only does `select 1`, so it
+stays green while the live dashboard silently stops updating. How to get the
+right string:
+
+| Provider | Take | Avoid |
+|---|---|---|
+| Fly Postgres (self-managed) | the string `fly postgres attach` sets (port 5432 on the cluster's `.flycast`/`.internal` name) | do not change it to another port or put a pooler in front |
+| Fly managed Postgres | the **direct** connection string | the pooled string (it is shown separately; check Fly's current dashboard/CLI output, not verified here) |
+| Neon | connection details with **Connection pooling turned off** (hostname has no `-pooler`) | the pooled host |
+| Supabase | **Direct connection** (`db.<ref>.supabase.co:5432`), or the **Session pooler** if direct is IPv6-only for your plan | the Transaction pooler (port 6543) |
+| RDS / self-hosted | the database's own endpoint | RDS Proxy or PgBouncer in transaction mode |
+
 Whatever you choose, never commit the URL. `drizzle/` migrations are applied
 by the release command on every api deploy; to run them by hand:
 `fly console --app kobolink-api -C "node dist/db/migrate.js"` (or
@@ -125,7 +150,8 @@ Either from GitHub Actions (preferred, needs `FLY_API_TOKEN`) or by hand.
 
 **GitHub Actions** (`.github/workflows/deploy.yml`) runs only on a manual
 dispatch (Actions -> deploy -> Run workflow) or when a tag `v*` is pushed,
-never on a pull request: it deploys the api, then the web app, then runs the
+never on a pull request, and only from `main` or a `v*` tag (any other ref is
+skipped): it deploys the api, then the web app, then runs the
 smoke test as a separate job.
 
 ```bash
@@ -141,8 +167,8 @@ DOMAIN=pay.folusayo.com EXPECTED_APP_ID=<TEAM_ID>.com.folusayo.kobolink ./script
 ```
 
 Rolling back: `fly releases --app kobolink-web` then
-`fly deploy --image <previous image ref> --app kobolink-web` (the same for
-the api). Migrations are forward-only on deploy; `apps/api/drizzle/*.down.sql`
+`fly deploy --image <previous image ref> --config apps/web/fly.toml --app kobolink-web`
+(the same for the api with `--config apps/api/fly.toml --app kobolink-api`). Migrations are forward-only on deploy; `apps/api/drizzle/*.down.sql`
 exist but are never run automatically.
 
 ## Post-deploy checks
@@ -170,7 +196,7 @@ exist but are never run automatically.
 | `API_ORIGIN` | web | **build arg + env** in `apps/web/fly.toml` |
 | `NEXT_PUBLIC_DASHBOARD_HEARTBEAT_MS` | web | build arg (inlined at build) |
 | `DASHBOARD_HEARTBEAT_MS`, `PORT` | api | env in `apps/api/fly.toml` |
-| `ANDROID_PACKAGE_NAME`, `NEXT_PUBLIC_LINK_DOMAIN` | web | env in `apps/web/fly.toml` |
+| `ANDROID_PACKAGE_NAME` | web | env in `apps/web/fly.toml` |
 | `FLY_API_TOKEN` | GitHub | **secret** |
 | `DOMAIN`, `EXPECTED_APP_ID`, `SMOKE_LINK_CODE` | GitHub | variables |
 
@@ -201,23 +227,44 @@ browser treats 2.5x the interval of silence as a dead stream.
 - **One machine per app** (`--ha=false`) means a deploy or a crash is brief
   downtime for that app. The web app never auto-stops, on purpose (cold starts
   and Apple's CDN fetch).
-- **Org-wide token.** The single `FLY_API_TOKEN` is organisation-scoped.
+- **Org-wide token.** The single `FLY_API_TOKEN` is organisation-scoped (see
+  owner checklist step 2 for why). Add a protection rule to the `production`
+  environment so a deploy needs your approval.
+- **Pooled Postgres strings** silently break the live dashboard stream (see
+  "Postgres").
 
 ## What was verified (and what only written)
 
-Verified locally on the built images: the web image serves both association
-files unredirected as `application/json` with exact JSON and proxies `/api/*`
-to the build-time origin (`scripts/test-image-associations.sh`); the api image
-runs as non-root, applies migrations with `node dist/db/migrate.js` against a
-real Postgres, listens on IPv6 as well as IPv4 (needed for `.internal`), and
-answers its healthcheck. Only written, never executed: both `fly.toml` files,
-`.github/workflows/deploy.yml`, every `fly` command above, DNS, certificates,
-the smoke test against the real domain, and the Android `adb` check.
+Proven by running, against the BUILT images, on a developer machine
+(`scripts/test-image-associations.sh` for web, `scripts/test-image-api.sh` for
+the api; both create only `kobolink-x3-*` things and remove them):
+
+- **web image:** both `/.well-known/*` files answer 200, `application/json`, no
+  redirect, with exact JSON; `/api/*` reaches the origin baked in at build time;
+  `/l/[code]` renders (404 through a stub API) with no missing-module error in
+  the container log.
+- **api image:** as the runtime user, `nanoid` resolves to the lockfile's major
+  version (5) from the api's context and from `packages/contracts`'s context
+  (npm nests that copy under each workspace; the first version of the
+  Dockerfile left both out and silently resolved nanoid 3, which this test
+  caught red before the fix); `node dist/db/migrate.js` applies the migrations
+  to a real Postgres; `node dist/main.js` boots and `/api/health` answers 200
+  against that database. The api also listens on IPv6 (needed for `.internal`)
+  and runs as non-root.
+- The web image carries no nested `node_modules` (the lockfile has none for
+  `apps/web`, and `packages/contracts` is bundled into the Next server output).
+
+NOT proven: anything on Fly itself. Only written, never executed: both
+`fly.toml` files, `.github/workflows/deploy.yml`, every `fly` command above,
+DNS, certificates, the smoke test against the real domain, and the Android
+`adb` check. The image tests run on one architecture (the developer's);
+Fly builds linux/amd64, and the lockfile pins both arm64 and x64 musl binaries
+for the native dependencies.
 
 ## Follow-ups
 
 - Decide `TRUST_PROXY` (above), e.g. by having Next forward Fly's
   `Fly-Client-IP` and the api reading only that.
-- Per-app deploy tokens (two secrets) instead of one org token.
+- Per-app deploy tokens (two secrets, `FLY_API_TOKEN_API` / `FLY_API_TOKEN_WEB`) instead of one org token.
 - A staging app pair and a `workflow_dispatch` input to pick the target.
 - Scale the apps out (`fly scale count 2`) once the database is HA.

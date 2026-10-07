@@ -40,6 +40,13 @@ FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app/apps/api
 COPY --from=deps /app/node_modules /app/node_modules
+# npm nests a dependency under its workspace when the version differs from the
+# hoisted one: package-lock.json pins nanoid 5 in apps/api/node_modules and
+# packages/contracts/node_modules, while the root copy is nanoid 3. Without
+# these two lines the app silently resolves nanoid 3 (or fails to start).
+# scripts/test-image-api.sh asserts the resolved versions.
+COPY --from=deps /app/apps/api/node_modules ./node_modules
+COPY --from=deps /app/packages/contracts/node_modules /app/packages/contracts/node_modules
 # node_modules/@kobolink/contracts is a symlink to packages/contracts.
 COPY --from=build /app/packages/contracts/package.json /app/packages/contracts/package.json
 COPY --from=build /app/packages/contracts/dist /app/packages/contracts/dist

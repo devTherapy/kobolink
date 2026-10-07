@@ -1,15 +1,25 @@
 # Production deploy to Fly.io. NEVER runs on a pull request or a push to a
 # branch: only on a manual dispatch (Actions tab -> deploy -> Run workflow) or
-# on pushing a version tag (v*).
+# on pushing a version tag (v*), and the jobs additionally refuse any ref that
+# is not main or a v* tag.
 #
 # It is inert until the repository owner adds the GitHub secret FLY_API_TOKEN
 # (docs/DEPLOY.md): without it the first step fails with a clear message
 # before anything is built or contacted.
 #
-#   secrets   FLY_API_TOKEN      a Fly deploy token (`fly tokens create deploy`)
+#   secrets   FLY_API_TOKEN      an ORGANISATION-scoped Fly token:
+#                                  fly tokens create org --name github-deploy --expiry 8760h
+#                                One workflow deploys two apps (api and web). An
+#                                app-scoped `fly tokens create deploy` token is
+#                                valid for one app only, so the second deploy
+#                                would be rejected. The trade-off (a wider token)
+#                                is documented in docs/DEPLOY.md.
 #   vars      DOMAIN             pay.folusayo.com
 #             EXPECTED_APP_ID    <APPLE_TEAM_ID>.com.folusayo.kobolink
 #             SMOKE_LINK_CODE    (optional) a real link code to render-check
+#
+# The `production` environment below lets the owner add a protection rule
+# (required reviewers, branch/tag restrictions) in Settings -> Environments.
 #
 # Order: api first (its release_command migrates the database), then web, then
 # the post-deploy smoke test as its own job, so it can be re-run alone when
@@ -32,30 +42,43 @@ permissions:
 jobs:
   deploy:
     name: deploy api, then web
+    # A manual dispatch from any other branch is refused, not deployed.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - name: Require FLY_API_TOKEN
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
-            echo "::error title=FLY_API_TOKEN is not set::Add the repository secret FLY_API_TOKEN (a Fly deploy token) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
+            echo "::error title=FLY_API_TOKEN is not set::Add the repository secret FLY_API_TOKEN (an organisation-scoped Fly token) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
             exit 1
           fi
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Pinned by commit SHA (tag v1 == 1.6 at the time of writing). The token
+      # is deliberately NOT in this job's env: only the two deploy steps below
+      # see it, never checkout or this third-party setup action.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1
       # --remote-only: Fly's builder builds the image, not this runner.
       # The api goes first: its release_command applies migrations, and the
       # new web build must never run against an older schema.
       - name: Deploy api
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile --remote-only
       - name: Deploy web
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy . --config apps/web/fly.toml --dockerfile apps/web/Dockerfile --remote-only
 
   smoke:
     name: post-deploy smoke test
     needs: deploy
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -71,6 +94,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Association smoke test
         run: ./scripts/smoke-associations.sh
