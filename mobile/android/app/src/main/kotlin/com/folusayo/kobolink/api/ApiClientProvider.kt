@@ -4,12 +4,14 @@ import android.content.Context
 import com.folusayo.kobolink.BuildConfig
 import com.folusayo.kobolink.auth.AuthInterceptor
 import com.folusayo.kobolink.auth.EncryptedTokenStore
+import com.folusayo.kobolink.auth.SessionExpiryBus
 import com.folusayo.kobolink.auth.TokenStore
 import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.apis.LinksApi
 import com.folusayo.kobolink.generated.api.apis.WalletApi
 import com.folusayo.kobolink.generated.api.infrastructure.Serializer
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -48,6 +50,9 @@ object ApiClientProvider {
     lateinit var tokenStore: TokenStore
         private set
 
+    /** Signalled by [AuthInterceptor] when the server rejects the stored token mid-session. */
+    val sessionExpiry = SessionExpiryBus()
+
     private var initialized = false
 
     fun init(context: Context) {
@@ -68,7 +73,7 @@ object ApiClientProvider {
             // logs reflects what's actually sent — irrelevant at Level.BASIC
             // (no headers logged either way) but keeps the two interceptors
             // in the order a reader would expect.
-            .addInterceptor(AuthInterceptor(tokenStore))
+            .addInterceptor(AuthInterceptor(tokenStore, BuildConfig.API_BASE_URL.toHttpUrl(), sessionExpiry::notifyExpired))
             .apply {
                 if (BuildConfig.DEBUG) {
                     addInterceptor(HttpLoggingInterceptor().apply {

@@ -66,6 +66,7 @@ private sealed interface LoginState {
 fun LoginScreen(
     login: suspend (email: String, password: String) -> Result<AuthenticatedUser>,
     onLoginSuccess: (AuthenticatedUser) -> Unit,
+    notice: String? = null,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -104,6 +105,23 @@ fun LoginScreen(
                 .padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Why the user is looking at this screen when they didn't ask to
+            // be signed out (their session ended server-side).
+            if (notice != null) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = notice,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(20.dp),
+                    )
+                }
+            }
+
             Text(
                 text = "Sign in to Kobolink to manage your links and wallet.",
                 style = MaterialTheme.typography.bodyMedium,

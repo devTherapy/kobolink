@@ -13,7 +13,10 @@ import kotlinx.serialization.json.Json
  * The one place that turns `AuthApi` calls into a signed-in/signed-out state
  * change. Every branch that can end in "we are now signed in" writes the
  * token through [tokenStore] (never anywhere else); every branch that ends
- * in "we are now signed out" clears it the same way, unconditionally.
+ * in "we are now signed out" clears it the same way.
+ *
+ * Every failure is an [AuthException], so callers can tell a definitive
+ * server rejection (401) from "couldn't find out" (no network, 5xx).
  */
 class AuthRepository(
     private val authApi: AuthApi,
@@ -30,29 +33,47 @@ class AuthRepository(
      * httpOnly cookie (`auth.controller.ts`'s `finishAuth`). On success the
      * token is written to [tokenStore] before this function returns, so a
      * caller never has to remember to do that itself.
+     *
+     * If secure storage refuses the token (Keystore invalidated, encryption
+     * failure, disk error) the result is a failure saying so and the user is
+     * NOT signed in. There is deliberately no fallback to plain storage.
      */
-    suspend fun login(email: String, password: String): Result<AuthenticatedUser> = try {
-        val response = authApi.login(
-            LoginRequest(email = email, password = password, client = LoginRequest.Client.mobile),
-        )
-        val body = response.body()
-        when {
-            !response.isSuccessful || body == null ->
-                Result.failure(RuntimeException(parseApiError(response.errorBody()?.string())))
-            body.token == null ->
-                // Would mean the server treated this as a web login despite
-                // client: "mobile" — a contract violation, not a user-facing
-                // "wrong password" case, so it gets its own message.
-                Result.failure(RuntimeException("Sign-in succeeded but the server didn't return a session token."))
-            else -> {
-                tokenStore.saveToken(body.token!!)
-                Result.success(body.user.toAuthenticatedUser())
+    suspend fun login(email: String, password: String): Result<AuthenticatedUser> {
+        val body = try {
+            val response = authApi.login(
+                LoginRequest(email = email, password = password, client = LoginRequest.Client.mobile),
+            )
+            val parsed = response.body()
+            if (!response.isSuccessful || parsed == null) {
+                return Result.failure(
+                    AuthException(response.code(), parseApiError(response.errorBody()?.string())),
+                )
             }
+            parsed
+        } catch (e: IOException) {
+            return Result.failure(AuthException(null, UNREACHABLE_MESSAGE, e))
+        } catch (e: SerializationException) {
+            return Result.failure(AuthException(null, UNPARSEABLE_MESSAGE, e))
         }
-    } catch (e: IOException) {
-        Result.failure(RuntimeException("Couldn't reach the API. Check the connection and API_BASE_URL.", e))
-    } catch (e: SerializationException) {
-        Result.failure(RuntimeException("The API returned something this app couldn't parse.", e))
+
+        val token = body.token
+            // Would mean the server treated this as a web login despite
+            // client: "mobile" — a contract violation, not a user-facing
+            // "wrong password" case, so it gets its own message.
+            ?: return Result.failure(
+                AuthException(null, "Sign-in succeeded but the server didn't return a session token."),
+            )
+
+        // Broad on purpose: EncryptedSharedPreferences/Keystore failures arrive as
+        // SecurityException, GeneralSecurityException wrappers, IOException or plain
+        // RuntimeExceptions depending on the device. saveToken is not suspending, so
+        // this cannot swallow a coroutine cancellation.
+        try {
+            tokenStore.saveToken(token)
+        } catch (e: Exception) {
+            return Result.failure(AuthException(null, SECURE_STORAGE_FAILED_MESSAGE, e))
+        }
+        return Result.success(body.user.toAuthenticatedUser())
     }
 
     /**
@@ -61,6 +82,10 @@ class AuthRepository(
      * attached is one the server still accepts. Used on cold start: a stored
      * token alone only proves something was saved once, not that the session
      * is still live (it may have expired or been revoked server-side).
+     *
+     * The failure is an [AuthException]; only [AuthException.isUnauthorized]
+     * means the token is dead. Anything else (offline, timeout, 5xx) says
+     * nothing about the token and the caller must keep it.
      */
     suspend fun currentUser(): Result<AuthenticatedUser> = try {
         val response = authApi.getMe()
@@ -68,12 +93,12 @@ class AuthRepository(
         if (response.isSuccessful && body != null) {
             Result.success(body.user.toAuthenticatedUser())
         } else {
-            Result.failure(RuntimeException(parseApiError(response.errorBody()?.string())))
+            Result.failure(AuthException(response.code(), parseApiError(response.errorBody()?.string())))
         }
     } catch (e: IOException) {
-        Result.failure(RuntimeException("Couldn't reach the API. Check the connection and API_BASE_URL.", e))
+        Result.failure(AuthException(null, UNREACHABLE_MESSAGE, e))
     } catch (e: SerializationException) {
-        Result.failure(RuntimeException("The API returned something this app couldn't parse.", e))
+        Result.failure(AuthException(null, UNPARSEABLE_MESSAGE, e))
     }
 
     /**
@@ -85,6 +110,8 @@ class AuthRepository(
      * done-when this feature ships against is specifically that the token is
      * actually removed from encrypted storage, not merely forgotten in
      * memory.
+     *
+     * Throws if the local clear itself fails; see [TokenStore.clear].
      */
     suspend fun logout() {
         try {
@@ -99,7 +126,7 @@ class AuthRepository(
         }
     }
 
-    /** Drops a stale local token (e.g. `currentUser()` found it already expired/revoked) without calling the API — there is nothing valid left to revoke. */
+    /** Drops a stale local token (e.g. the server answered 401) without calling the API — there is nothing valid left to revoke. */
     fun forgetLocalSession() {
         tokenStore.clear()
     }
@@ -111,6 +138,14 @@ class AuthRepository(
             .getOrNull()
             ?.message
             ?: fallback
+    }
+
+    private companion object {
+        const val UNREACHABLE_MESSAGE = "Couldn't reach the API. Check the connection and API_BASE_URL."
+        const val UNPARSEABLE_MESSAGE = "The API returned something this app couldn't parse."
+        const val SECURE_STORAGE_FAILED_MESSAGE =
+            "Couldn't save your session to secure storage on this device, so you were not signed in. " +
+                "Try again; if it keeps happening, restart the phone."
     }
 }
 

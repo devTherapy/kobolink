@@ -14,12 +14,22 @@ package com.folusayo.kobolink.auth
  * the only door.
  */
 interface TokenStore {
-    /** Persists [token] as the current session credential, replacing any previous one. */
+    /**
+     * Persists [token] as the current session credential, replacing any
+     * previous one. Synchronous and durable: when this returns, the token is
+     * on disk. Throws if it could not be stored securely (Keystore or
+     * encryption failure, disk error); there is no plaintext fallback, and
+     * callers must treat a throw as "not signed in".
+     */
     fun saveToken(token: String)
 
     /** The current session token, or `null` if nothing is stored (signed out). */
     fun token(): String?
 
-    /** Removes the stored token. After this call, [token] returns `null`. */
+    /**
+     * Removes the stored token, synchronously and durably: when this returns,
+     * the removal is on disk, so killing the process right after cannot bring
+     * the session back. Throws if the removal could not be written.
+     */
     fun clear()
 }

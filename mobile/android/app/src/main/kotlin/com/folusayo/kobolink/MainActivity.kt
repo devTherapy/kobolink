@@ -6,21 +6,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.folusayo.kobolink.api.ApiClientProvider
-import com.folusayo.kobolink.auth.AuthRepository
-import com.folusayo.kobolink.auth.AuthenticatedUser
+import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.deeplink.parseLinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
@@ -28,18 +26,11 @@ import com.folusayo.kobolink.generated.api.models.Wallet
 import com.folusayo.kobolink.ui.screen.HomeScreen
 import com.folusayo.kobolink.ui.screen.LinkLookupScreen
 import com.folusayo.kobolink.ui.screen.LoginScreen
+import com.folusayo.kobolink.ui.screen.OfflineScreen
 import com.folusayo.kobolink.ui.screen.toDisplayMessage
 import com.folusayo.kobolink.ui.theme.KobolinkTheme
 import java.io.IOException
-import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
-
-/** Where the app is in the sign-in lifecycle — decided once at cold start, then updated by [LoginScreen] and [HomeScreen]'s own callbacks. */
-private sealed interface Session {
-    data object Resolving : Session
-    data object SignedOut : Session
-    data class SignedIn(val user: AuthenticatedUser) : Session
-}
 
 /**
  * Entry point: a sign-in gate (M2) in front of the App Links flow (M1).
@@ -51,27 +42,21 @@ private sealed interface Session {
  * think they're the current screen.
  *
  * Deep link + sign-in: the link code lives in [deepLinkCode], which is
- * independent of [Session] and is never consumed by the sign-in gate. A link
+ * independent of [SessionState] and is never consumed by the sign-in gate. A link
  * received while signed out therefore simply waits: the login screen shows,
  * and once the user is signed in the same code routes to [LinkLookupScreen].
  * Signed in with no pending link, the user lands on [HomeScreen].
  */
 class MainActivity : ComponentActivity() {
 
-    private val authRepository by lazy {
-        AuthRepository(ApiClientProvider.auth, ApiClientProvider.tokenStore, ApiClientProvider.json)
-    }
+    // Survives rotation: owns the session (so the cold-start /me check runs once
+    // per process, not once per Activity instance) and the dismissed-link marker.
+    private val viewModel: MainViewModel by viewModels { MainViewModel.Factory }
 
     // A plain mutableStateOf, not a StateFlow/ViewModel: read as Compose state
     // so onNewIntent's update recomposes the screen already on screen instead
     // of requiring a restart.
     private var deepLinkCode by mutableStateOf<String?>(null)
-
-    // The link code the user backed out of ([BackHandler] below). Remembered so
-    // the rotation-safe re-parse in onCreate doesn't resurrect a link the user
-    // already dismissed; reset by onNewIntent, because a fresh tap is a fresh
-    // request to open it.
-    private var dismissedLinkCode: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,43 +73,26 @@ class MainActivity : ComponentActivity() {
         // one layer down instead (LinkLookupScreen's rememberSaveable state
         // plus its LaunchedEffect skipping a code it already has a terminal
         // result for).
-        deepLinkCode = codeFrom(intent)?.takeUnless { it == dismissedLinkCode }
+        deepLinkCode = codeFrom(intent)?.takeUnless { it == viewModel.dismissedLinkCode }
 
         setContent {
             KobolinkTheme {
-                var session by remember { mutableStateOf<Session>(Session.Resolving) }
-                val scope = rememberCoroutineScope()
-
-                // A stored token only proves something was saved once — it
-                // may since have expired or been revoked server-side. `/api/
-                // auth/me` is the authenticated round trip that confirms the
-                // server still honors it before this app trusts it enough to
-                // skip straight past the login screen.
-                LaunchedEffect(Unit) {
-                    session = if (authRepository.isSignedIn) {
-                        authRepository.currentUser().fold(
-                            onSuccess = { Session.SignedIn(it) },
-                            onFailure = {
-                                authRepository.forgetLocalSession()
-                                Session.SignedOut
-                            },
-                        )
-                    } else {
-                        Session.SignedOut
-                    }
-                }
+                val session by viewModel.sessionState.collectAsState()
 
                 when (val current = session) {
-                    is Session.Resolving -> ResolvingScreen()
-                    is Session.SignedOut -> LoginScreen(
-                        login = authRepository::login,
-                        onLoginSuccess = { user -> session = Session.SignedIn(user) },
+                    is SessionState.Resolving -> ResolvingScreen()
+                    is SessionState.Offline -> OfflineScreen(message = current.message, onRetry = viewModel::retry)
+                    is SessionState.SignedOut -> LoginScreen(
+                        login = viewModel::login,
+                        // MainViewModel.login has already moved the session to SignedIn.
+                        onLoginSuccess = {},
+                        notice = current.notice,
                     )
-                    is Session.SignedIn -> {
+                    is SessionState.SignedIn -> {
                         val code = deepLinkCode
                         if (code != null) {
                             BackHandler {
-                                dismissedLinkCode = code
+                                viewModel.dismissedLinkCode = code
                                 deepLinkCode = null
                             }
                             LinkLookupScreen(resolveLink = ::resolvePublicLink, initialCode = code)
@@ -132,12 +100,7 @@ class MainActivity : ComponentActivity() {
                             HomeScreen(
                                 user = current.user,
                                 fetchWallet = ::fetchWallet,
-                                onLogout = {
-                                    scope.launch {
-                                        authRepository.logout()
-                                        session = Session.SignedOut
-                                    }
-                                },
+                                onLogout = viewModel::logout,
                             )
                         }
                     }
@@ -149,7 +112,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        dismissedLinkCode = null
+        viewModel.dismissedLinkCode = null
         deepLinkCode = codeFrom(intent)
     }
 

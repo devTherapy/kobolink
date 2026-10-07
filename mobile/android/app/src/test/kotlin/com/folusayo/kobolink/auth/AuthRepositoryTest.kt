@@ -1,21 +1,10 @@
 package com.folusayo.kobolink.auth
 
-import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.infrastructure.Serializer
-import com.folusayo.kobolink.generated.api.models.AuthResponse
-import com.folusayo.kobolink.generated.api.models.AuthResponseSession
-import com.folusayo.kobolink.generated.api.models.AuthResponseUser
-import com.folusayo.kobolink.generated.api.models.AuthResponseUserPhone
-import com.folusayo.kobolink.generated.api.models.LoginRequest
-import com.folusayo.kobolink.generated.api.models.MeResponse
-import com.folusayo.kobolink.generated.api.models.MeResponseUser
-import com.folusayo.kobolink.generated.api.models.RegisterRequest
 import java.io.IOException
-import java.time.OffsetDateTime
 import kotlinx.coroutines.test.runTest
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,92 +15,27 @@ import retrofit2.Response
  * "we are now signed out" — this proves both directions without a network or
  * an Android Keystore: a scriptable [FakeAuthApi] stands in for the real
  * Retrofit interface, and [RecordingTokenStore] stands in for
- * [EncryptedTokenStore].
+ * [EncryptedTokenStore] (see AuthFakes.kt).
  *
  * `AuthResponse.user` and `MeResponse.user` are, per [AuthenticatedUser]'s
  * doc comment, two different generated classes (`AuthResponseUser`,
- * `MeResponseUser`) for the same conceptual `User` — this test constructs
+ * `MeResponseUser`) for the same conceptual `User` — these tests construct
  * both to prove [AuthRepository] normalizes either into one
  * [AuthenticatedUser] shape.
  */
 class AuthRepositoryTest {
 
-    private val authResponseUser = AuthResponseUser(
-        id = "user_123",
-        role = AuthResponseUser.Role.merchant,
-        email = "ngozi@example.com",
-        phone = AuthResponseUserPhone(),
-        displayName = "Ngozi",
-        createdAt = OffsetDateTime.now(),
-    )
-
-    private val meResponseUser = MeResponseUser(
-        id = "user_123",
-        role = MeResponseUser.Role.merchant,
-        email = "ngozi@example.com",
-        phone = AuthResponseUserPhone(),
-        displayName = "Ngozi",
-        createdAt = OffsetDateTime.now(),
-    )
-
-    private class RecordingTokenStore : TokenStore {
-        var saved: String? = null
-            private set
-        var clearCalls = 0
-            private set
-
-        override fun saveToken(token: String) {
-            saved = token
-        }
-
-        override fun token(): String? = saved
-
-        override fun clear() {
-            saved = null
-            clearCalls += 1
-        }
-    }
-
-    private class FakeAuthApi(
-        private val loginResponse: Response<AuthResponse>? = null,
-        private val meResponse: Response<MeResponse>? = null,
-        private val logoutThrows: Exception? = null,
-    ) : AuthApi {
-        var logoutCalled = false
-
-        override suspend fun getMe(): Response<MeResponse> = meResponse ?: error("no getMe() stub configured")
-
-        override suspend fun login(loginRequest: LoginRequest): Response<AuthResponse> =
-            loginResponse ?: error("no login() stub configured")
-
-        override suspend fun logout(): Response<Unit> {
-            logoutCalled = true
-            logoutThrows?.let { throw it }
-            return Response.success(204, Unit)
-        }
-
-        override suspend fun registerUser(registerRequest: RegisterRequest): Response<AuthResponse> =
-            error("not used by these tests")
-    }
-
-    private fun jsonErrorBody(code: String, message: String) = """{"code":"$code","message":"$message"}"""
-        .toResponseBody("application/json".toMediaType())
+    private val json = Serializer.kotlinxSerializationJson
 
     @Test
     fun `login stores the returned token and resolves the user`() = runTest {
         val tokenStore = RecordingTokenStore()
-        val authResponse = AuthResponse(
-            user = authResponseUser,
-            session = AuthResponseSession(id = "sess_1", expiresAt = OffsetDateTime.now().plusDays(30)),
-            token = "a-real-looking-session-token-value",
-        )
-        val api = FakeAuthApi(loginResponse = Response.success(authResponse))
-        val repo = AuthRepository(api, tokenStore, Serializer.kotlinxSerializationJson)
+        val repo = AuthRepository(FakeAuthApi(loginResponse = loginSuccess()), tokenStore, json)
 
         val result = repo.login("ngozi@example.com", "correct horse battery staple")
 
         assertTrue(result.isSuccess)
-        assertEquals(AuthenticatedUser(id = "user_123", email = "ngozi@example.com", displayName = "Ngozi"), result.getOrNull())
+        assertEquals(ngozi, result.getOrNull())
         assertEquals("a-real-looking-session-token-value", tokenStore.saved)
         assertTrue(repo.isSignedIn)
     }
@@ -122,7 +46,7 @@ class AuthRepositoryTest {
         val api = FakeAuthApi(
             loginResponse = Response.error(401, jsonErrorBody("unauthenticated", "Incorrect email or password.")),
         )
-        val repo = AuthRepository(api, tokenStore, Serializer.kotlinxSerializationJson)
+        val repo = AuthRepository(api, tokenStore, json)
 
         val result = repo.login("ngozi@example.com", "wrong-password")
 
@@ -133,16 +57,80 @@ class AuthRepositoryTest {
     }
 
     @Test
+    fun `login returns a failure instead of throwing when secure storage rejects the token`() = runTest {
+        // A Keystore/encryption failure surfaces from EncryptedSharedPreferences as a
+        // SecurityException (or another runtime exception). It must not escape login():
+        // LoginScreen calls it from a bare scope.launch, where it would crash the app.
+        val tokenStore = RecordingTokenStore(saveFailure = SecurityException("Keystore key invalidated"))
+        val repo = AuthRepository(FakeAuthApi(loginResponse = loginSuccess()), tokenStore, json)
+
+        val result = repo.login("ngozi@example.com", "correct horse battery staple")
+
+        assertTrue("login must return Result.failure, not throw", result.isFailure)
+        val message = result.exceptionOrNull()?.message.orEmpty()
+        assertTrue("message should say the user was not signed in: $message", message.contains("not signed in"))
+        assertTrue("message should name secure storage as what failed: $message", message.contains("secure storage"))
+        assertNull("nothing may be stored in plain form as a fallback", tokenStore.saved)
+        assertTrue(!repo.isSignedIn)
+    }
+
+    @Test
+    fun `a storage IOException is not reported as a network problem`() = runTest {
+        val tokenStore = RecordingTokenStore(saveFailure = IOException("disk full"))
+        val repo = AuthRepository(FakeAuthApi(loginResponse = loginSuccess()), tokenStore, json)
+
+        val message = repo.login("ngozi@example.com", "pw").exceptionOrNull()?.message.orEmpty()
+
+        assertTrue("should not blame the API connection: $message", !message.contains("reach the API"))
+        assertTrue(message.contains("not signed in"))
+    }
+
+    @Test
     fun `currentUser resolves the MeResponse shape into the same AuthenticatedUser type as login`() = runTest {
         val tokenStore = RecordingTokenStore()
         tokenStore.saveToken("already-signed-in-token")
-        val api = FakeAuthApi(meResponse = Response.success(MeResponse(user = meResponseUser)))
-        val repo = AuthRepository(api, tokenStore, Serializer.kotlinxSerializationJson)
+        val repo = AuthRepository(FakeAuthApi(meResponse = meSuccess()), tokenStore, json)
 
         val result = repo.currentUser()
 
         assertTrue(result.isSuccess)
-        assertEquals(AuthenticatedUser(id = "user_123", email = "ngozi@example.com", displayName = "Ngozi"), result.getOrNull())
+        assertEquals(ngozi, result.getOrNull())
+    }
+
+    @Test
+    fun `currentUser exposes 401 as unauthorized`() = runTest {
+        val api = FakeAuthApi(meResponse = Response.error(401, jsonErrorBody("unauthenticated", "Session expired.")))
+        val repo = AuthRepository(api, RecordingTokenStore(), json)
+
+        val failure = repo.currentUser().exceptionOrNull() as? AuthException
+
+        assertNotNull("failure must be an AuthException so callers can read the status", failure)
+        assertEquals(401, failure!!.httpStatus)
+        assertTrue(failure.isUnauthorized)
+    }
+
+    @Test
+    fun `currentUser exposes a 5xx without calling it unauthorized`() = runTest {
+        val api = FakeAuthApi(meResponse = Response.error(503, jsonErrorBody("unavailable", "Try again soon.")))
+        val repo = AuthRepository(api, RecordingTokenStore(), json)
+
+        val failure = repo.currentUser().exceptionOrNull() as? AuthException
+
+        assertNotNull(failure)
+        assertEquals(503, failure!!.httpStatus)
+        assertTrue(!failure.isUnauthorized)
+    }
+
+    @Test
+    fun `currentUser reports a network failure with no status`() = runTest {
+        val api = FakeAuthApi(meThrows = IOException("no network"))
+        val repo = AuthRepository(api, RecordingTokenStore(), json)
+
+        val failure = repo.currentUser().exceptionOrNull() as? AuthException
+
+        assertNotNull(failure)
+        assertNull(failure!!.httpStatus)
+        assertTrue(!failure.isUnauthorized)
     }
 
     @Test
@@ -150,7 +138,7 @@ class AuthRepositoryTest {
         val tokenStore = RecordingTokenStore()
         tokenStore.saveToken("token-to-be-cleared")
         val api = FakeAuthApi(logoutThrows = IOException("no network"))
-        val repo = AuthRepository(api, tokenStore, Serializer.kotlinxSerializationJson)
+        val repo = AuthRepository(api, tokenStore, json)
 
         repo.logout()
 
@@ -165,7 +153,7 @@ class AuthRepositoryTest {
         val tokenStore = RecordingTokenStore()
         tokenStore.saveToken("stale-token")
         val api = FakeAuthApi()
-        val repo = AuthRepository(api, tokenStore, Serializer.kotlinxSerializationJson)
+        val repo = AuthRepository(api, tokenStore, json)
 
         repo.forgetLocalSession()
 

@@ -1,85 +1,133 @@
 package com.folusayo.kobolink.auth
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
  * Needs a real Android Keystore (`MasterKey`), so this runs on a device or
  * emulator (`connectedAndroidTest`), not the JVM unit-test sandbox — see
- * `AuthRepositoryTest`/`AuthInterceptorTest` for the parts of this feature
- * that ARE JVM-testable.
+ * `AuthRepositoryTest`/`AuthInterceptorTest`/`SessionControllerTest` for the
+ * parts of this feature that ARE JVM-testable. NOTE: written without an
+ * emulator available; it compiles (`compileDebugAndroidTestKotlin`) but has
+ * not been run.
  *
- * Proves PLAN.md's M2 done-when directly against the actual bytes on disk:
- * (a) a saved token is never present in the backing XML file as plaintext,
- * and (b) [TokenStore.clear] genuinely removes it, not merely from this
- * process's in-memory view — a second, independent [EncryptedTokenStore]
- * instance over the same file confirms it stays gone.
+ * Proves PLAN.md's M2 done-when against the bytes on disk, never against the
+ * in-process `SharedPreferences` object:
+ *
+ * `Context` caches one `SharedPreferences` instance per file, so any check
+ * that goes through `store.token()` or a second `EncryptedTokenStore` is
+ * answered from that cache and passes even if nothing was ever written. Every
+ * durability assertion here therefore reads the backing XML file directly.
+ * That is only meaningful because [EncryptedTokenStore] saves and clears with
+ * `commit()`, which returns after the write has reached disk (`apply()`
+ * returns first and writes later, so a raw read could race it).
  */
 @RunWith(AndroidJUnit4::class)
 class EncryptedTokenStoreInstrumentedTest {
 
-    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    private val context: Context = ApplicationProvider.getApplicationContext()
 
-    /** The literal name every plaintext `SharedPreferences` read/write of the token would use — the plaintext regression this whole feature exists to prevent. */
-    private val plaintextKeyName = "session_token"
     private val fakeToken = "AAAA.this-looks-like-a-real-bearer-session-token.BBBB1234567890"
 
-    private fun backingFile(): File =
-        File(context.filesDir.parentFile, "shared_prefs/${EncryptedTokenStore.PREFS_FILE_NAME}.xml")
+    /** The literal name a plaintext `SharedPreferences` write of the token would use. */
+    private val plaintextKeyName = "session_token"
+
+    private val controlPrefsName = "kobolink_plaintext_control"
+
+    @Before
+    fun cleanSlate() = deleteAll()
+
+    @After
+    fun tearDown() = deleteAll()
+
+    // deleteSharedPreferences also evicts the Context's cached instance, so each
+    // test starts from a genuinely empty file rather than a stale cached map.
+    private fun deleteAll() {
+        context.deleteSharedPreferences(EncryptedTokenStore.PREFS_FILE_NAME)
+        context.deleteSharedPreferences(controlPrefsName)
+    }
+
+    private fun prefsFile(name: String): File =
+        File(context.applicationInfo.dataDir, "shared_prefs/$name.xml")
+
+    private fun rawBytes(name: String): ByteArray {
+        val file = prefsFile(name)
+        assertTrue("expected ${file.path} to exist on disk", file.exists())
+        return file.readBytes()
+    }
+
+    /** Byte-for-byte search, so a match cannot be missed to charset decoding. */
+    private fun ByteArray.contains(needle: String): Boolean {
+        val n = needle.toByteArray(Charsets.UTF_8)
+        if (n.isEmpty() || n.size > size) return false
+        for (i in 0..size - n.size) {
+            var j = 0
+            while (j < n.size && this[i + j] == n[j]) j++
+            if (j == n.size) return true
+        }
+        return false
+    }
+
+    /** The `name="..."` attribute of every entry in a SharedPreferences XML file. */
+    private fun entryNames(xml: ByteArray): Set<String> =
+        Regex("""name="([^"]*)"""").findAll(String(xml, Charsets.UTF_8)).map { it.groupValues[1] }.toSet()
 
     @Test
-    fun savedTokenIsNotPlaintextOnDisk() {
-        backingFile().delete()
-        val store = EncryptedTokenStore(context)
+    fun detectorControl_aPlainSharedPreferencesTokenIsFoundInTheRawFile() {
+        // Proves the byte search in the next test CAN fail: the same check on a
+        // deliberately plaintext store must find the token and the key name.
+        val committed = context.getSharedPreferences(controlPrefsName, Context.MODE_PRIVATE)
+            .edit().putString(plaintextKeyName, fakeToken).commit()
+        assertTrue(committed)
 
-        store.saveToken(fakeToken)
-        assertEquals(fakeToken, store.token())
+        val raw = rawBytes(controlPrefsName)
 
-        val file = backingFile()
-        assertTrue("expected ${file.path} to exist after saveToken()", file.exists())
-
-        val raw = file.readText()
-        assertFalse(
-            "the raw XML file must never contain the plaintext token",
-            raw.contains(fakeToken),
-        )
-        assertFalse(
-            "EncryptedSharedPreferences also encrypts preference KEYS — the literal key name must not appear either",
-            raw.contains(plaintextKeyName),
-        )
-
-        store.clear()
+        assertTrue("control: plaintext token must be visible in the raw file", raw.contains(fakeToken))
+        assertTrue("control: plaintext key name must be visible in the raw file", raw.contains(plaintextKeyName))
     }
 
     @Test
-    fun clearRemovesTheTokenPermanently() {
-        backingFile().delete()
+    fun savedTokenIsNotPlaintextOnDisk() {
         val store = EncryptedTokenStore(context)
+
+        store.saveToken(fakeToken) // synchronous: on disk when this returns
+
+        val raw = rawBytes(EncryptedTokenStore.PREFS_FILE_NAME)
+        assertTrue("the file must actually contain the encrypted entry", raw.isNotEmpty())
+        assertFalse("the raw file must never contain the plaintext token", raw.contains(fakeToken))
+        assertFalse(
+            "EncryptedSharedPreferences also encrypts preference KEYS, so the literal key name must not appear",
+            raw.contains(plaintextKeyName),
+        )
+    }
+
+    @Test
+    fun saveWritesAnEntryAndClearRemovesItFromDisk() {
+        val store = EncryptedTokenStore(context)
+        val baseline = entryNames(rawBytes(EncryptedTokenStore.PREFS_FILE_NAME)) // just the key/value keysets
+
         store.saveToken(fakeToken)
-        assertEquals(fakeToken, store.token())
+        val afterSave = entryNames(rawBytes(EncryptedTokenStore.PREFS_FILE_NAME))
+        assertEquals("save must add exactly one entry on disk", baseline.size + 1, afterSave.size)
+        assertTrue(afterSave.containsAll(baseline))
 
         store.clear()
 
-        assertNull("token() must return null immediately after clear()", store.token())
-
-        // A fresh instance over the same backing file — not just this
-        // object's in-memory state — must also see nothing. This is what
-        // makes "logout" durable rather than a value this process merely
-        // forgot until the next read.
-        val reopened = EncryptedTokenStore(context)
-        assertNull("clear() must persist — a new EncryptedTokenStore over the same file must not see the old token", reopened.token())
-
-        val raw = backingFile().readText()
-        assertFalse(
-            "no trace of the cleared token should remain in the backing file",
-            raw.contains(fakeToken),
-        )
+        // Read from the file, not from store.token(): the cached in-process
+        // instance would report null here even if the removal never reached disk.
+        val afterClear = entryNames(rawBytes(EncryptedTokenStore.PREFS_FILE_NAME))
+        assertEquals("clear() must leave no token entry on disk", baseline, afterClear)
+        assertFalse(rawBytes(EncryptedTokenStore.PREFS_FILE_NAME).contains(fakeToken))
+        assertNull(store.token())
     }
 }

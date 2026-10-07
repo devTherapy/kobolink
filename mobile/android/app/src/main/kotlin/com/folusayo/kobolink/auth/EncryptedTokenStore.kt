@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.IOException
 
 /**
  * [TokenStore] backed by `androidx.security:security-crypto`'s
@@ -46,17 +47,24 @@ class EncryptedTokenStore(context: Context) : TokenStore {
         )
     }
 
+    // commit(), not apply(): apply() returns before the write reaches disk and
+    // reports no failure, so a process kill right after logout could resurrect
+    // the session, and a failed save would look like a signed-in user.
     override fun saveToken(token: String) {
         // Never log `token` here or anywhere it passes through — see
         // ApiClientProvider's HttpLoggingInterceptor setup for the
         // corresponding rule on the wire.
-        prefs.edit().putString(KEY_TOKEN, token).apply()
+        if (!prefs.edit().putString(KEY_TOKEN, token).commit()) {
+            throw IOException("Secure storage did not accept the session token (SharedPreferences commit failed).")
+        }
     }
 
     override fun token(): String? = prefs.getString(KEY_TOKEN, null)
 
     override fun clear() {
-        prefs.edit().remove(KEY_TOKEN).apply()
+        if (!prefs.edit().remove(KEY_TOKEN).commit()) {
+            throw IOException("Secure storage did not remove the session token (SharedPreferences commit failed).")
+        }
     }
 
     companion object {
