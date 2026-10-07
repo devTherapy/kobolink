@@ -92,7 +92,7 @@ function buildResponses(responses: readonly ResponseDef[]): Record<string, unkno
       description: response.description,
       ...(response.schema === null
         ? {}
-        : { content: { 'application/json': { schema: schemaOf(response.schema) } } }),
+        : { content: { [response.mediaType ?? 'application/json']: { schema: schemaOf(response.schema) } } }),
     }
   }
   // Every route can fail; every failure is `ApiError`-shaped
@@ -109,6 +109,22 @@ function buildResponses(responses: readonly ResponseDef[]): Record<string, unkno
   return out
 }
 
+/**
+ * OpenAPI's `security` names credentials, not roles — a merchant-only route
+ * accepts exactly the same cookie or bearer token as any session route, so
+ * the role requirement has nowhere structural to go and is stated in prose
+ * instead, appended to whatever the manifest already says about the route.
+ */
+const MERCHANT_ONLY =
+  'Requires the merchant role: a signed-in customer gets `403` with `code: "forbidden"`, ' +
+  'a missing or invalid credential `401` with `code: "unauthenticated"`.'
+
+function buildDescription(route: RouteDef): string | undefined {
+  const parts = [route.description, route.auth === 'merchant' ? MERCHANT_ONLY : undefined]
+  const description = parts.filter((part): part is string => part !== undefined).join('\n\n')
+  return description === '' ? undefined : description
+}
+
 function buildOperation(route: RouteDef, componentSchemas: Record<string, JsonSchema>): Record<string, unknown> {
   const operation: Record<string, unknown> = {
     operationId: route.operationId,
@@ -117,6 +133,8 @@ function buildOperation(route: RouteDef, componentSchemas: Record<string, JsonSc
     parameters: buildParameters(route, componentSchemas),
     responses: buildResponses(route.responses),
   }
+  const description = buildDescription(route)
+  if (description !== undefined) operation.description = description
   if (route.requestBody) {
     operation.requestBody = {
       required: true,
@@ -124,9 +142,11 @@ function buildOperation(route: RouteDef, componentSchemas: Record<string, JsonSc
       content: { 'application/json': { schema: ref(route.requestBody.schema) } },
     }
   }
-  if (route.auth === 'session') {
+  if (route.auth !== 'none') {
     // OR, not AND: a request needs the web cookie *or* a mobile bearer
-    // token, never both — matches `extractToken`'s own precedence.
+    // token, never both — matches `extractToken`'s own precedence. The
+    // same for `'merchant'`: the role is a check on the resolved user,
+    // not a third credential (see `MERCHANT_ONLY`).
     operation.security = [{ sessionCookie: [] }, { bearerAuth: [] }]
   }
   return operation

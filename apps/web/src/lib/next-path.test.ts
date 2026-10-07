@@ -18,6 +18,12 @@ describe('sameOriginPath', () => {
     expect(sameOriginPath('')).toBeNull()
   })
 
+  it('rejects a non-string — a repeated ?next= key reaches us as string[]', () => {
+    expect(sameOriginPath(['/a', '/b'])).toBeNull()
+    expect(sameOriginPath([])).toBeNull()
+    expect(sameOriginPath(42)).toBeNull()
+  })
+
   it('rejects an absolute off-origin URL', () => {
     expect(sameOriginPath('https://evil.example/phish')).toBeNull()
   })

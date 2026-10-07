@@ -22,8 +22,13 @@ export interface Session {
  * `next/headers` itself) is what makes `getSession` callable from outside a
  * Next request context — a plain unit test, or a caller that already has
  * the header value some other way — without needing to mock `next/headers`.
+ *
+ * Exported because `src/lib/dashboard.ts`'s `loadDashboardData` needs the
+ * exact same seam for the same reason (forwarding the session cookie to
+ * `dashboard.stats`/`links.list` from a Server Component) — one copy of the
+ * "explicit cookie header, else read `next/headers`" logic, not two.
  */
-async function resolveCookieHeader(explicit: string | undefined): Promise<string> {
+export async function resolveCookieHeader(explicit: string | undefined): Promise<string> {
   if (explicit !== undefined) return explicit
   const store = await nextCookies()
   return store.toString()

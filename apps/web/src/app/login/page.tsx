@@ -17,10 +17,12 @@ export const metadata: Metadata = {
  * static heading and shell as client JS.
  *
  * `searchParams` is a `Promise` in this Next.js major version, same as
- * `/l/[code]`'s `params` (see that page's own doc comment).
+ * `/l/[code]`'s `params` (see that page's own doc comment). `next` is
+ * `string | string[]`: a repeated `?next=` key arrives as an array, which
+ * `sameOriginPath` rejects (it takes `unknown`) instead of throwing.
  */
 interface PageProps {
-  searchParams: Promise<{ next?: string }>
+  searchParams: Promise<{ next?: string | string[] }>
 }
 
 export default async function LoginPage({ searchParams }: PageProps) {

@@ -23,3 +23,20 @@ here. Read top to bottom to follow how the implementation was built.
 | 16 | B6 | SSE dashboard stream fed by Postgres LISTEN/NOTIFY | https://github.com/devTherapy/kobolink/pull/28 | 2026-09-12 |
 | 17 | M0 | Android scaffold, Kotlin models from OpenAPI, API client | https://github.com/devTherapy/kobolink/pull/32 | 2026-09-12 |
 | 18 | B8 | Phase 2 — wallet accounts, balance derivation, P2P transfer, QR payload | https://github.com/devTherapy/kobolink/pull/31 | 2026-09-12 |
+
+---
+
+## Follow-ups
+
+Out-of-scope findings a domain agent or reviewer surfaces while working a row.
+Standing rule: nobody (orchestrator or domain agent) spawns a background task
+chip for these. A domain agent records the finding in its PR description under
+"Deliberately not done" and reports it back here; the orchestrator then either
+dispatches it as its own small `fix/<slug>` PR (same gate + review process,
+logged as a row above with no PLAN.md feature ID) or lists it below if it isn't
+worth a PR yet. Nothing is silently dropped.
+
+| Found in | What | Status |
+|---|---|---|
+| B7 review, B6 merge | `GET /api/stream/dashboard` (added by B6) is absent from B7's OpenAPI route manifest — the checked-in spec under-describes the API | In progress in a separately-started session on `fix/B7-openapi-dashboard-route` |
+| F2 review round 2 | `apps/web`'s login/register pages crash with a 500 on a repeated `?next=` query key (`sameOriginPath` assumes `string`, Next.js can hand it `string[]`) | Dispatching as `fix/f2-next-param-array` |
