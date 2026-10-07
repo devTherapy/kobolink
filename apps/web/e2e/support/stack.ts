@@ -1,11 +1,11 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ANDROID_PACKAGE_NAME } from '@kobolink/contracts'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { assertPortsFree } from './assert-ports-free'
 import { E2E_API_PORT, E2E_WEB_PORT } from './ports'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -156,25 +156,6 @@ export async function startStack(): Promise<RunningStack> {
     })
     children.push(child)
     return child
-  }
-}
-
-/** Throws, naming every busy port, if anything is already listening on them. */
-async function assertPortsFree(ports: number[]): Promise<void> {
-  const busy: number[] = []
-  for (const port of ports) {
-    const free = await new Promise<boolean>((resolve) => {
-      const server = net.createServer()
-      server.once('error', () => resolve(false))
-      server.listen(port, () => server.close(() => resolve(true)))
-    })
-    if (!free) busy.push(port)
-  }
-  if (busy.length > 0) {
-    throw new Error(
-      `e2e stack: port${busy.length > 1 ? 's' : ''} ${busy.join(', ')} already in use. Stop whatever is listening ` +
-        '(a previous e2e run that was killed, or another server), or set E2E_WEB_PORT / E2E_API_PORT to free ports.',
-    )
   }
 }
 
