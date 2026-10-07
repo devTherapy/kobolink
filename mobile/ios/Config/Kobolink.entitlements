@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Universal links for https://pay.folusayo.com/l/{code}. Applied by Config/Release.xcconfig ONLY.
+		A free personal team cannot add Associated Domains, so Debug (and so every Simulator and
+		free-team device run) never references this file; kobolink://l/{code} covers development.
+		Needs a paid Apple Developer Program membership: see "Universal links" in mobile/ios/README.md.
+	-->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:pay.folusayo.com</string>
+	</array>
+</dict>
+</plist>

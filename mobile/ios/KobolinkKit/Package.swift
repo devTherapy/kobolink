@@ -43,7 +43,9 @@ let package = Package(
                 "KobolinkAPI",
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
-            ]
+            ],
+            // Written by Tools/generate-link-parser-cases.mjs from contracts' parseLinkCode.
+            resources: [.copy("Resources/link-parser-oracle.json")]
         ),
     ]
 )
