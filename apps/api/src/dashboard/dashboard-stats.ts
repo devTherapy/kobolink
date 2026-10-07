@@ -1,9 +1,10 @@
 import { eq } from 'drizzle-orm'
-import { type DashboardStats, DashboardStatsSchema, resolveLink } from '@kobolink/contracts'
+import { type DashboardStats, DashboardStatsSchema } from '@kobolink/contracts'
 import type { Executor } from '../db/db.service.js'
 import { toIso } from '../db/iso-timestamp.js'
 import * as schema from '../db/schema/index.js'
-import { computeLinkStatsBatch, ZERO_LINK_STATS } from '../links/link-stats.js'
+import { computeLinkStatsBatch } from '../links/link-stats.js'
+import { summariseDashboard } from './summarise-dashboard.js'
 
 /**
  * The same snapshot `DashboardEvent`'s `payment.completed`/`link.created`/
@@ -21,8 +22,11 @@ import { computeLinkStatsBatch, ZERO_LINK_STATS } from '../links/link-stats.js'
  * by hand. So this reads every one of the merchant's links (nothing this
  * app has today makes that list large enough to page) and its per-link
  * stats in one batch (`computeLinkStatsBatch`), then runs `resolveLink`
- * once per row — the same per-row shape `LinksService.list` already
- * builds a `PaymentLink` from, just counted instead of rendered.
+ * once per row (`summariseDashboard`, the pure half) — the same per-row
+ * shape `LinksService.list` already builds a `PaymentLink` from, just
+ * counted instead of rendered. Also the read behind
+ * `GET /api/dashboard/stats` (B9, via `DashboardStatsService`), so the
+ * stream's embedded snapshot and a plain read cannot disagree.
  */
 export async function computeDashboardStats(
   executor: Executor,
@@ -45,25 +49,7 @@ export async function computeDashboardStats(
     merchantId,
   )
 
-  let totalCollectedKobo = 0
-  let paymentCount = 0
-  let activeLinks = 0
-  for (const row of linkRows) {
-    const linkStats = stats.get(row.code) ?? ZERO_LINK_STATS
-    totalCollectedKobo += linkStats.totalPaidKobo
-    paymentCount += linkStats.paymentCount
-
-    const resolution = resolveLink(
-      {
-        status: row.status,
-        isReusable: row.isReusable,
-        expiresAt: row.expiresAt === null ? null : toIso(row.expiresAt),
-        paymentCount: linkStats.paymentCount,
-      },
-      asOf,
-    )
-    if (resolution.kind === 'payable') activeLinks += 1
-  }
+  const { totalCollectedKobo, paymentCount, activeLinks } = summariseDashboard(linkRows, stats, asOf)
 
   // Same caveat as link-stats.ts's own: `ledger_entries.amount_kobo` reads
   // back as `mode: 'number'`, safe per row but not for a sum across
