@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import type { NextConfig } from 'next'
 
 /**
@@ -16,7 +17,29 @@ import type { NextConfig } from 'next'
  * `instrumentation.ts`, deliberately not done in this PR — see the PR
  * description.
  */
+/**
+ * `rewrites()` below runs at BUILD time: Next freezes its result into
+ * `.next/routes-manifest.json`, so `API_ORIGIN` must be present when
+ * `next build` runs (a Docker build arg — apps/web/Dockerfile, fly.toml's
+ * `[build.args]`), not only when the server starts. `src/lib/api.ts` reads
+ * the same variable at runtime for server-side fetches, so both are set.
+ *
+ * Only the Docker image (apps/web/Dockerfile) sets `NEXT_OUTPUT=standalone`:
+ * it emits a self-contained server with just the traced dependencies, which
+ * keeps the production image small. `outputFileTracingRoot` points at the
+ * monorepo root so the traced tree includes `packages/contracts`. Every other
+ * build (dev, CI, the e2e harness) is unchanged.
+ */
+const standalone =
+  process.env.NEXT_OUTPUT === 'standalone'
+    ? {
+        output: 'standalone' as const,
+        outputFileTracingRoot: fileURLToPath(new URL('../..', import.meta.url)),
+      }
+    : {}
+
 const nextConfig: NextConfig = {
+  ...standalone,
   // Only the e2e harness sets this (`e2e/support/stack.ts`), so its production
   // build never overwrites a developer's `.next`. Unset, Next's default.
   ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),

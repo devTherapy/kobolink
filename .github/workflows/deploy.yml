@@ -1,0 +1,76 @@
+# Production deploy to Fly.io. NEVER runs on a pull request or a push to a
+# branch: only on a manual dispatch (Actions tab -> deploy -> Run workflow) or
+# on pushing a version tag (v*).
+#
+# It is inert until the repository owner adds the GitHub secret FLY_API_TOKEN
+# (docs/DEPLOY.md): without it the first step fails with a clear message
+# before anything is built or contacted.
+#
+#   secrets   FLY_API_TOKEN      a Fly deploy token (`fly tokens create deploy`)
+#   vars      DOMAIN             pay.folusayo.com
+#             EXPECTED_APP_ID    <APPLE_TEAM_ID>.com.folusayo.kobolink
+#             SMOKE_LINK_CODE    (optional) a real link code to render-check
+#
+# Order: api first (its release_command migrates the database), then web, then
+# the post-deploy smoke test as its own job, so it can be re-run alone when
+# Apple's CDN needs a little longer to ingest a brand-new domain.
+name: deploy
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# One deploy at a time, and never cancel one halfway through a migration.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy api, then web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Require FLY_API_TOKEN
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error title=FLY_API_TOKEN is not set::Add the repository secret FLY_API_TOKEN (a Fly deploy token) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      # --remote-only: Fly's builder builds the image, not this runner.
+      # The api goes first: its release_command applies migrations, and the
+      # new web build must never run against an older schema.
+      - name: Deploy api
+        run: flyctl deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile --remote-only
+      - name: Deploy web
+        run: flyctl deploy . --config apps/web/fly.toml --dockerfile apps/web/Dockerfile --remote-only
+
+  smoke:
+    name: post-deploy smoke test
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      EXPECTED_APP_ID: ${{ vars.EXPECTED_APP_ID }}
+      SMOKE_LINK_CODE: ${{ vars.SMOKE_LINK_CODE }}
+    steps:
+      - name: Require DOMAIN and EXPECTED_APP_ID
+        run: |
+          for name in DOMAIN EXPECTED_APP_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=$name is not set::Add the repository variable $name (Settings -> Secrets and variables -> Actions -> Variables). See docs/DEPLOY.md."
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v4
+      - name: Association smoke test
+        run: ./scripts/smoke-associations.sh
