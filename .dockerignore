@@ -1,0 +1,25 @@
+# The build context is the repo root for both apps (apps/*/Dockerfile).
+# Keep it small, and keep every local secret out of it.
+**/node_modules
+**/.next
+**/dist
+**/out
+**/build
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/next-env.d.ts
+.git
+.github
+.claude
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+mobile
+docs
+*.md
+!packages/contracts/README.md
+.DS_Store

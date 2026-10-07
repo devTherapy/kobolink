@@ -1,0 +1,56 @@
+# Kobolink api — PRIVATE. There is deliberately no [http_service] and no
+# [[services]] section, which is what makes a Fly app unreachable from the
+# public internet. The web app reaches it at http://kobolink-api.internal:3001
+# over Fly's private 6PN network and proxies /api/* to it (DESIGN-SPEC §7), so
+# the browser only ever talks to pay.folusayo.com and cookies stay first-party.
+#
+# Deploy from the REPO ROOT (the Docker build context is the monorepo):
+#   fly deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile --remote-only
+# Deploy the api BEFORE the web app. Full setup and owner-only steps: docs/DEPLOY.md.
+#
+# No credentials live in this file. DATABASE_URL is set with `fly secrets set`
+# (or by `fly postgres attach`), never here.
+
+# Fly app names are global. If "kobolink-api" is taken, pick another and change
+# API_ORIGIN in apps/web/fly.toml to match (the hostname is <app>.internal).
+app = "kobolink-api"
+primary_region = "lhr" # keep in the same region as the database and the web app.
+
+# Kept at SIGTERM (Nest's enableShutdownHooks closes the Postgres pool on it).
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[deploy]
+  # Runs ONCE, in a temporary machine built from the new image with the app's
+  # secrets, before any running machine is replaced. A failing migration aborts
+  # the deploy and leaves the old version serving. It is drizzle's own
+  # migrator (apps/api/src/db/migrate.ts) over the same drizzle/ folder
+  # `drizzle-kit migrate` reads, so no dev tooling ships in the image.
+  release_command = "node dist/db/migrate.js"
+
+[env]
+  PORT = "3001"
+  # The api's SSE keepalive interval. Keep it under 30000: the web app's Next
+  # /api/* proxy drops a proxied connection that is idle for 30s, so a longer
+  # heartbeat would kill the dashboard stream every time it went quiet. Must
+  # equal NEXT_PUBLIC_DASHBOARD_HEARTBEAT_MS in apps/web/fly.toml. (15000 is
+  # also the built-in default; it is stated here so nobody has to know that.)
+  DASHBOARD_HEARTBEAT_MS = "15000"
+  # TRUST_PROXY is deliberately NOT set. See docs/DEPLOY.md, "Known risks".
+
+# Machine-level health check (an app with no [http_service] has no service
+# checks). GET /api/health round-trips Postgres, so green means the database
+# is reachable, not just that the process is up.
+[checks]
+  [checks.health]
+    type = "http"
+    port = 3001
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
