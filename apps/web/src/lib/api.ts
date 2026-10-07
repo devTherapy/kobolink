@@ -19,6 +19,7 @@ import {
   type InitializeCheckoutRequest,
   type InitializeCheckoutResponse,
   type LinkListResponse,
+  type LinkStatus,
   type LoginRequest,
   type MeResponse,
   type PageQuery,
@@ -26,6 +27,7 @@ import {
   type PaymentListResponse,
   type PublicLinkResponse,
   type RegisterRequest,
+  type UpdateLinkStatusRequest,
   type VerifyCheckoutRequest,
   type VerifyCheckoutResponse,
 } from '@kobolink/contracts'
@@ -222,9 +224,16 @@ export const client = {
     // `client.links.resolve(bad).catch(...)` catches it exactly like it
     // catches a non-2xx response, instead of throwing synchronously out of
     // whatever effect or handler called it.
-    get: async (code: string) => {
+    // `init?.headers`: F5's link-detail page reads this from a Server
+    // Component, so the session cookie is forwarded by hand (see
+    // `src/lib/link-detail.ts`) — a browser caller omits `init`.
+    get: async (code: string, init?: { headers?: HeadersInit }) => {
       requireValidLinkCode(code)
-      return await request<PaymentLink>(PaymentLinkSchema, API.links.item(code))
+      return await request<PaymentLink>(PaymentLinkSchema, API.links.item(code), {
+        // A merchant's own link, with counters — never a cached copy.
+        cache: 'no-store',
+        ...(init?.headers ? { headers: init.headers } : {}),
+      })
     },
     // `cache: 'no-store'` — this is the call F6's server component makes at
     // request time. README: "the API is the clock"; a link a merchant just
@@ -236,10 +245,25 @@ export const client = {
         cache: 'no-store',
       })
     },
-    payments: async (code: string, query?: PageQuery) => {
+    // Same `init?.headers` seam as `get`: the first page is read server-side
+    // by F5's link-detail page, "Show more" is a plain browser call.
+    payments: async (code: string, query?: PageQuery, init?: { headers?: HeadersInit }) => {
       requireValidLinkCode(code)
       return await request<PaymentListResponse>(PaymentListResponseSchema, API.links.payments(code), {
+        cache: 'no-store',
         query: pageQuery(query),
+        ...(init?.headers ? { headers: init.headers } : {}),
+      })
+    },
+    // `PATCH /api/links/:code/status` — the one write F5 makes. A plain browser
+    // call (the status switch is a client island), so it relies on the real
+    // cookie jar. Answers the whole updated link, which is what the switch
+    // reconciles to.
+    updateStatus: async (code: string, status: LinkStatus) => {
+      requireValidLinkCode(code)
+      return await request<PaymentLink>(PaymentLinkSchema, API.links.status(code), {
+        method: 'PATCH',
+        body: { status } satisfies UpdateLinkStatusRequest,
       })
     },
     // `init?.headers` exists for the same reason `auth.me` takes it: F3's

@@ -85,7 +85,7 @@ no `payments` table with a status column. One `users` table with roles, never a
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | done |
 | F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | done — verified against MSW only; `GET /api/dashboard/stats` has no backend yet (B9). 375px shows only the Link column without scrolling (see PR-LOG Follow-ups); the canvas is not in the repo |
 | F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | in-review |
-| F5 | Link detail: QR, copy, status toggle with optimistic UI, payments table | F3 | Toggle rolls back visibly when the request fails | todo |
+| F5 | Link detail: QR, copy, status toggle with optimistic UI, payments table | F3 | Toggle rolls back visibly when the request fails | in-review |
 | F6 | Public checkout `/l/[code]` — **server component**, `generateMetadata`, all non-payable states | F0 | The rendered HTML contains the OG title before any JS runs | done |
 | F7 | SSE client → live dashboard | F3 | A payment in another tab moves the numbers without a reload; the stream survives a network blip | todo |
 | F8 | `/.well-known/apple-app-site-association` + `assetlinks.json` route handlers | F0 | Unit tests assert the exact JSON; served unredirected as `application/json` | done |

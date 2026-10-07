@@ -93,5 +93,59 @@ describe('api client: link codes are validated before they reach a URL path', ()
   it('rejects a malformed code for links.get and links.payments too', async () => {
     await expect(client.links.get('short')).rejects.toMatchObject({ error: { code: 'not_found' } })
     await expect(client.links.payments('short')).rejects.toMatchObject({ error: { code: 'not_found' } })
+    await expect(client.links.updateStatus('short', 'disabled')).rejects.toMatchObject({
+      error: { code: 'not_found' },
+    })
+  })
+})
+
+describe('api client: links.updateStatus (F5)', () => {
+  it('PATCHes { status } to the status route and parses the whole updated link', async () => {
+    let seen: { method: string; body: unknown } | undefined
+    server.use(
+      http.patch(API.links.status(':code'), async ({ request }) => {
+        seen = { method: request.method, body: await request.json() }
+        return HttpResponse.json({ ...(await client.links.get('aBcDeFgH')), status: 'disabled' })
+      }),
+    )
+
+    const updated = await client.links.updateStatus('aBcDeFgH', 'disabled')
+
+    expect(seen).toEqual({ method: 'PATCH', body: { status: 'disabled' } })
+    expect(updated).toMatchObject({ code: 'aBcDeFgH', status: 'disabled' })
+  })
+
+  it('throws a typed ApiRequestError on a non-2xx, so the switch can name what failed', async () => {
+    server.use(
+      http.patch(API.links.status(':code'), () =>
+        HttpResponse.json({ code: 'not_found', message: 'Link not found.' }, { status: 404 }),
+      ),
+    )
+
+    await expect(client.links.updateStatus('aBcDeFgH', 'active')).rejects.toMatchObject({
+      status: 404,
+      error: { code: 'not_found' },
+    })
+  })
+})
+
+describe('api client: links.get and links.payments forward a session cookie for server-side callers (F5)', () => {
+  it('sends the Cookie header it is given, on both reads', async () => {
+    const cookies: (string | null)[] = []
+    server.use(
+      http.get(API.links.item(':code'), ({ request }) => {
+        cookies.push(request.headers.get('cookie'))
+        return HttpResponse.json({ code: 'not_found', message: 'x' }, { status: 404 })
+      }),
+      http.get(API.links.payments(':code'), ({ request }) => {
+        cookies.push(request.headers.get('cookie'))
+        return HttpResponse.json({ code: 'not_found', message: 'x' }, { status: 404 })
+      }),
+    )
+
+    await client.links.get('aBcDeFgH', { headers: { cookie: 'kobolink_session=abc' } }).catch(() => undefined)
+    await client.links.payments('aBcDeFgH', undefined, { headers: { cookie: 'kobolink_session=abc' } }).catch(() => undefined)
+
+    expect(cookies).toEqual(['kobolink_session=abc', 'kobolink_session=abc'])
   })
 })
