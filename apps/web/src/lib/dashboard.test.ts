@@ -1,10 +1,17 @@
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { API } from '@kobolink/contracts'
 import { MOCK_SESSION_COOKIE_NAME, MOCK_SESSION_TOKEN, REVOKED_SESSION_TOKEN } from '@/mocks/handlers'
 import { server } from '@/mocks/server'
 import { linkStore, paymentsByCode } from '@/mocks/state'
 import { DashboardUnavailableError, loadDashboardData } from './dashboard'
+
+/** `redirect()` throws a tagged error; this stands in for it so a test can see where it pointed. */
+vi.mock('next/navigation', () => ({
+  redirect: (to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`)
+  },
+}))
 
 /** A valid, signed-in session cookie header — see `session.test.ts` for the same convention. */
 const VALID_COOKIE = `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}`
@@ -64,6 +71,70 @@ describe('loadDashboardData', () => {
     await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow(DashboardUnavailableError)
   })
 
+  // ---- error classes ---------------------------------------------------------
+  // Each failure keeps its class: sign-in is the fix for a 401, a customer
+  // account for a 403 can never succeed on retry, a body that does not match
+  // the contract is a bug on our side rather than a connectivity problem, and
+  // only a real transport/5xx/rate-limit failure is worth a retry.
+  const unauthenticated = () =>
+    HttpResponse.json({ code: 'unauthenticated', message: 'Sign in.' }, { status: 401 })
+
+  it('sends a 401 from the stats endpoint to sign-in, and back to the dashboard afterwards', async () => {
+    server.use(http.get(API.dashboard.stats, unauthenticated))
+    await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow('NEXT_REDIRECT:/login?next=%2Fdashboard')
+  })
+
+  it('sends a 401 from the links endpoint to sign-in too', async () => {
+    server.use(http.get(API.links.collection, unauthenticated))
+    await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow('NEXT_REDIRECT:/login?next=%2Fdashboard')
+  })
+
+  it('reports a customer-role 403 as MerchantAccessError, not as unreachable servers', async () => {
+    server.use(
+      http.get(API.dashboard.stats, () =>
+        HttpResponse.json({ code: 'forbidden', message: 'Merchant role required.' }, { status: 403 }),
+      ),
+    )
+    const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ name: 'MerchantAccessError' })
+  })
+
+  it('reports a 403 from the links endpoint the same way', async () => {
+    server.use(
+      http.get(API.links.collection, () =>
+        HttpResponse.json({ code: 'forbidden', message: 'Merchant role required.' }, { status: 403 }),
+      ),
+    )
+    const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ name: 'MerchantAccessError' })
+  })
+
+  it('reports a 200 whose body breaks the contract as UnexpectedResponseError, keeping the cause', async () => {
+    server.use(http.get(API.dashboard.stats, () => HttpResponse.json({ totalCollectedKobo: 'a lot' })))
+    const error = await loadDashboardData(VALID_COOKIE).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ name: 'UnexpectedResponseError' })
+    expect((error as Error).cause).toBeDefined()
+  })
+
+  it('keeps a rate-limited response retryable', async () => {
+    server.use(
+      http.get(API.dashboard.stats, () =>
+        HttpResponse.json({ code: 'rate_limited', message: 'Slow down.' }, { status: 429 }),
+      ),
+    )
+    await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow(DashboardUnavailableError)
+  })
+
+  it('keeps a proxy error page (non-JSON 5xx) retryable', async () => {
+    server.use(http.get(API.dashboard.stats, () => new HttpResponse('<html>Bad gateway</html>', { status: 502 })))
+    await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow(DashboardUnavailableError)
+  })
+
+  it('does not treat a non-JSON 401 (a proxy, not the API) as a signed-out session', async () => {
+    server.use(http.get(API.dashboard.stats, () => new HttpResponse('Unauthorized', { status: 401 })))
+    await expect(loadDashboardData(VALID_COOKIE)).rejects.toThrow(DashboardUnavailableError)
+  })
+
   // ---- auth-cookie forwarding ----------------------------------------------
   // The whole point of `client.links.list`/`client.dashboard.stats` accepting
   // `init?.headers` is that a Server Component has no browser cookie jar
@@ -73,13 +144,13 @@ describe('loadDashboardData', () => {
   // (see `src/mocks/handlers.ts`), so these tests fail for real if the
   // forwarding code is ever removed — unlike before, when the mock accepted
   // any request regardless of `init.headers`.
-  it('fails the way a real guarded endpoint would when no cookie is forwarded at all', async () => {
-    await expect(loadDashboardData('')).rejects.toThrow(DashboardUnavailableError)
+  it('sends the visitor to sign-in when no cookie is forwarded at all', async () => {
+    await expect(loadDashboardData('')).rejects.toThrow('NEXT_REDIRECT:/login?next=%2Fdashboard')
   })
 
-  it('fails the same way for a stale/revoked session cookie', async () => {
+  it('sends the visitor to sign-in for a stale/revoked session cookie', async () => {
     await expect(loadDashboardData(`${MOCK_SESSION_COOKIE_NAME}=${REVOKED_SESSION_TOKEN}`)).rejects.toThrow(
-      DashboardUnavailableError,
+      'NEXT_REDIRECT:/login?next=%2Fdashboard',
     )
   })
 

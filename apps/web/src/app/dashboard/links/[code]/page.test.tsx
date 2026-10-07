@@ -109,4 +109,47 @@ describe('/dashboard/links/[code]', () => {
   it('is not-found for a malformed code', async () => {
     await expect(LinkDetailPage({ params: Promise.resolve({ code: 'x' }) })).rejects.toMatchObject(NOT_FOUND_ERROR)
   })
+
+  // Only a retryable failure may be thrown to `error.tsx`: in production Next replaces a thrown
+  // Server Component error's name and message with a digest, so that boundary cannot tell classes apart.
+  describe('failures keep their class', () => {
+    const forbidden = () => HttpResponse.json({ code: 'forbidden', message: 'Merchant role required.' }, { status: 403 })
+
+    it('tells a customer account it cannot use the merchant dashboard, with no retry', async () => {
+      server.use(http.get(API.links.item(':code'), forbidden), http.get(API.links.payments(':code'), forbidden))
+
+      const html = renderToStaticMarkup(await LinkDetailPage({ params }))
+
+      expect(html).toContain('This account can&#x27;t use the merchant dashboard')
+      expect(html).toMatch(/Nothing was changed/)
+      expect(html).not.toMatch(/Try again/i)
+      expect(html).not.toMatch(/reach(ing)? Kobolink/i)
+    })
+
+    it('titles the document without throwing for a customer account', async () => {
+      server.use(http.get(API.links.item(':code'), forbidden), http.get(API.links.payments(':code'), forbidden))
+
+      await expect(generateMetadata({ params })).resolves.toEqual({ title: 'Link' })
+    })
+
+    it('reports a body that breaks the contract as an unexpected response, not as unreachable servers', async () => {
+      server.use(http.get(API.links.item(':code'), () => HttpResponse.json({ code: 'aBcDeFgH', title: 42 })))
+
+      const html = renderToStaticMarkup(await LinkDetailPage({ params }))
+
+      expect(html).toContain('Kobolink sent back something unexpected')
+      expect(html).toMatch(/Nothing was changed/)
+      expect(html).not.toMatch(/reach(ing)? Kobolink/i)
+      expect(html).toContain('href="/dashboard/links/aBcDeFgH"')
+      await expect(generateMetadata({ params })).resolves.toEqual({ title: 'Link' })
+    })
+
+    it('still throws a real 5xx to the error boundary', async () => {
+      server.use(
+        http.get(API.links.item(':code'), () => HttpResponse.json({ code: 'internal', message: 'boom' }, { status: 500 })),
+      )
+
+      await expect(LinkDetailPage({ params })).rejects.toMatchObject({ name: 'LinkDetailUnavailableError' })
+    })
+  })
 })
