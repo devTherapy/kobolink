@@ -17,7 +17,7 @@ import { registerMerchant } from './support/register-user.js'
  * plain `tx.insert` can't do it (Postgres aborts the whole transaction on
  * the failing statement, `25P02`, so the loop's `continue` would retry on a
  * dead transaction). A real collision from `newPaymentReference`'s own
- * 54-symbol, 10-character alphabet is astronomically unlikely to happen on
+ * 57-symbol, 10-character alphabet is astronomically unlikely to happen on
  * its own, so — same reasoning as `links-create-collision.integration.test
  * .ts` — this file forces one directly through `PAYMENT_REFERENCE_GENERATOR`,
  * the DI seam `PaymentsService` takes its generator from, rather than
