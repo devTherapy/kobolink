@@ -55,7 +55,10 @@ export interface PaymentsSectionProps {
  * `router.refresh()` that each event schedules delivers a newer first page, it
  * simply shows. State holds only what this component fetched itself — the pages
  * after the first — so a refresh never discards a "Show more" the merchant did,
- * and the cursor follows those pages once there are any.
+ * and the cursor follows those pages once there are any. Because a new payment
+ * pushes the first page's last item onto the second, that item is kept between
+ * the two (`slidOff`) rather than falling into the gap between the first page
+ * and the cursor the older pages were fetched with.
  */
 export function PaymentsSection({ code, initialPayments, initialCursor }: PaymentsSectionProps) {
   const { events } = useDashboardStream()
@@ -64,18 +67,43 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
   const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined)
   const livePayments = useMemo(() => livePaymentsFor(code, events), [code, events])
   const firstPage = useMemo(() => mergePayments(initialPayments, livePayments), [initialPayments, livePayments])
-  const payments = useMemo(() => appendUnique(firstPage, olderPayments), [firstPage, olderPayments])
+
+  // Pages are keyset-paginated: a new payment pushes the last item of the first page off it, but the
+  // older pages were fetched with a cursor that starts *after* that item, so it would be in neither
+  // list. When the first page changes while older pages are loaded, what slid off is kept (newest
+  // first) between the two, so the table stays gap-free and agrees with the API's own counts. Before
+  // any "Show more" there is nothing to bridge: the cursor then comes from the latest first page.
+  const [slidOff, setSlidOff] = useState<Payment[]>([])
+  const [previousFirstPage, setPreviousFirstPage] = useState(firstPage)
+  if (firstPage !== previousFirstPage) {
+    setPreviousFirstPage(firstPage)
+    if (olderCursor !== undefined) {
+      const stillOnFirstPage = new Set(firstPage.map((payment) => payment.reference))
+      const slid = previousFirstPage.filter((payment) => !stillOnFirstPage.has(payment.reference))
+      if (slid.length > 0) setSlidOff((previous) => appendUnique(slid, previous))
+    }
+  }
+
+  const payments = useMemo(
+    () => appendUnique(appendUnique(firstPage, slidOff), olderPayments),
+    [firstPage, slidOff, olderPayments],
+  )
   const cursor = olderCursor === undefined ? initialCursor : olderCursor
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [sessionExpired, setSessionExpired] = useState(false)
-  const [loadedNote, setLoadedNote] = useState('')
+  // How many rows the last "Show more" added, and a counter that is new on every load. The note's
+  // running total is derived at render, so it stays true when a refresh or a live payment changes the list.
+  const [lastAdded, setLastAdded] = useState<number | null>(null)
+  const [loadCount, setLoadCount] = useState(0)
+  const loadedNote =
+    lastAdded === null ? '' : `${lastAdded} more payment${lastAdded === 1 ? '' : 's'} loaded. Showing ${payments.length}.`
   const noteRef = useRef<HTMLParagraphElement>(null)
 
   // After the last page the pressed button is gone; land focus on the line that says what arrived.
-  // Keyed on the note, which is new text on every load (it carries the running total).
+  // Keyed on the load, not the note text: a live payment changes the total but is not a reason to move focus.
   useEffect(() => {
-    if (loadedNote !== '' && cursor === null) noteRef.current?.focus()
-  }, [loadedNote, cursor])
+    if (loadCount > 0 && cursor === null) noteRef.current?.focus()
+  }, [loadCount, cursor])
 
   async function handleShowMore() {
     if (cursor === null) return
@@ -83,11 +111,11 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
     setSessionExpired(false)
     try {
       const page = await client.links.payments(code, { cursor, limit: PAGE_SIZE })
-      const merged = appendUnique(payments, page.items)
-      const added = merged.length - payments.length
+      const added = appendUnique(payments, page.items).length - payments.length
       setOlderPayments((previous) => appendUnique(previous, page.items))
       setOlderCursor(page.nextCursor)
-      setLoadedNote(`${added} more payment${added === 1 ? '' : 's'} loaded. Showing ${merged.length}.`)
+      setLastAdded(added)
+      setLoadCount((count) => count + 1)
       setLoadState('idle')
     } catch (error) {
       setSessionExpired(isSessionExpired(error))

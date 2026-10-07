@@ -299,7 +299,7 @@ describe('LinkStatusControl, live', () => {
     return { ...view, props, tree }
   }
 
-  it('flips the switch and the badge when the link is turned off from another tab', () => {
+  it('flips the switch and the badge when a link.updated event says the link is off', () => {
     renderControl()
     const toggle = screen.getByRole('switch', { name: /accepting payments/i })
     expect(toggle).toBeChecked()

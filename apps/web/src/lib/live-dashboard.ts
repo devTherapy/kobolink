@@ -14,6 +14,10 @@ import type { LiveEvent } from './dashboard-stream'
  * a lost event, a duplicate event and an out-of-order event from ever leaving
  * the screen wrong for longer than one refresh.
  *
+ * Only payment events are live end to end today: the API does not emit
+ * `link.created` / `link.updated` yet (`DashboardListenerService`). Their handling
+ * here follows the contract and is unit-tested, not proven against the real stream.
+ *
  * These are pure functions of (baseline, events) rather than state, so there is
  * nothing to reset when a refresh delivers a newer baseline: an event the new
  * baseline already reflects is recognised and ignored.
