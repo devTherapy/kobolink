@@ -1,0 +1,7 @@
+// Copy to Local.xcconfig (gitignored). Read by Debug builds only.
+//
+// Your signing team, needed to run on a physical device:
+// DEVELOPMENT_TEAM = ABCDE12345
+//
+// Point Debug builds somewhere else, e.g. your Mac's LAN address for a device:
+// KOBOLINK_API_BASE_URL = http:/$()/192.168.1.20:3001
