@@ -6,6 +6,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.folusayo.kobolink.checkout.CheckoutLink
 import com.folusayo.kobolink.checkout.CheckoutState
 import com.folusayo.kobolink.checkout.FailureKind
+import com.folusayo.kobolink.checkout.InitializeRequest
 import com.folusayo.kobolink.checkout.LinkAvailability
 import com.folusayo.kobolink.checkout.PayPhase
 import com.folusayo.kobolink.checkout.PayerField
@@ -86,7 +87,7 @@ private fun Submitting() {
 
 @CheckoutPreviews
 @Composable
-private fun PayFailedNetwork() = Screen(loaded(pay = PayPhase.Failed(FailureKind.Network)))
+private fun PayFailedNetwork() = Screen(loaded(pay = PayPhase.Failed(FailureKind.Network, InitializeRequest("7hK2mQ9x", 1_850_050, "Tunde Bello", "tunde@example.com"))))
 
 @CheckoutPreviews
 @Composable

@@ -58,6 +58,7 @@ class DeepLinkTest {
             "https://pay.folusayo.com/l/aBcDeFg%2F",
             "https://pay.folusayo.com/l/aBcDeFgH%20",
             "/l/aBcDeFg%48",
+            "/l/./aBcDeFgH", // contracts takes a bare path as written; no dot-segment collapsing
             "kobolink://l/aBcDeFg%48",
         )
         for (input in rejected) {

@@ -132,8 +132,9 @@ class ApiCheckoutGatewayTest {
         respond(502, "<html>Bad gateway</html>", contentType = "text/html")
         assertEquals(LookupOutcome.Failed(FailureKind.Server), gateway.lookup("7hK2mQ9x"))
 
+        // A 404 that is not an ApiError is a proxy or a wrong base URL talking, not the API saying this link is unknown.
         respond(404, "<html>Not here</html>", contentType = "text/html")
-        assertEquals("a 404 is not found whatever the body", LookupOutcome.NotFound, gateway.lookup("7hK2mQ9x"))
+        assertEquals(LookupOutcome.Failed(FailureKind.Server), gateway.lookup("7hK2mQ9x"))
 
         respond(200, """{"state":"payable"}""") // a 2xx the generated model cannot read
         assertEquals(LookupOutcome.Failed(FailureKind.Unreadable), gateway.lookup("7hK2mQ9x"))
@@ -195,6 +196,12 @@ class ApiCheckoutGatewayTest {
         assertEquals(RejectionKind.LinkNotPayable, outcome.rejection.kind)
         assertEquals(LinkAvailability.AlreadyPaid, outcome.rejection.availability)
         assertEquals(false, outcome.rejection.moneyMoved)
+    }
+
+    @Test
+    fun `a deleted link is its own kind of refusal`() = runTest {
+        respond(404, apiError("not_found", "No link with that code."))
+        assertEquals(RejectionKind.NotFound, (gateway.initialize(request, key) as InitializeOutcome.Rejected).rejection.kind)
     }
 
     @Test

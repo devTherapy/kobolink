@@ -313,7 +313,10 @@ class CheckoutControllerTest {
         runCurrent()
         gateway.initializes[0].complete(InitializeOutcome.Failed(FailureKind.Network))
         runCurrent()
-        assertEquals(PayPhase.Failed(FailureKind.Network), (checkout.state.value as CheckoutState.Loaded).pay)
+        assertEquals(
+            PayPhase.Failed(FailureKind.Network, InitializeRequest("7hK2mQ9x", 1_500_000, "Tunde Bello", "tunde@example.com")),
+            (checkout.state.value as CheckoutState.Loaded).pay,
+        )
 
         checkout.pay(payer) // "Try again", same details
         runCurrent()
@@ -366,7 +369,9 @@ class CheckoutControllerTest {
     }
 
     @Test
-    fun `reopening the same link keeps the attempt, a different link drops it`() = runTest {
+    fun `a successful attempt is over, so paying the same link again starts a new one`() = runTest {
+        // A reusable link paid twice with the same pre-filled details must make two checkouts. Replaying the first
+        // key would hand back the first reference, and M4 would verify it into a "paid" that never happened.
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         loaded(gateway, checkout)
@@ -375,12 +380,29 @@ class CheckoutControllerTest {
         gateway.initializes[0].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
         runCurrent()
 
-        // The payer re-taps the same link and pays again: the server replays the same reference.
+        loaded(gateway, checkout) // the payer taps the link again later
+        checkout.pay(payer)
+        runCurrent()
+
+        assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
+    }
+
+    @Test
+    fun `a failed attempt keeps its key across a re-tap of the same link, a different link drops it`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout)
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Failed(FailureKind.Network))
+        runCurrent()
+
+        // The request may or may not have been processed: the retry must carry the same key.
         loaded(gateway, checkout)
         checkout.pay(payer)
         runCurrent()
         assertEquals(gateway.initializes[0].request.second, gateway.initializes[1].request.second)
-        gateway.initializes[1].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
+        gateway.initializes[1].complete(InitializeOutcome.Failed(FailureKind.Network))
         runCurrent()
 
         // A different link is a different attempt even with identical payer details.
@@ -535,5 +557,28 @@ class CheckoutControllerTest {
         val pay = (checkout.state.value as CheckoutState.Loaded).pay as PayPhase.Rejected
         assertEquals(mapOf(PayerField.Amount to "That amount does not match this link."), pay.fieldErrors)
         assertEquals(1, gateway.lookups.size) // no re-read: the typed amount was the problem
+    }
+
+    @Test
+    fun `a link deleted while the payer was on the form becomes the not-found screen`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout)
+        payAndAnswer(gateway, checkout, InitializeOutcome.Rejected(Rejection(RejectionKind.NotFound, "No link with that code.")))
+        assertEquals(CheckoutState.NotFound("7hK2mQ9x"), checkout.state.value)
+    }
+
+    @Test
+    fun `a fixed link that became open-amount shows the amount field, not a price message`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout, link(amountKobo = 1_500_000))
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent()
+        gateway.lookups[1].complete(found(link(amountKobo = null)))
+        runCurrent()
+        assertEquals(CheckoutState.Loaded(link(amountKobo = null), LinkAvailability.Payable, PayPhase.Idle), checkout.state.value)
     }
 }

@@ -66,6 +66,7 @@ import com.folusayo.kobolink.checkout.PayerField
 import com.folusayo.kobolink.checkout.PayerInput
 import com.folusayo.kobolink.checkout.PayerValidation
 import com.folusayo.kobolink.checkout.formatCheckoutDate
+import com.folusayo.kobolink.checkout.matches
 import com.folusayo.kobolink.checkout.merchantInitial
 import com.folusayo.kobolink.checkout.payButtonLabel
 import com.folusayo.kobolink.checkout.priceChangedMessage
@@ -155,11 +156,13 @@ private fun PayableContent(
     val focus = LocalFocusManager.current
     val submitting = pay is PayPhase.Submitting
     val serverFieldErrors = (pay as? PayPhase.Rejected)?.fieldErrors.orEmpty()
+        .filterKeys { it !in form.editedSinceRefusal }
     fun errorFor(field: PayerField): String? = form.errors[field] ?: serverFieldErrors[field]
 
     fun submit() {
         if (submitting) return
         focus.clearFocus()
+        form.editedSinceRefusal = emptySet()
         when (val result = validatePayer(link.amountKobo, form.amountText, form.name, form.email)) {
             is PayerValidation.Invalid -> form.errors = result.errors
             is PayerValidation.Valid -> {
@@ -233,9 +236,14 @@ private fun PayableContent(
         onNext = { submit() },
     )
 
-    PayBanner(pay)
+    PayBanner(pay, serverFieldErrors)
 
-    val label = payButtonLabel(link.amountKobo, form.amountText, retry = pay is PayPhase.Failed)
+    // "Try again" only while the next tap is a retry of the SAME request (same idempotency key). Edit a field and it
+    // is a new payment, so the button goes back to naming the amount it will start.
+    val isRetry = pay is PayPhase.Failed &&
+        (validatePayer(link.amountKobo, form.amountText, form.name, form.email) as? PayerValidation.Valid)
+            ?.input?.matches(pay.request) == true
+    val label = payButtonLabel(link.amountKobo, form.amountText, retry = isRetry)
     Button(
         onClick = ::submit,
         enabled = !submitting,
@@ -400,13 +408,18 @@ private fun PayerTextField(
  * payment-state container for a repriced link, which is a notice rather than a mistake.
  */
 @Composable
-private fun PayBanner(pay: PayPhase) {
+private fun PayBanner(pay: PayPhase, visibleFieldErrors: Map<PayerField, String>) {
     when (pay) {
         is PayPhase.Failed -> Banner(payFailureMessage(pay.kind), BannerTone.Error)
-        is PayPhase.Rejected -> Banner(
-            rejectionBanner(pay.message, hasFieldErrors = pay.fieldErrors.isNotEmpty(), moneyMoved = pay.moneyMoved),
-            BannerTone.Error,
-        )
+        is PayPhase.Rejected -> {
+            // Once the payer has fixed every field the server pointed at, "check the highlighted fields" is stale.
+            if (pay.fieldErrors.isEmpty() || visibleFieldErrors.isNotEmpty()) {
+                Banner(
+                    rejectionBanner(pay.message, hasFieldErrors = pay.fieldErrors.isNotEmpty(), moneyMoved = pay.moneyMoved),
+                    BannerTone.Error,
+                )
+            }
+        }
         is PayPhase.PriceChanged -> Banner(priceChangedMessage(pay.newAmountKobo), BannerTone.Warning)
         PayPhase.Idle, PayPhase.Submitting, is PayPhase.Started -> Unit
     }

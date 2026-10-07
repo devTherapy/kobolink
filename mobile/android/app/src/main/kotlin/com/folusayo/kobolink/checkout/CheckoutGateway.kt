@@ -48,7 +48,9 @@ class ApiCheckoutGateway(
             else -> {
                 val error = parseError(response)
                 when {
-                    response.code() == 404 && (error == null || error.code == ApiError.Code.not_found) -> LookupOutcome.NotFound
+                    // Only an answer that says so is "not found": an HTML 404 from a proxy or a wrong base URL says nothing
+                    // about this link.
+                    error?.code == ApiError.Code.not_found -> LookupOutcome.NotFound
                     else -> LookupOutcome.Failed(failureKind(response.code(), error))
                 }
             }
@@ -132,6 +134,7 @@ private fun ApiError.toRejection(): Rejection = Rejection(
         ApiError.Code.link_not_payable -> RejectionKind.LinkNotPayable
         ApiError.Code.amount_mismatch -> RejectionKind.AmountMismatch
         ApiError.Code.validation_failed -> RejectionKind.ValidationFailed
+        ApiError.Code.not_found -> RejectionKind.NotFound
         else -> RejectionKind.Other
     },
     message = message,

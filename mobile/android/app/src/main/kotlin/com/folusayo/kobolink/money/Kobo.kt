@@ -66,6 +66,9 @@ object Kobo {
         val negative = cleaned.startsWith('-')
         val unsigned = cleaned.removePrefix("-")
         val whole = unsigned.substringBefore('.').toLongOrNull() ?: return null
+        // Refuse before multiplying: whole * 100 wraps a Long for large input and can land on a small, valid-looking
+        // amount. Anything above this cannot be an Int of kobo anyway.
+        if (whole > Int.MAX_VALUE / PER_NAIRA) return null
         val fraction = unsigned.substringAfter('.', "").padEnd(2, '0').toLong()
 
         val kobo = whole * PER_NAIRA + fraction

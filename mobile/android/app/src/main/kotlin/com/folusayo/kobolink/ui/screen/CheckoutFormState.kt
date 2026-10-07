@@ -24,6 +24,12 @@ class CheckoutFormState {
     /** Problems found on this device, per field. A server-side field error arrives through the pay phase instead. */
     var errors by mutableStateOf<Map<PayerField, String>>(emptyMap())
 
+    /**
+     * Fields whose server-side error the payer has since edited. The error described the old value, so it stops
+     * showing the moment the field changes. Reset on every Pay.
+     */
+    var editedSinceRefusal by mutableStateOf<Set<PayerField>>(emptySet())
+
     private var boundCode: String? = null
 
     /** Called whenever a link is opened. Typed values are kept for the same link and dropped for another. */
@@ -33,11 +39,14 @@ class CheckoutFormState {
             name = ""
             email = ""
             errors = emptyMap()
+            editedSinceRefusal = emptySet()
             boundCode = code
         }
     }
 
+    /** The payer edited [field]: whatever was said about its old value (here or by the server) no longer applies. */
     fun clearError(field: PayerField) {
         if (field in errors) errors = errors - field
+        editedSinceRefusal = editedSinceRefusal + field
     }
 }

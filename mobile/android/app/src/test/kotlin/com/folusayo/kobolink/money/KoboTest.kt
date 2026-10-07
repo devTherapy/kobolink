@@ -84,6 +84,10 @@ class KoboTest {
         // negative amount; null makes the caller say "not a chargeable amount".
         assertNull(Kobo.parseNaira("21474836.48"))
         assertNull(Kobo.parseNaira("99999999999999999999"))
+        // 184467440737095617 naira * 100 overflows a Long and wraps to 10084 kobo, a valid-looking ₦100.84.
+        assertNull(Kobo.parseNaira("184467440737095617"))
+        assertNull(Kobo.parseNaira("92233720368547758")) // ~Long.MAX / 100, wraps once the kobo are added
+        assertNull(Kobo.parseNaira("922337203685477580.99"))
     }
 
     @Test

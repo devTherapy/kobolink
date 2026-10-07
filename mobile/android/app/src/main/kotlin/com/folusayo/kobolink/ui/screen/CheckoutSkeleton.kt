@@ -23,8 +23,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -95,7 +95,7 @@ private fun FieldOutline(pulse: State<Float>) {
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .alpha(pulse.value)
+            .graphicsLayer { alpha = pulse.value }
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.extraSmall),
     )
 }
@@ -104,7 +104,7 @@ private fun FieldOutline(pulse: State<Float>) {
 private fun Block(pulse: State<Float>, modifier: Modifier, shape: androidx.compose.ui.graphics.Shape) {
     Box(
         modifier = modifier
-            .alpha(pulse.value)
+            .graphicsLayer { alpha = pulse.value }
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     )

@@ -68,27 +68,51 @@ fun backFromLink(session: SessionState): BackAction = when (session) {
     is SessionState.SignedIn, is SessionState.Resolving, is SessionState.Offline -> BackAction.DismissLink
 }
 
+/** A link the checkout is showing, in a form that survives process death. */
+sealed interface LinkRef {
+    data object None : LinkRef
+    data class Code(val code: String) : LinkRef
+
+    /** A link URL with no readable code: the not-found checkout. */
+    data object Unreadable : LinkRef
+}
+
+private const val UNREADABLE_MARKER = ""
+
+/** For `onSaveInstanceState`: null when no link is open. [LinkRef.Unreadable] is the empty string. */
+fun LinkRef.toSaved(): String? = when (this) {
+    LinkRef.None -> null
+    LinkRef.Unreadable -> UNREADABLE_MARKER
+    is LinkRef.Code -> code
+}
+
+fun linkRefFromSaved(saved: String?): LinkRef = when {
+    saved == null -> LinkRef.None
+    saved == UNREADABLE_MARKER -> LinkRef.Unreadable
+    else -> LinkRef.Code(saved)
+}
+
 /**
- * Whether `onCreate` should (re)open the link carried by the launch Intent.
+ * Which link `onCreate` should open.
  *
- * - First launch ([restoredFromSavedState] false): yes.
- * - Rotation / theme change: the process and the ViewModel survive, so the
- *   checkout is already open (or was deliberately closed); re-opening it would
- *   re-run the lookup and drop the payer's state, and re-opening a link the user
- *   had backed out of would resurrect it.
- * - Process death: the ViewModel is gone but the Intent is not. Re-open it,
- *   unless the user had already closed the link before the process died.
- *
- * (M1 review: this was an untested branch in `MainActivity.onCreate`, and its
- * earlier "skip when savedInstanceState != null" form wiped the deep link on
- * rotation.)
+ * - The checkout is already open ([checkoutIsOpen]): a rotation or theme change. The ViewModel has it; opening
+ *   again would re-run the lookup for nothing. [LinkRef.None].
+ * - Restored after process death ([restoredFromSavedState]): open what was ON SCREEN, [savedLink]. The activity's
+ *   launch Intent is not that: `onNewIntent` replaces the in-process intent, but Android rebuilds a killed activity
+ *   with the ORIGINAL launch Intent, so trusting it would reopen link A after the payer had moved on to link B, or
+ *   find only a launcher Intent and drop the checkout. Nothing saved means nothing was open (it had been closed).
+ * - A fresh start from Recents ([fromHistory]): the Intent is stale, a link from whenever the task began. None.
+ * - Otherwise, a fresh start: the Intent's link.
  */
-fun shouldOpenLaunchLink(
+fun linkToOpenOnCreate(
     restoredFromSavedState: Boolean,
     checkoutIsOpen: Boolean,
-    linkWasClosed: Boolean,
-): Boolean = when {
-    !restoredFromSavedState -> true
-    checkoutIsOpen -> false
-    else -> !linkWasClosed
+    savedLink: LinkRef,
+    fromHistory: Boolean,
+    intentLink: LinkRef,
+): LinkRef = when {
+    checkoutIsOpen -> LinkRef.None
+    restoredFromSavedState -> savedLink
+    fromHistory -> LinkRef.None
+    else -> intentLink
 }

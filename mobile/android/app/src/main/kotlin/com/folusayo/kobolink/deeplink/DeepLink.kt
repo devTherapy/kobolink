@@ -103,7 +103,7 @@ fun parseLinkCode(input: String): String? {
         val uri = URI(beforeQueryAndFragment)
         when (uri.scheme?.lowercase()) {
             // A bare path such as "/l/aBcDeFgH".
-            null -> uri.normalize().rawPath
+            null -> uri.rawPath // not normalised: contracts falls back to the raw text for a bare path
             CUSTOM_SCHEME -> uri.normalize().let { "/${it.host.orEmpty()}${it.rawPath.orEmpty()}" }
             "https", "http" ->
                 if (uri.host.equals(LINK_HOST, ignoreCase = true)) uri.normalize().rawPath else return null

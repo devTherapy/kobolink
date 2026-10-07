@@ -3,8 +3,6 @@ package com.folusayo.kobolink
 import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.auth.ngozi
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -52,26 +50,56 @@ class RoutingTest {
         assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), linkOpen = false))
     }
 
-    // shouldOpenLaunchLink: the onCreate decision the M1 review found untested.
+    // linkToOpenOnCreate: the onCreate decision the M1 review found untested.
+
+    private val a = LinkRef.Code("AAAAAAAA")
+    private val b = LinkRef.Code("BBBBBBBB")
+
+    private fun open(
+        restored: Boolean = false,
+        checkoutIsOpen: Boolean = false,
+        saved: LinkRef = LinkRef.None,
+        fromHistory: Boolean = false,
+        intent: LinkRef = LinkRef.None,
+    ) = linkToOpenOnCreate(restored, checkoutIsOpen, saved, fromHistory, intent)
 
     @Test
     fun `a first launch opens the link in the intent`() {
-        assertTrue(shouldOpenLaunchLink(restoredFromSavedState = false, checkoutIsOpen = false, linkWasClosed = false))
+        assertEquals(a, open(intent = a))
+        assertEquals(LinkRef.Unreadable, open(intent = LinkRef.Unreadable))
+        assertEquals(LinkRef.None, open(intent = LinkRef.None))
     }
 
     @Test
-    fun `rotation does not reopen a link that is already open`() {
-        assertFalse(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = true, linkWasClosed = false))
+    fun `rotation opens nothing, the view model already has the checkout`() {
+        assertEquals(LinkRef.None, open(restored = true, checkoutIsOpen = true, saved = a, intent = b))
     }
 
     @Test
-    fun `rotation does not resurrect a link the user backed out of`() {
-        assertFalse(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = false, linkWasClosed = true))
+    fun `after process death the link that was on screen reopens, not the one in the launch intent`() {
+        // Cold-started on link B's tap after link A: Android rebuilds with the ORIGINAL intent (A), but B was on screen.
+        assertEquals(b, open(restored = true, saved = b, intent = a))
+        // Started from the launcher, then a link was tapped: the rebuilt intent is a launcher intent.
+        assertEquals(a, open(restored = true, saved = a, intent = LinkRef.None))
+        assertEquals(LinkRef.Unreadable, open(restored = true, saved = LinkRef.Unreadable, intent = a))
     }
 
     @Test
-    fun `process death while the link was on screen reopens it`() {
-        assertTrue(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = false, linkWasClosed = false))
+    fun `after process death a link the user had closed stays closed`() {
+        assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, intent = a))
+    }
+
+    @Test
+    fun `a start from Recents does not reopen a stale link`() {
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = a))
+    }
+
+    @Test
+    fun `the saved form round-trips every kind of link`() {
+        for (ref in listOf(LinkRef.None, a, LinkRef.Unreadable)) {
+            assertEquals(ref, linkRefFromSaved(ref.toSaved()))
+        }
+        assertEquals(null, LinkRef.None.toSaved())
     }
 
     /**

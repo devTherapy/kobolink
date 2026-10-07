@@ -55,8 +55,11 @@ sealed interface PayPhase {
     /** A fixed-amount link was repriced after this screen loaded. [newAmountKobo] is null when the new price could not be fetched. */
     data class PriceChanged(val newAmountKobo: Int?) : PayPhase
 
-    /** The call could not be answered (network, rate limit, 5xx). Retrying reuses the held idempotency key. */
-    data class Failed(val kind: FailureKind) : PayPhase
+    /**
+     * The call could not be answered (network, rate limit, 5xx). Retrying the same [request] reuses the held
+     * idempotency key; a changed one is a new attempt.
+     */
+    data class Failed(val kind: FailureKind, val request: InitializeRequest) : PayPhase
 }
 
 /** The code of the link this state is about, or null when none is open or it was unreadable. */
@@ -163,7 +166,7 @@ class CheckoutController(
         job = scope.launch {
             val outcome = gateway.initialize(request, key)
             if (!isCurrent(mine)) return@launch
-            applyInitialize(loaded, outcome, mine)
+            applyInitialize(loaded, request, outcome, mine)
         }
     }
 
@@ -179,13 +182,23 @@ class CheckoutController(
         }
     }
 
-    private suspend fun applyInitialize(before: CheckoutState.Loaded, outcome: InitializeOutcome, mine: Long) {
+    private suspend fun applyInitialize(
+        before: CheckoutState.Loaded,
+        request: InitializeRequest,
+        outcome: InitializeOutcome,
+        mine: Long,
+    ) {
         when (outcome) {
-            is InitializeOutcome.Started ->
+            is InitializeOutcome.Started -> {
+                // The attempt succeeded and is over. Keeping its key would make the next Pay on this link (a
+                // reusable link paid again, the same details pre-filled) replay THIS reference: no new checkout,
+                // and once M4 verifies it, "paid" for a payment that never happened.
+                attempt = null
                 _state.value = before.copy(pay = PayPhase.Started(outcome.reference, outcome.amountKobo))
+            }
 
             is InitializeOutcome.Failed ->
-                _state.value = before.copy(pay = PayPhase.Failed(outcome.kind))
+                _state.value = before.copy(pay = PayPhase.Failed(outcome.kind, request))
 
             is InitializeOutcome.Rejected -> {
                 val rejection = outcome.rejection
@@ -194,6 +207,10 @@ class CheckoutController(
                 // answering "turned off" to the identical request. A refusal ends the attempt; the next Pay is new.
                 attempt = null
                 when {
+                    rejection.kind == RejectionKind.NotFound ->
+                        // Deleted between loading and paying: a form that can never succeed is no place to stay.
+                        _state.value = CheckoutState.NotFound(before.link.code)
+
                     rejection.kind == RejectionKind.LinkNotPayable ->
                         // Lost a race with the merchant (switched off, expired) or another payer (single use).
                         _state.value = before.copy(
@@ -227,7 +244,7 @@ class CheckoutController(
         if (!isCurrent(mine)) return
         _state.value = when (outcome) {
             is LookupOutcome.Found ->
-                if (outcome.availability == LinkAvailability.Payable) {
+                if (outcome.availability == LinkAvailability.Payable && outcome.link.amountKobo != null) {
                     CheckoutState.Loaded(outcome.link, outcome.availability, PayPhase.PriceChanged(outcome.link.amountKobo))
                 } else {
                     CheckoutState.Loaded(outcome.link, outcome.availability)

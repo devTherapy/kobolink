@@ -12,6 +12,8 @@ import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.checkout.ApiCheckoutGateway
 import com.folusayo.kobolink.checkout.CheckoutController
 import com.folusayo.kobolink.checkout.CheckoutGateway
+import com.folusayo.kobolink.checkout.CheckoutState
+import com.folusayo.kobolink.checkout.code
 import com.folusayo.kobolink.ui.screen.CheckoutFormState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
@@ -42,36 +44,35 @@ class MainViewModel(
     /** What the payer has typed. Outlives the screen's content for the same reason [checkout] does. */
     val checkoutForm = CheckoutFormState()
 
-    /**
-     * Whether the user closed the checkout (Back, or the close button). `MainActivity` saves it, so a
-     * process restart does not resurrect a link that was deliberately dismissed from the Intent that
-     * still carries it, and `shouldOpenLaunchLink` reads it.
-     */
-    var linkWasClosed: Boolean = false
-        private set
-
     /** A tapped link: always a fresh lookup, even for the link already on screen (M1 review, item a). */
     fun openLink(code: String) {
-        linkWasClosed = false
         checkoutForm.bind(code)
         checkout.open(code)
     }
 
     /** A link URL with no readable code: the not-found checkout, not the merchant login. */
     fun openUnreadableLink() {
-        linkWasClosed = false
         checkoutForm.bind(null)
         checkout.openUnreadable()
     }
 
+    fun open(link: LinkRef) {
+        when (link) {
+            LinkRef.None -> Unit
+            is LinkRef.Code -> openLink(link.code)
+            LinkRef.Unreadable -> openUnreadableLink()
+        }
+    }
+
     fun closeLink() {
-        linkWasClosed = true
         checkout.close()
     }
 
-    /** Restores [linkWasClosed] after process death; see `MainActivity.onCreate`. */
-    fun restoreLinkWasClosed(closed: Boolean) {
-        linkWasClosed = closed
+    /** The link on screen right now, for `onSaveInstanceState`. */
+    fun currentLink(): LinkRef = when (val state = checkout.state.value) {
+        CheckoutState.Idle -> LinkRef.None
+        is CheckoutState.NotFound -> state.code?.let { LinkRef.Code(it) } ?: LinkRef.Unreadable
+        else -> state.code?.let { LinkRef.Code(it) } ?: LinkRef.None
     }
 
     init {

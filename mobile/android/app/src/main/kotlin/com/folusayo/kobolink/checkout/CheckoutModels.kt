@@ -69,6 +69,9 @@ enum class RejectionKind {
     /** `validation_failed`. */
     ValidationFailed,
 
+    /** `not_found`: the link was deleted. */
+    NotFound,
+
     /** Anything else the API answered with a body: not_found, rate_limited, idempotency_mismatch, internal... */
     Other,
 }

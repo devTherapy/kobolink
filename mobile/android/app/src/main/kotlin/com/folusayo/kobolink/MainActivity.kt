@@ -57,21 +57,17 @@ class MainActivity : ComponentActivity() {
         // status bar or gesture pill.
         enableEdgeToEdge()
 
-        val restored = savedInstanceState != null
-        if (savedInstanceState != null) {
-            viewModel.restoreLinkWasClosed(savedInstanceState.getBoolean(KEY_LINK_WAS_CLOSED))
-        }
-
-        // The launch Intent is only opened when nothing already holds it: not on a rotation (the ViewModel
-        // has the checkout), not for a link the user already closed, but yes after process death.
-        if (shouldOpenLaunchLink(
-                restoredFromSavedState = restored,
-                checkoutIsOpen = viewModel.checkout.state.value.isOpen,
-                linkWasClosed = viewModel.linkWasClosed,
-            )
-        ) {
-            openLinkFrom(intent)
-        }
+        // Which link to open, decided by linkToOpenOnCreate: not on a rotation (the ViewModel has the
+        // checkout), the SAVED link after process death (the launch Intent is the original one, not the
+        // latest), and never a stale link when started from Recents.
+        val link = linkToOpenOnCreate(
+            restoredFromSavedState = savedInstanceState != null,
+            checkoutIsOpen = viewModel.checkout.state.value.isOpen,
+            savedLink = linkRefFromSaved(savedInstanceState?.getString(KEY_OPEN_LINK)),
+            fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0,
+            intentLink = linkRefFrom(intent),
+        )
+        viewModel.open(link)
 
         setContent {
             KobolinkTheme {
@@ -111,33 +107,33 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(KEY_LINK_WAS_CLOSED, viewModel.linkWasClosed)
+        outState.putString(KEY_OPEN_LINK, viewModel.currentLink().toSaved())
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        openLinkFrom(intent)
+        viewModel.open(linkRefFrom(intent))
     }
 
     /**
-     * Opens whatever link the Intent carries, as a fresh lookup. An Intent with no data (the launcher
-     * bringing an already-running app forward) is not a link and leaves the screen as it is. Data that
+     * The link an Intent carries. An Intent with no data (the launcher bringing an already-running app
+     * forward) carries none ([LinkRef.None]) and leaves the screen as it is. Data that
      * [parseLinkCode] rejects is still a link attempt, since the manifest only claims `https` +
-     * `pay.folusayo.com` + every path under /l/: it opens the not-found checkout rather than falling through to the
+     * `pay.folusayo.com` + every path under /l/: it is [LinkRef.Unreadable], the not-found checkout, rather than falling through to the
      * merchant login a payer never asked for.
      */
-    private fun openLinkFrom(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
-        val data = intent.data?.toString() ?: return
-        val code = parseLinkCode(data)
-        if (code != null) viewModel.openLink(code) else viewModel.openUnreadableLink()
+    private fun linkRefFrom(intent: Intent?): LinkRef {
+        if (intent?.action != Intent.ACTION_VIEW) return LinkRef.None
+        val data = intent.data?.toString() ?: return LinkRef.None
+        return parseLinkCode(data)?.let { LinkRef.Code(it) } ?: LinkRef.Unreadable
     }
 
     private fun leaveLink(session: SessionState) {
-        viewModel.closeLink()
         when (backFromLink(session)) {
-            BackAction.DismissLink -> Unit
+            BackAction.DismissLink -> viewModel.closeLink()
+            // Not closed first: clearing the checkout would let the merchant login draw for a frame
+            // on its way out.
             BackAction.LeaveApp -> finish()
         }
     }
@@ -166,7 +162,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        const val KEY_LINK_WAS_CLOSED = "linkWasClosed"
+        const val KEY_OPEN_LINK = "openLink"
     }
 }
 
