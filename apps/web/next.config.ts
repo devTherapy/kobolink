@@ -17,6 +17,9 @@ import type { NextConfig } from 'next'
  * description.
  */
 const nextConfig: NextConfig = {
+  // Only the e2e harness sets this (`e2e/support/stack.ts`), so its production
+  // build never overwrites a developer's `.next`. Unset, Next's default.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   rewrites() {
     const apiOrigin = process.env.API_ORIGIN ?? 'http://localhost:3001'
     return [{ source: '/api/:path*', destination: `${apiOrigin}/api/:path*` }]
