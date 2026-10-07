@@ -72,9 +72,10 @@ export const LINKS_TABLE_COLUMNS: TableColumn<PaymentLink>[] = [
 ]
 
 /**
- * The dashboard's links table (DESIGN-SPEC §4.1). A plain Server Component.
+ * The dashboard's links table (DESIGN-SPEC §4.1). A plain component with no
+ * hooks of its own; `LiveDashboard` (F7) renders it with the live list.
  * Each row is a real link to `/dashboard/links/[code]` (F5) — `rowHref`, not
- * `onRowClick`, so it stays a Server Component, a keyboard user Tabs to a
+ * `onRowClick`, so it needs no client JS for navigation, a keyboard user Tabs to a
  * genuine `<a>`, and open-in-new-tab works. The accessible name is "View
  * <title>": a description of up to 500 characters is not a link name.
  */

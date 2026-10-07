@@ -9,6 +9,12 @@ export interface LinkDetailData {
   link: PaymentLink
   /** The first page only — "Show more" on the payments table fetches the rest. */
   payments: PaymentListResponse
+  /**
+   * When these reads finished (ISO), taken *after* them. The live stream (F7)
+   * compares event times against it: an event at or before this instant is
+   * already part of `link` and `payments`, and is not applied a second time.
+   */
+  asOf: string
 }
 
 export type LinkDetailResolution = { found: true; data: LinkDetailData } | { found: false }
@@ -58,7 +64,7 @@ export const loadLinkDetail = cache(async (code: string, cookieHeader?: string):
       client.links.get(code, init),
       client.links.payments(code, undefined, init),
     ])
-    return { found: true, data: { link, payments } }
+    return { found: true, data: { link, payments, asOf: new Date().toISOString() } }
   } catch (error) {
     if (error instanceof ApiRequestError) {
       if (error.error.code === 'not_found') return { found: false }

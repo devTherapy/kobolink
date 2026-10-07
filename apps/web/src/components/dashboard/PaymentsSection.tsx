@@ -1,14 +1,16 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import type { Payment } from '@kobolink/contracts'
+import { formatNaira, type Payment } from '@kobolink/contracts'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Table } from '@/components/ui/Table'
+import { useDashboardStream } from '@/components/live/DashboardStreamProvider'
 import { client } from '@/lib/api'
 import { isSessionExpired, signInHref } from '@/lib/link-status'
+import { appendUnique, livePaymentsFor, mergePayments } from '@/lib/live-dashboard'
 import { CoinsIcon } from './icons'
 import { PAYMENTS_TABLE_COLUMNS } from './PaymentsTable'
 
@@ -20,12 +22,6 @@ export interface PaymentsSectionProps {
   /** The server-rendered first page. */
   initialPayments: Payment[]
   initialCursor: string | null
-}
-
-/** Append `incoming` to `existing`, dropping any `reference` already shown. */
-function appendUnique(existing: Payment[], incoming: Payment[]): Payment[] {
-  const seen = new Set(existing.map((payment) => payment.reference))
-  return [...existing, ...incoming.filter((payment) => !seen.has(payment.reference))]
 }
 
 /**
@@ -51,11 +47,25 @@ function appendUnique(existing: Payment[], incoming: Payment[]): Payment[] {
  * A failure that signing in would fix (`unauthenticated`) offers a link to
  * `/login?next=` this page instead of a retry that can never succeed.
  *
- * Not live yet: F7 (SSE) owns "a payment in another tab moves the numbers".
+ * **Live (F7).** Payments the stream delivers for this link are laid over the
+ * rendered first page — newest on top, a reference already there replaced by
+ * the live version, never listed twice (`mergePayments`) — and a failed attempt
+ * is a row too, saying no money moved. Nothing live is copied into state:
+ * `initialPayments` / `initialCursor` are read on every render, so when the
+ * `router.refresh()` that each event schedules delivers a newer first page, it
+ * simply shows. State holds only what this component fetched itself — the pages
+ * after the first — so a refresh never discards a "Show more" the merchant did,
+ * and the cursor follows those pages once there are any.
  */
 export function PaymentsSection({ code, initialPayments, initialCursor }: PaymentsSectionProps) {
-  const [payments, setPayments] = useState(initialPayments)
-  const [cursor, setCursor] = useState(initialCursor)
+  const { events } = useDashboardStream()
+  // Pages fetched by "Show more", after the rendered first page; `undefined` until one is.
+  const [olderPayments, setOlderPayments] = useState<Payment[]>([])
+  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined)
+  const livePayments = useMemo(() => livePaymentsFor(code, events), [code, events])
+  const firstPage = useMemo(() => mergePayments(initialPayments, livePayments), [initialPayments, livePayments])
+  const payments = useMemo(() => appendUnique(firstPage, olderPayments), [firstPage, olderPayments])
+  const cursor = olderCursor === undefined ? initialCursor : olderCursor
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [sessionExpired, setSessionExpired] = useState(false)
   const [loadedNote, setLoadedNote] = useState('')
@@ -75,8 +85,8 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
       const page = await client.links.payments(code, { cursor, limit: PAGE_SIZE })
       const merged = appendUnique(payments, page.items)
       const added = merged.length - payments.length
-      setPayments(merged)
-      setCursor(page.nextCursor)
+      setOlderPayments((previous) => appendUnique(previous, page.items))
+      setOlderCursor(page.nextCursor)
       setLoadedNote(`${added} more payment${added === 1 ? '' : 's'} loaded. Showing ${merged.length}.`)
       setLoadState('idle')
     } catch (error) {
@@ -85,8 +95,21 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
     }
   }
 
+  // The newest payment to have arrived live, said once to a screen reader — a row appearing at
+  // the top of a table is otherwise silent. Always mounted: a live region inserted with its text
+  // is not reliably announced. A bare `aria-live` rather than `role="status"`: the "Show more"
+  // note below already is the one status region this component's focus handling relies on.
+  const latestLive = livePayments[0]
+
   return (
     <Card as="section" padding="none">
+      <p aria-live="polite" aria-atomic="true" className="sr-only">
+        {latestLive === undefined
+          ? null
+          : latestLive.moneyMoved
+            ? `New payment: ${formatNaira(latestLive.amountKobo)} from ${latestLive.payerName}.`
+            : `A payment from ${latestLive.payerName} failed. No money moved.`}
+      </p>
       <div className="px-4 pt-4 pb-2">
         <h2 className="text-[16px] font-semibold text-(--color-ink)">Payments</h2>
       </div>

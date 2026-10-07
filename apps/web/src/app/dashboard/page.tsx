@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import { getSession } from '@/lib/session'
 import { loadDashboardData } from '@/lib/dashboard'
-import { StatStrip } from '@/components/dashboard/StatStrip'
-import { LinksTable } from '@/components/dashboard/LinksTable'
+import { LiveDashboard } from '@/components/dashboard/LiveDashboard'
 import { NewLinkButton } from '@/components/dashboard/NewLinkButton'
 
 export const metadata: Metadata = {
@@ -32,10 +31,11 @@ export const dynamic = 'force-dynamic'
  * `cache()`, so this and the layout share the one request instead of paying
  * for it twice.
  *
- * `NewLinkButton` (F4) is the page's one client island: the CTA, the drawer and
- * the create form. Creating a link calls `router.refresh()`, which re-runs
- * this server render — that is how the table and stat strip pick up the new
- * link without a full reload.
+ * Two client islands, both small. `NewLinkButton` (F4) is the CTA, the drawer
+ * and the create form: creating a link calls `router.refresh()`, which re-runs
+ * this server render. `LiveDashboard` (F7) renders the stat strip and links
+ * table from the figures fetched here, then keeps them current from the live
+ * stream; the page's HTML on arrival is unchanged by it.
  *
  * `getSession()` and `loadDashboardData()` depend on nothing but the
  * incoming request's own cookie — neither result feeds the other — so they
@@ -53,8 +53,7 @@ export default async function DashboardPage() {
         <h1 className="text-[23px] font-semibold text-(--color-ink)">Welcome back, {displayName}.</h1>
         <NewLinkButton />
       </div>
-      <StatStrip stats={stats} />
-      <LinksTable links={links.items} />
+      <LiveDashboard stats={stats} links={links.items} />
     </div>
   )
 }
