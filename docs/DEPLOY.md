@@ -29,13 +29,18 @@ commands anyone with a token can run.
 - [ ] **2. Create the `production` GitHub environment, then put the Fly token
       in it as an ENVIRONMENT secret named `FLY_API_TOKEN`.** In order:
       1. GitHub -> Settings -> Environments -> New environment -> `production`.
-      2. **Required reviewers: add yourself.** This is the control that matters:
-         the deploy job then pauses for your approval before it can read the
-         token. Optionally also set "Deployment branches and tags" to `main` and
-         `v*`; on its own that does NOT stop a `v*` tag pushed on an unreviewed
-         commit, because a tag can point at any commit and a tag push runs the
-         workflow file from the tagged commit. (Alternatively or additionally,
-         add a tag ruleset limiting who can create `v*` tags.)
+      2. **Required reviewers: add yourself. This is THE control.** The deploy
+         job then pauses for your approval before it can read the token, and
+         that holds even if someone edits the workflow, because a tag push runs
+         the workflow file from the tagged commit and a tag can point at any
+         commit. **Also (a MUST, not optional) set "Deployment branches and
+         tags"** to `main` and the tag pattern `v*`, and turn on **branch
+         protection for `main`**: GitHub's default for a new environment is no
+         restriction, so without this anyone with write access could push a
+         branch whose workflow declares `environment: production` and sends you
+         an approval request that looks routine. A tag ruleset limiting who can
+         create `v*` tags is an optional extra layer on top; it never replaces
+         the required reviewer.
       3. Run `fly tokens create org --name github-deploy --expiry 8760h` (needs
          only your account, from step 1), then in that environment: Environment
          secrets -> Add environment secret -> `FLY_API_TOKEN`.
@@ -249,10 +254,12 @@ browser treats 2.5x the interval of silence as a dead stream.
   and Apple's CDN fetch).
 - **Org-wide token.** The single `FLY_API_TOKEN` is organisation-scoped (see
   owner checklist step 2 for why). It must live only as an environment secret
-  of `production`, with a required reviewer: that reviewer (or a tag ruleset
-  limiting who can create `v*` tags) is what stops a `v*` tag on an unreviewed
-  commit from deploying. Limiting branches/tags alone does not, and a
-  repository-level secret of the same name would bypass all of it.
+  of `production`. The required reviewer on that environment is THE control
+  that stops a `v*` tag (or branch) on an unreviewed commit from deploying;
+  limiting deployment branches/tags to `main` and `v*` with branch protection
+  on `main` is part of the setup, a tag ruleset is only an extra layer, and
+  none of them replaces the reviewer. A repository-level secret of the same
+  name would bypass all of it.
 - **A debug-keystore fingerprint in `ANDROID_SHA256_FINGERPRINTS`** lets debug
   builds claim your domain; keep it only for the M1 `adb` check (step 4).
 - **Pooled Postgres strings** silently break the live dashboard stream (see
@@ -301,6 +308,6 @@ for the native dependencies.
 
 - Decide `TRUST_PROXY` (above), e.g. by having Next forward Fly's
   `Fly-Client-IP` and the api reading only that.
-- Per-app deploy tokens (two secrets, `FLY_API_TOKEN_API` / `FLY_API_TOKEN_WEB`) instead of one org token.
+- Per-app deploy tokens (two environment secrets of `production`, `FLY_API_TOKEN_API` / `FLY_API_TOKEN_WEB`) instead of one org token.
 - A staging app pair and a `workflow_dispatch` input to pick the target.
 - Scale the apps out (`fly scale count 2`) once the database is HA.

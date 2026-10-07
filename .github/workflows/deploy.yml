@@ -24,10 +24,14 @@
 # so whoever can push a tag can edit this workflow (drop the `if:` guard and
 # `environment: production`). A repository secret would still be handed to
 # that run. Only environment secrets are gated by the environment's rules, so
-# the token lives there and `production` has a REQUIRED REVIEWER (that, or a
-# tag ruleset limiting who can create v* tags, is the control that matters;
-# limiting branches/tags alone does not stop a v* tag on an unreviewed
-# commit). Do not also create a repository secret of the same name.
+# the token lives there. The REQUIRED REVIEWER on `production` is THE control:
+# nothing reads the token until the owner approves the run. Deployment
+# branches/tags limited to `main` and `v*` (plus branch protection on `main`)
+# is part of the setup, and a tag ruleset limiting who can create `v*` tags is
+# only an extra layer; neither replaces the reviewer, and without the
+# branch/tag restriction anyone with write access could run a branch whose
+# workflow declares `environment: production`. Do not also create a repository
+# secret of the same name. Setup: docs/DEPLOY.md, step 2.
 #
 # Order: api first (its release_command migrates the database), then web, then
 # the post-deploy smoke test as its own job, so it can be re-run alone when
