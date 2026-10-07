@@ -14,19 +14,43 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Kobolink">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
 
-        <!--
-          App Links (autoVerify VIEW/BROWSABLE/DEFAULT intent filter for
-          https://pay.folusayo.com/l/*, uppercase SHA-256 asset link
-          fingerprints, debug + Play App Signing certs) is M1's job, not M0's.
-          M0 is scaffold + codegen + API client only — see PLAN.md.
-        -->
+            <!--
+              App Links. autoVerify tells Android to fetch and check
+              https://pay.folusayo.com/.well-known/assetlinks.json (served by
+              apps/web's F8 route handler, generated from
+              packages/contracts' ANDROID_PACKAGE_NAME + this app's signing
+              certificate SHA-256 fingerprints) before this filter is ever
+              treated as a claim on the host. Until that check passes, a tap
+              on the link falls through to the browser instead of hijacking a
+              URL this app doesn't yet own — see `adb shell pm get-app-links`
+              in the PR description for how to check the resulting status.
+
+              All three of VIEW + BROWSABLE + DEFAULT are required together or
+              verification silently never runs. host/pathPrefix must match
+              packages/contracts' LINK_DOMAIN / LINK_PATH_PREFIX exactly
+              (also mirrored at runtime in
+              deeplink/DeepLink.kt#LINK_HOST, which
+              AndroidManifestDeepLinkTest pins against this file so the two
+              can't silently drift apart) — pathPrefix, not pathPattern,
+              since the prefix carries no wildcard characters.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="pay.folusayo.com"
+                    android:pathPrefix="/l/" />
+            </intent-filter>
+        </activity>
 
     </application>
 
