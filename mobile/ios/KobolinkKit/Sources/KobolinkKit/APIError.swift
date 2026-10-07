@@ -49,13 +49,25 @@ public struct ServerError: Error, Equatable, Sendable {
 
 /// Every way an API call can fail, split by what the caller may conclude.
 ///
-/// The split is the point: `.server` is a definitive answer, `.unreachable` is
-/// "could not find out" (the request may or may not have arrived), and the
-/// two in between mean the server answered with something this app cannot
-/// read. Callers that move money must not treat the last three as proof that
-/// nothing happened.
+/// Each case speaks only for THE REQUEST THAT PRODUCED IT:
+/// - `.server` is a definitive answer to that request. It is not proof that an
+///   earlier attempt at the same payment did nothing: a refusal that applies
+///   only to a replay (a 401, a validation 400) says nothing about whether the
+///   first send posted.
+/// - `.unreachable`, `.unexpectedResponse` and `.undecodableResponse` mean
+///   "could not find out". The request may or may not have been applied.
+///
+/// Rules for any money-moving call built on this (I3 onward):
+/// - Only `ServerError.moneyMoved == false`, or a reply that came back through
+///   the idempotency layer for the same key, may clear a pending payment
+///   attempt. A bare `.server` refusal may not.
+/// - While an earlier attempt's outcome is unknown, a retry reuses the same
+///   idempotency key. Never mint a new one.
+/// - There is no silent transport retry: the person sees "could not find out"
+///   and chooses to try again.
 public enum APIError: Error, Equatable, Sendable {
-    /// The server answered with a contracts `ApiError`.
+    /// The server answered THIS request with a contracts `ApiError`. See the
+    /// rules above before treating it as proof about an earlier attempt.
     case server(ServerError)
     /// An error status whose body is not a readable `ApiError` (a proxy's
     /// HTML 502, a code newer than this build knows).

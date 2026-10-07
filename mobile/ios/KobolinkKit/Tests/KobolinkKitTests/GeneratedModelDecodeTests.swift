@@ -67,11 +67,6 @@ struct GeneratedModelDecodeTests {
 
     // MARK: Money is 64-bit
 
-    @Test("Int is 64-bit, so generated kobo fields cannot truncate")
-    func intIsSixtyFourBit() {
-        #expect(MemoryLayout<Int>.size == 8)
-    }
-
     @Test("a wallet balance beyond Int32 decodes exactly, in either sign")
     func walletBalanceOverflowsInt32() async throws {
         // 2^53 - 1 is the contracts' bound for a ledger sum; Int32.max kobo is

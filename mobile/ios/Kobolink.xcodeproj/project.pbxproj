@@ -23,6 +23,7 @@
 		0A0000000000000000000006 /* Exceptions for "Kobolink" folder in "Kobolink" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Info-Debug.plist,
 				Info.plist,
 			);
 			target = 0A0000000000000000000008 /* Kobolink */;
@@ -207,7 +208,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Kobolink/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kobolink;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -228,7 +228,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Kobolink/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kobolink;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

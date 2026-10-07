@@ -1,5 +1,8 @@
 #include "Base.xcconfig"
 
-SWIFT_COMPILATION_MODE = wholemodule
+// Release is exactly what is checked in: no Local.xcconfig, so no machine can
+// point a shipping build at another server. (Set DEVELOPMENT_TEAM for a
+// Release device build in Xcode's Signing settings.)
+INFOPLIST_FILE = Kobolink/Info.plist
 
-#include? "Local.xcconfig"
+SWIFT_COMPILATION_MODE = wholemodule

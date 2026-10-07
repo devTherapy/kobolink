@@ -68,8 +68,11 @@ public enum SpecNormalizer {
     }
 
     private static func isNullSchema(_ branch: Any) -> Bool {
+        // Any schema whose type is null, whatever annotations (description,
+        // title) ride along: matching only a bare {type: null} would let a
+        // described null branch through, and the generator drops that field.
         guard let dict = branch as? [String: Any] else { return false }
-        return dict["type"] as? String == "null" && dict.count == 1
+        return dict["type"] as? String == "null"
     }
 
     private static func mergeNullable(

@@ -83,6 +83,27 @@ struct SpecNormalizerTests {
         #expect(try property(result, "fields")["additionalProperties"] != nil)
     }
 
+    @Test("a null branch that carries a description is still a null branch")
+    func annotatedNullBranch() throws {
+        let result = try normalized(
+            """
+            {"properties":{"x":{"anyOf":[{"type":"string","maxLength":9},{"type":"null","description":"Absent when open-amount."}]}}}
+            """
+        )
+        let x = try property(result, "x")
+        #expect(x["type"] as? [String] == ["string", "null"])
+        #expect(x["maxLength"] as? Int == 9)
+        #expect(x["anyOf"] == nil)
+    }
+
+    @Test("an annotated null branch that cannot be rewritten fails instead of surviving")
+    func annotatedNullBranchUnrewritable() {
+        let ref = "{\"x\":{\"anyOf\":[{\"$ref\":\"#/a\"},{\"type\":\"null\",\"title\":\"none\"}]}}"
+        #expect(throws: SpecNormalizer.Failure.self) { try SpecNormalizer.normalize(Data(ref.utf8)) }
+        let oneOf = "{\"x\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"null\",\"description\":\"d\"}]}}"
+        #expect(throws: SpecNormalizer.Failure.self) { try SpecNormalizer.normalize(Data(oneOf.utf8)) }
+    }
+
     @Test("a type list that already includes null passes through")
     func typeListUntouched() throws {
         let result = try normalized("{\"properties\":{\"c\":{\"type\":[\"string\",\"null\"]}}}")

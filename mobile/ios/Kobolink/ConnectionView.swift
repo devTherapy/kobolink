@@ -99,6 +99,10 @@ struct MisconfiguredView: View {
             "This build has no server address. Set KOBOLINK_API_BASE_URL in Config/*.xcconfig."
         case .invalid(let value):
             "\"\(value)\" is not a server address. Use an http or https URL."
+        case .insecure:
+            "This build only talks to servers over https. Set an https KOBOLINK_API_BASE_URL."
+        case .hasPath:
+            "The server address must be just a host (for example https://pay.folusayo.com), with no path."
         }
     }
 }
