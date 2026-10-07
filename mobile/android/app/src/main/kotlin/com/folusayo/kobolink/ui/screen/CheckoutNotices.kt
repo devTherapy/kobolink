@@ -45,6 +45,7 @@ import com.folusayo.kobolink.checkout.FailureKind
 import com.folusayo.kobolink.checkout.LinkAvailability
 import com.folusayo.kobolink.checkout.Notice
 import com.folusayo.kobolink.checkout.PayPhase
+import com.folusayo.kobolink.checkout.START_OVER_FAILED_MESSAGE
 import com.folusayo.kobolink.checkout.loadFailedNotice
 import com.folusayo.kobolink.checkout.nonPayableNotice
 import com.folusayo.kobolink.checkout.notFoundNotice
@@ -168,6 +169,15 @@ internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, o
         )
         FilledTonalButton(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text("Done")
+        }
+        if (started.startOverFailed) {
+            Text(
+                text = START_OVER_FAILED_MESSAGE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+            )
         }
         // The way out for a link that is paid more than once: until M4 can confirm a payment, this one stays on
         // screen every time the link is opened. Deliberate and confirmed, because it may already have been paid.

@@ -43,7 +43,12 @@ sealed interface PayPhase {
      * simulated and `verify` decides the outcome), so what M4 needs is exactly this: the reference
      * to verify. Nothing has been charged yet.
      */
-    data class Started(val reference: String, val amountKobo: Int) : PayPhase
+    data class Started(
+        val reference: String,
+        val amountKobo: Int,
+        /** "Start a new payment" was tapped and the phone would not let go of the record: nothing changed, and the screen says so. */
+        val startOverFailed: Boolean = false,
+    ) : PayPhase
 
     /** The API refused the request with a reason; the form stays so the payer can correct it. */
     data class Rejected(
@@ -115,14 +120,17 @@ val PayPhase.needsFreshRead: Boolean get() = this is PayPhase.PriceChanged && ne
  * only here was gone by the next tap, which then made a second pending checkout for one payment. So:
  *
  * - the attempt is saved BEFORE the request leaves (and if it cannot be saved, nothing is sent: [PayPhase.NotRecorded]);
- * - one slot per link and per owner ([bindOwner]: the signed-in user, or the anonymous payer), so opening another
- *   link never drops an unsettled attempt;
+ * - one slot per link code on the device, found whatever the session is doing (every new process starts with the
+ *   session still resolving, so a slot keyed by user is not the one a cold start reads), so opening another link
+ *   never drops an unsettled attempt;
  * - [open] restores it: the reference is shown again ([PayPhase.Started]), or, if the outcome was never seen (a
  *   failed call, Back mid-request, a killed process), [PayPhase.Failed] with [FailureKind.Interrupted] and the exact
  *   request, so "Try again" resends the identical request under the identical key;
  * - it is cleared only by a definite server refusal with a parsed body (the server stores a refusal under the key
  *   and would replay it to every identical retry, even after the cause is gone), by [startOver] (the payer's own
- *   word that they want a new payment), and by the owner signing out or changing.
+ *   word that they want a new payment), by the signed-in user's EXPLICIT sign-out ([explicitSignOut]; an expired
+ *   session is not one), and when a DIFFERENT user is confirmed ([bindOwner]). A slot carries the id of the user who
+ *   made it, only so that another confirmed user neither sees nor resumes it.
  *
  * **A started payment is shown again.** When `initialize` answers, the reference is saved with the attempt. Reopening
  * the link shows the same "Payment started" screen instead of an empty form. It lasts until [startOver] (or, in M4,
@@ -147,37 +155,56 @@ class CheckoutController(
     private var generation = 0L
     private var job: Job? = null
 
-    /** Whose slots these are: [PAYER_OWNER], or [ownerFor] the signed-in user. */
-    private var owner = PAYER_OWNER
+    /** The signed-in user the session has CONFIRMED, or null: a payer, a session still resolving, offline or expired. */
+    private var confirmedUser: String? = null
 
     /** The unsettled attempt for the link currently open (or last opened), mirrored in the store. */
     private var held: PendingCheckout? = null
 
     /**
-     * Tie the checkout to who is using it: the signed-in user's id, or null for a payer with no account.
+     * Follow the session: [userId] is the confirmed signed-in user, or null for a payer or a session that is
+     * resolving, offline or has ended.
      *
-     * Leaving a signed-in user (sign-out, session expiry, another user) clears that user's pending payments and
-     * closes the checkout: a shared device must not show the previous person's reference. Becoming signed in does
-     * not touch anything. A cold start with a stored token opens a link while the session is still resolving, with
-     * no user yet, and that must not disturb it.
+     * Going to null changes nothing: not the cold start's resolving state, and not an expired session (only
+     * [explicitSignOut] clears a user's attempts). Becoming a user does two things. Slots made by a DIFFERENT user are
+     * cleared, and never shown to this one. And the slot for the open link is read again: the cold start opened it
+     * before /me answered, which is the only time a signed-in user's own attempt could be missed.
      */
     fun bindOwner(userId: String?) {
-        val next = ownerFor(userId)
-        if (next == owner) return
-        val previous = owner
-        owner = next
-        if (previous == PAYER_OWNER) return
-        supersede()
-        held = null
-        // A failed clear is not fatal: the slots belong to `previous`, and nobody reads them under another owner.
-        runCatching { store.clearOwner(previous) }
-        _state.value = CheckoutState.Idle
+        val previous = confirmedUser
+        if (userId == previous) return
+        confirmedUser = userId
+        if (userId == null) return
+        if (previous != null) {
+            // Another user straight after one: do not leave the first one's screen up.
+            supersede()
+            held = null
+            _state.value = CheckoutState.Idle
+        }
+        // A failed clear is not fatal: [visible] hides another user's slot from this one anyway.
+        runCatching { store.clearOwnedByOthers(userId) }
+        refreshRemembered()
+    }
+
+    /**
+     * The signed-in user chose to sign out: forget the attempts they made, in memory and on disk, and leave the
+     * checkout. A payer's attempts, and those of a session that merely expired, stay.
+     */
+    fun explicitSignOut() {
+        val user = confirmedUser ?: return
+        confirmedUser = null
+        if (held?.owner == user) held = null
+        runCatching { store.clearOwnedBy(user) }
+        if (_state.value.isOpen) {
+            supersede()
+            _state.value = CheckoutState.Idle
+        }
     }
 
     /** Opens [code]: always a fresh lookup, superseding whatever was in flight. */
     fun open(code: String) {
         val mine = supersede()
-        held = store.restore(code)
+        held = recall(code)
         _state.value = CheckoutState.Loading(code)
         lookUp(code, mine)
     }
@@ -205,11 +232,21 @@ class CheckoutController(
      * "Start a new payment": the payer's own word that the remembered payment on the open link is not the one they
      * want (the screen asks them to check with the merchant first, since it may have been paid). Forgets it,
      * in memory and on disk, and looks the link up again. The only way out of a started payment before M4.
+     *
+     * If the disk will not let go of it, nothing changes and the screen says so ([PayPhase.Started.startOverFailed]):
+     * a button that silently does nothing, or that forgets the payment only in memory, would bring it back after a
+     * restart.
      */
     fun startOver() {
         val code = _state.value.code ?: return
+        if (runCatching { store.save(code, null) }.isFailure) {
+            val current = _state.value
+            if (current is CheckoutState.Loaded && current.pay is PayPhase.Started) {
+                _state.value = current.copy(pay = current.pay.copy(startOverFailed = true))
+            }
+            return
+        }
         held = null
-        runCatching { store.save(owner, code, null) }
         open(code)
     }
 
@@ -233,7 +270,7 @@ class CheckoutController(
 
         // Write it down BEFORE the request leaves. If the process dies mid-flight the next one knows which key to
         // retry under. If it cannot be written, nothing is sent: an unrecorded payment could be paid twice.
-        val recorded = runCatching { store.save(owner, request.code, attempt) }.isSuccess
+        val recorded = runCatching { store.save(request.code, attempt) }.isSuccess
         if (!recorded) {
             _state.value = loaded.copy(pay = PayPhase.NotRecorded(request))
             return
@@ -254,7 +291,7 @@ class CheckoutController(
             val outcome = gateway.lookup(code)
             if (!isCurrent(mine)) return@launch
             _state.value = when (outcome) {
-                is LookupOutcome.Found -> CheckoutState.Loaded(outcome.link, outcome.availability, rememberedPhaseFor(outcome))
+                is LookupOutcome.Found -> CheckoutState.Loaded(outcome.link, outcome.availability, rememberedPhaseFor(outcome.link, outcome.availability))
                 LookupOutcome.NotFound -> CheckoutState.NotFound(code)
                 is LookupOutcome.Failed -> CheckoutState.LoadFailed(code, outcome.kind)
             }
@@ -267,15 +304,47 @@ class CheckoutController(
      * that instead), and an interrupted attempt only while its price is still the link's price (a changed price is
      * a new request, which has a new key anyway).
      */
-    private fun rememberedPhaseFor(found: LookupOutcome.Found): PayPhase {
-        val remembered = held ?: return PayPhase.Idle
-        if (remembered.request.code != found.link.code || found.availability != LinkAvailability.Payable) return PayPhase.Idle
+    private fun rememberedPhaseFor(link: CheckoutLink, availability: LinkAvailability): PayPhase {
+        val remembered = visible(held) ?: return PayPhase.Idle
+        if (remembered.request.code != link.code || availability != LinkAvailability.Payable) return PayPhase.Idle
         if (remembered.reference != null) {
             return PayPhase.Started(remembered.reference, remembered.confirmedAmountKobo ?: remembered.request.amountKobo)
         }
-        val repriced = found.link.amountKobo != null && found.link.amountKobo != remembered.request.amountKobo
+        val repriced = link.amountKobo != null && link.amountKobo != remembered.request.amountKobo
         if (repriced) return PayPhase.Idle
         return PayPhase.Failed(FailureKind.Interrupted, remembered.request)
+    }
+
+    /**
+     * Read the slot for the open link again, now that the user is confirmed. The cold start opened the link while
+     * the session was still resolving; a Loaded screen built then is rebuilt here, unless something is in flight or
+     * the payer is already past the form (a refusal, a price notice).
+     */
+    private fun refreshRemembered() {
+        val code = _state.value.code ?: return
+        val current = _state.value
+        if (current is CheckoutState.Loaded) {
+            val rebuildable = current.pay is PayPhase.Idle || current.pay is PayPhase.Started ||
+                (current.pay is PayPhase.Failed && current.pay.kind == FailureKind.Interrupted)
+            if (!rebuildable) return
+        }
+        held = recall(code)
+        if (current is CheckoutState.Loaded) {
+            _state.value = current.copy(pay = rememberedPhaseFor(current.link, current.availability))
+        }
+    }
+
+    /** A slot made by another confirmed user is none of this user's business: neither shown nor resumed. */
+    private fun visible(pending: PendingCheckout?): PendingCheckout? {
+        val user = confirmedUser
+        if (pending == null || user == null || pending.owner == null || pending.owner == user) return pending
+        return null
+    }
+
+    /** The unsettled attempt for [code]: the one in memory if it is for this link, else the disk's. */
+    private fun recall(code: String): PendingCheckout? {
+        val remembered = if (held?.request?.code == code) held else runCatching { store.load(code) }.getOrNull()
+        return visible(remembered)
     }
 
     private suspend fun applyInitialize(
@@ -294,7 +363,7 @@ class CheckoutController(
                 // key still is, so a retry gets the same reference back from the server.
                 val phase = PayPhase.Started(outcome.reference, outcome.amountKobo)
                 held = attempt.copy(reference = outcome.reference, confirmedAmountKobo = outcome.amountKobo)
-                runCatching { store.save(owner, request.code, held) }
+                runCatching { store.save(request.code, held) }
                 _state.value = before.copy(pay = phase)
             }
 
@@ -364,19 +433,17 @@ class CheckoutController(
 
     /** The attempt to send [request] under: the remembered one if it is the identical request, else a new one. */
     private fun attemptFor(request: InitializeRequest): PendingCheckout {
-        val remembered = held
+        val remembered = visible(held)
         if (remembered != null && remembered.request == request) return remembered
-        return PendingCheckout(request, newIdempotencyKey())
+        return PendingCheckout(request, newIdempotencyKey(), owner = confirmedUser)
     }
 
     private fun forget(code: String) {
         held = null
         // A slot that fails to clear comes back as an interrupted attempt; replaying it returns the stored refusal.
-        runCatching { store.save(owner, code, null) }
+        // One retry, since nothing tells the payer about it.
+        if (runCatching { store.save(code, null) }.isFailure) runCatching { store.save(code, null) }
     }
-
-    private fun PendingCheckoutStore.restore(code: String): PendingCheckout? =
-        if (held?.request?.code == code) held else runCatching { load(owner, code) }.getOrNull()
 
     /** Starts a new generation and cancels the previous request. Returns the new generation. */
     private fun supersede(): Long {

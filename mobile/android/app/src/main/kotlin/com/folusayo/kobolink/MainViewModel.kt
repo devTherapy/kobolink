@@ -104,6 +104,8 @@ class MainViewModel(
         viewModelScope.async { session.login(email, password) }.await()
 
     fun logout() {
+        // The person asked to sign out: their unsettled payments go with the session. An expired session does not.
+        checkout.explicitSignOut()
         viewModelScope.launch { session.logout() }
     }
 

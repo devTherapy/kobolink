@@ -184,7 +184,7 @@ class CheckoutPersistenceTest {
         runCurrent()
 
         assertEquals("the request is in flight", 1, gateway.initializes.size)
-        assertEquals(PendingCheckout(request, key = "run1-key-0-0123456789"), store.load(PAYER_OWNER, code))
+        assertEquals(PendingCheckout(request, key = "run1-key-0-0123456789"), store.load(code))
     }
 
     @Test
@@ -205,7 +205,7 @@ class CheckoutPersistenceTest {
     fun `a write that fails is the same, not sent`() = runTest {
         val gateway = FakeCheckoutGateway()
         val store = object : PendingCheckoutStore by InMemoryPendingCheckoutStore() {
-            override fun save(owner: String, code: String, pending: PendingCheckout?) {
+            override fun save(code: String, pending: PendingCheckout?) {
                 throw IOException("disk full")
             }
         }
@@ -229,7 +229,7 @@ class CheckoutPersistenceTest {
 
         assertEquals(
             PendingCheckout(request, "run1-key-0-0123456789", reference, confirmedAmountKobo = 1_500_000),
-            store.load(PAYER_OWNER, code),
+            store.load(code),
         )
     }
 
@@ -240,7 +240,7 @@ class CheckoutPersistenceTest {
         val first = appRun(gateway, store, run = 1)
         open(first)
         payAndAnswer(first, InitializeOutcome.Rejected(Rejection(RejectionKind.LinkNotPayable, "no", availability = LinkAvailability.Disabled)))
-        assertNull(store.load(PAYER_OWNER, code))
+        assertNull(store.load(code))
         first.finish()
 
         val second = appRun(gateway, store, run = 2)
@@ -255,7 +255,7 @@ class CheckoutPersistenceTest {
         open(app)
         for (kind in listOf(FailureKind.Network, FailureKind.Server, FailureKind.RateLimited, FailureKind.Unreadable)) {
             payAndAnswer(app, InitializeOutcome.Failed(kind))
-            assertNotNull("$kind is an unknown outcome", store.load(PAYER_OWNER, code))
+            assertNotNull("$kind is an unknown outcome", store.load(code))
         }
     }
 
@@ -284,40 +284,100 @@ class CheckoutPersistenceTest {
     }
 
     @Test
-    fun `signing out clears that user's pending payments, in memory and on disk`() = runTest {
+    fun `an explicit sign-out clears that user's pending payments, in memory and on disk`() = runTest {
         val gateway = FakeCheckoutGateway()
         val store = InMemoryPendingCheckoutStore()
         val app = appRun(gateway, store, run = 1)
         app.checkout.bindOwner("u1")
         open(app)
         payAndAnswer(app, InitializeOutcome.Started(reference, 1_500_000))
-        assertNotNull(store.load(ownerFor("u1"), code))
+        assertNotNull(store.load(code))
 
-        app.checkout.bindOwner(null) // sign-out
+        app.checkout.explicitSignOut()
+        app.checkout.bindOwner(null) // the session follows
 
-        assertNull(store.load(ownerFor("u1"), code))
+        assertNull(store.load(code))
         assertEquals("the previous user's reference is not left on screen", CheckoutState.Idle, app.checkout.state.value)
         open(app)
         assertEquals(PayPhase.Idle, payOf(app))
     }
 
     @Test
-    fun `switching to another user clears the first one's too`() = runTest {
+    fun `an expired session is not a sign-out, so the attempt is still there for the same user`() = runTest {
+        val gateway = FakeCheckoutGateway()
         val store = InMemoryPendingCheckoutStore()
-        val app = appRun(FakeCheckoutGateway(), store, run = 1)
+        val app = appRun(gateway, store, run = 1)
         app.checkout.bindOwner("u1")
         open(app)
-        payAndAnswer(app, InitializeOutcome.Started(reference, 1_500_000))
+        payAndAnswer(app, InitializeOutcome.Failed(FailureKind.Network))
 
-        app.checkout.bindOwner("u2")
+        app.checkout.bindOwner(null) // 401 mid-session
+        assertNotNull("an involuntary end of session keeps the attempt", store.load(code))
+        assertTrue("and does not pull the screen away", app.checkout.state.value.isOpen)
 
-        assertNull(store.load(ownerFor("u1"), code))
+        app.checkout.bindOwner("u1") // signs in again
         open(app)
-        assertEquals(PayPhase.Idle, payOf(app))
+        assertEquals(PayPhase.Failed(FailureKind.Interrupted, request), payOf(app))
+        app.checkout.pay(payer)
+        runCurrent()
+        assertEquals(keys(gateway).first(), keys(gateway).last())
     }
 
     @Test
-    fun `a payer's payment is neither shown to a signed-in user nor cleared by their sign-out`() = runTest {
+    fun `the session resolving to a user changes nothing for a payment already on screen`() = runTest {
+        val store = InMemoryPendingCheckoutStore()
+        val app = appRun(FakeCheckoutGateway(), store, run = 1)
+        open(app)
+        payAndAnswer(app, InitializeOutcome.Started(reference, 1_500_000))
+
+        app.checkout.bindOwner("u1")
+
+        assertEquals(PayPhase.Started(reference, 1_500_000), payOf(app))
+        assertNotNull(store.load(code))
+    }
+
+    @Test
+    fun `a different user being confirmed clears the first one's slots and never shows them`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val store = InMemoryPendingCheckoutStore()
+        val first = appRun(gateway, store, run = 1)
+        first.checkout.bindOwner("u1")
+        open(first)
+        payAndAnswer(first, InitializeOutcome.Started(reference, 1_500_000))
+        first.finish() // u1's session then expires; the slot stays
+
+        val second = appRun(gateway, store, run = 2)
+        open(second) // resolving: u1's attempt is on screen
+        assertEquals(PayPhase.Started(reference, 1_500_000), payOf(second))
+        second.checkout.bindOwner("u2") // /me says it is someone else
+
+        assertNull("u1's slot is gone", store.load(code))
+        assertEquals("and is not left on u2's screen", PayPhase.Idle, payOf(second))
+    }
+
+    @Test
+    fun `a slot owned by another user is not shown to a confirmed user even before it is cleared`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val inner = InMemoryPendingCheckoutStore()
+        inner.save(code, PendingCheckout(request, "someone-elses-key-0123456789", reference = reference, confirmedAmountKobo = 1_500_000, owner = "u1"))
+        // The clearing is what failed here, so only the read-side hiding stands between u2 and u1's attempt.
+        val store = object : PendingCheckoutStore by inner {
+            override fun clearOwnedByOthers(userId: String) {
+                throw IOException("disk")
+            }
+        }
+        val app = appRun(gateway, store, run = 1)
+        app.checkout.bindOwner("u2")
+        open(app)
+
+        assertEquals(PayPhase.Idle, payOf(app))
+        app.checkout.pay(payer)
+        runCurrent()
+        assertTrue("u2 does not resume u1's key", keys(gateway).single().startsWith("run1"))
+    }
+
+    @Test
+    fun `a payer's payment survives a merchant's sign-out and is not hidden from a signed-in user`() = runTest {
         val gateway = FakeCheckoutGateway()
         val store = InMemoryPendingCheckoutStore()
         val payerRun = appRun(gateway, store, run = 1)
@@ -328,10 +388,48 @@ class CheckoutPersistenceTest {
         val merchantRun = appRun(gateway, store, run = 2)
         merchantRun.checkout.bindOwner("u1")
         open(merchantRun)
-        assertEquals("a signed-in user does not see a payer's reference", PayPhase.Idle, payOf(merchantRun))
-        merchantRun.checkout.bindOwner(null)
+        assertEquals(PayPhase.Started(reference, 1_500_000), payOf(merchantRun))
+        merchantRun.checkout.explicitSignOut()
 
-        assertNotNull(store.load(PAYER_OWNER, code))
+        assertNotNull("signing out clears what the signed-in user made, not a payer's", store.load(code))
+    }
+
+    /**
+     * Round 4. A merchant's attempt was written under `user:<id>`, but every new ViewModel starts with the session
+     * still resolving, so the cold start's `open` read the `payer` slot, and the later bind to the user never reloaded.
+     * The form was blank and the next Pay minted a second key over the first while its outcome was unknown.
+     */
+    @Test
+    fun `a signed-in user's unsettled attempt is found after a cold start, whatever order the session arrives in`() = runTest {
+        for (outcome in listOf<InitializeOutcome?>(null, InitializeOutcome.Failed(FailureKind.Network), InitializeOutcome.Started(reference, 1_500_000))) {
+            val gateway = FakeCheckoutGateway()
+            val store = InMemoryPendingCheckoutStore()
+            val first = appRun(gateway, store, run = 1)
+            first.checkout.bindOwner("u1") // /me answered before the payer tapped Pay
+            open(first)
+            first.checkout.pay(payer)
+            runCurrent()
+            if (outcome != null) {
+                gateway.initializes.last().complete(outcome)
+                runCurrent()
+            }
+            first.finish() // process death
+
+            val second = appRun(gateway, store, run = 2) // resolving: no user yet
+            open(second)
+            second.checkout.bindOwner("u1") // /me answers
+            val expected = if (outcome is InitializeOutcome.Started) {
+                PayPhase.Started(reference, 1_500_000)
+            } else {
+                PayPhase.Failed(FailureKind.Interrupted, request)
+            }
+            assertEquals("outcome $outcome", expected, payOf(second))
+            second.checkout.pay(payer)
+            runCurrent()
+
+            assertEquals("outcome $outcome", "run1-key-0-0123456789", keys(gateway).last())
+            assertEquals("outcome $outcome: no second key was ever minted", 0, keys(gateway).count { it.startsWith("run2") })
+        }
     }
 
     @Test
@@ -363,10 +461,67 @@ class CheckoutPersistenceTest {
         runCurrent()
 
         assertEquals(PayPhase.Idle, payOf(app))
-        assertNull(store.load(PAYER_OWNER, code))
+        assertNull(store.load(code))
         app.checkout.pay(payer)
         runCurrent()
         assertTrue("a deliberate new payment has a new key", keys(gateway)[0] != keys(gateway)[1])
+    }
+
+    @Test
+    fun `starting over that the disk refuses changes nothing and says so, then works once the disk lets go`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val inner = InMemoryPendingCheckoutStore()
+        var diskWorks = false
+        val store = object : PendingCheckoutStore by inner {
+            override fun save(code: String, pending: PendingCheckout?) {
+                if (pending == null && !diskWorks) throw IOException("disk")
+                inner.save(code, pending)
+            }
+        }
+        // The payment itself must be recordable, so make it first while the disk works, then break clearing.
+        diskWorks = true
+        val app = appRun(gateway, store, run = 1)
+        open(app)
+        payAndAnswer(app, InitializeOutcome.Started(reference, 1_500_000))
+        diskWorks = false
+
+        app.checkout.startOver()
+        runCurrent()
+
+        assertEquals("no silent no-op: the screen is told", PayPhase.Started(reference, 1_500_000, startOverFailed = true), payOf(app))
+        assertEquals("and no lookup was started, so nothing was forgotten in memory only", 1, gateway.lookups.size)
+        assertNotNull(inner.load(code))
+
+        diskWorks = true
+        app.checkout.startOver()
+        runCurrent()
+        gateway.lookups.last().complete(found())
+        runCurrent()
+
+        assertEquals(PayPhase.Idle, payOf(app))
+        assertNull(inner.load(code))
+    }
+
+    @Test
+    fun `starting over clears the slot whoever made it`() = runTest {
+        val gateway = FakeCheckoutGateway()
+        val store = InMemoryPendingCheckoutStore()
+        val first = appRun(gateway, store, run = 1)
+        first.checkout.bindOwner("u1")
+        open(first)
+        payAndAnswer(first, InitializeOutcome.Started(reference, 1_500_000))
+        first.finish()
+
+        val second = appRun(gateway, store, run = 2)
+        open(second) // resolving: shown from the single slot
+        second.checkout.startOver()
+        runCurrent()
+        gateway.lookups.last().complete(found())
+        runCurrent()
+        second.checkout.bindOwner("u1") // and the user arriving afterwards cannot bring it back
+
+        assertNull(store.load(code))
+        assertEquals(PayPhase.Idle, payOf(second))
     }
 
     @Test

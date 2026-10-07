@@ -132,6 +132,10 @@ private fun failureSentence(kind: FailureKind): String = when (kind) {
     FailureKind.Interrupted -> "This payment was started earlier and the app never saw how it ended."
 }
 
+/** "Start a new payment" could not clear the record on this phone, so nothing changed: it is still the same payment. */
+const val START_OVER_FAILED_MESSAGE =
+    "We couldn't clear this payment from your phone, so nothing has changed. Try again; if it keeps happening, restart the app."
+
 /**
  * The payment was NOT sent because this device could not record it first (secure storage unavailable or full). Sending
  * an unrecorded payment could be sent twice after the app is closed, so none is sent.

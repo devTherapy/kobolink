@@ -25,60 +25,70 @@ data class PendingCheckout(
     val key: String,
     val reference: String? = null,
     val confirmedAmountKobo: Int? = null,
+    /**
+     * The signed-in user's id when the attempt was made, or null for a payer with no account (or one made while the
+     * session was still resolving). Never used to FIND the slot, only to hide it from, and clear it for, a DIFFERENT
+     * confirmed user; see [CheckoutController.bindOwner].
+     */
+    val owner: String? = null,
 )
-
-/**
- * Who a pending payment belongs to: the signed-in user's id, or [PAYER_OWNER] for a payer with no account. One
- * slot per owner and link code, so a merchant's session never sees (or replays) a payer's attempt and the reverse.
- */
-const val PAYER_OWNER = "payer"
-
-fun ownerFor(userId: String?): String = if (userId == null) PAYER_OWNER else "user:$userId"
 
 /**
  * Where an unsettled payment is remembered so that it outlives the screen, the Activity (Back, Done and
  * Close all `finish()` it for a payer, which destroys the ViewModel) and the process. Without it the idempotency
  * key lived only in memory, so re-tapping the link started a fresh controller with a fresh key: a second pending
  * checkout for one payment.
+ *
+ * One slot per link code on the device, found whatever the session is doing: every new process starts with the
+ * session still resolving, so a slot keyed by "who is signed in" is not the one the cold start reads.
  */
 interface PendingCheckoutStore {
-    /** The slot for [code] under [owner], or null. Never throws: unreadable storage is "nothing remembered". */
-    fun load(owner: String, code: String): PendingCheckout?
+    /** The slot for [code], or null. Never throws: unreadable storage is "nothing remembered". */
+    fun load(code: String): PendingCheckout?
 
     /**
-     * Durably record [pending] for [owner] and [code]. Throws if it could not be written; the controller then does
-     * not send. A null [pending] clears the slot.
+     * Durably record [pending] for [code]. Throws if it could not be written; the controller then does not send.
+     * A null [pending] clears the slot, and throws if it could not.
      */
-    fun save(owner: String, code: String, pending: PendingCheckout?)
+    fun save(code: String, pending: PendingCheckout?)
 
-    /** Forget every slot [owner] holds (sign-out, expiry, a different user). */
-    fun clearOwner(owner: String)
+    /** Forget every slot made by signed-in user [userId] (their explicit sign-out). Payers' slots stay. */
+    fun clearOwnedBy(userId: String)
+
+    /** Forget every slot made by a signed-in user other than [userId] (a different user is confirmed). Payers' slots stay. */
+    fun clearOwnedByOthers(userId: String)
 }
 
 /** Process-lifetime only: the default for tests, and the shape a fake persistent store takes. */
 class InMemoryPendingCheckoutStore : PendingCheckoutStore {
-    private val slots = HashMap<Pair<String, String>, PendingCheckout>()
+    private val slots = HashMap<String, PendingCheckout>()
 
-    override fun load(owner: String, code: String) = slots[owner to code]
+    override fun load(code: String) = slots[code]
 
-    override fun save(owner: String, code: String, pending: PendingCheckout?) {
-        if (pending == null) slots.remove(owner to code) else slots[owner to code] = pending
+    override fun save(code: String, pending: PendingCheckout?) {
+        if (pending == null) slots.remove(code) else slots[code] = pending
     }
 
-    override fun clearOwner(owner: String) {
-        slots.keys.removeAll { it.first == owner }
+    override fun clearOwnedBy(userId: String) {
+        slots.values.removeAll { it.owner == userId }
+    }
+
+    override fun clearOwnedByOthers(userId: String) {
+        slots.values.removeAll { it.owner != null && it.owner != userId }
     }
 }
 
 /** Used when secure storage could not be opened: nothing can be recorded, so no payment can be sent. */
 class UnavailablePendingCheckoutStore(private val reason: Throwable? = null) : PendingCheckoutStore {
-    override fun load(owner: String, code: String): PendingCheckout? = null
+    override fun load(code: String): PendingCheckout? = null
 
-    override fun save(owner: String, code: String, pending: PendingCheckout?) {
+    override fun save(code: String, pending: PendingCheckout?) {
         if (pending != null) throw IOException("Secure storage is unavailable, so the payment was not recorded.", reason)
     }
 
-    override fun clearOwner(owner: String) = Unit
+    override fun clearOwnedBy(userId: String) = Unit
+
+    override fun clearOwnedByOthers(userId: String) = Unit
 }
 
 /** The on-disk form of a pending payment: a small JSON object. */
@@ -91,6 +101,7 @@ object PendingCheckoutCodec {
         put("email", pending.request.payerEmail)
         put("reference", pending.reference)
         put("confirmedAmountKobo", pending.confirmedAmountKobo)
+        put("owner", pending.owner)
     }.toString()
 
     /** Null for anything unreadable: a corrupt slot is "nothing remembered", never a crash. */
@@ -108,6 +119,7 @@ object PendingCheckoutCodec {
             key = text("key") ?: return null,
             reference = text("reference"),
             confirmedAmountKobo = number("confirmedAmountKobo"),
+            owner = text("owner"),
         )
     }
 }
@@ -121,30 +133,37 @@ object PendingCheckoutCodec {
  */
 class EncryptedPendingCheckoutStore(private val prefs: SharedPreferences) : PendingCheckoutStore {
 
-    override fun load(owner: String, code: String): PendingCheckout? = try {
-        prefs.getString(slot(owner, code), null)?.let(PendingCheckoutCodec::decode)
+    override fun load(code: String): PendingCheckout? = try {
+        prefs.getString(slot(code), null)?.let(PendingCheckoutCodec::decode)
     } catch (e: Exception) {
         null
     }
 
-    override fun save(owner: String, code: String, pending: PendingCheckout?) {
+    override fun save(code: String, pending: PendingCheckout?) {
         val editor = prefs.edit()
-        if (pending == null) editor.remove(slot(owner, code)) else editor.putString(slot(owner, code), PendingCheckoutCodec.encode(pending))
+        if (pending == null) editor.remove(slot(code)) else editor.putString(slot(code), PendingCheckoutCodec.encode(pending))
         if (!editor.commit()) throw IOException("Secure storage did not accept the pending payment (commit failed).")
     }
 
-    override fun clearOwner(owner: String) {
+    override fun clearOwnedBy(userId: String) = removeWhere { it.owner == userId }
+
+    override fun clearOwnedByOthers(userId: String) = removeWhere { it.owner != null && it.owner != userId }
+
+    private fun removeWhere(matches: (PendingCheckout) -> Boolean) {
         val editor = prefs.edit()
-        for (name in prefs.all.keys) if (name.startsWith(ownerPrefix(owner))) editor.remove(name)
+        for ((name, value) in prefs.all) {
+            if (!name.startsWith(SLOT_PREFIX)) continue
+            val pending = (value as? String)?.let(PendingCheckoutCodec::decode)
+            if (pending != null && matches(pending)) editor.remove(name)
+        }
         if (!editor.commit()) throw IOException("Secure storage did not clear the pending payments (commit failed).")
     }
 
-    private fun ownerPrefix(owner: String) = "pending/$owner/"
-
-    private fun slot(owner: String, code: String) = ownerPrefix(owner) + code
+    private fun slot(code: String) = SLOT_PREFIX + code
 
     companion object {
         /** Backing file under `shared_prefs/`; excluded from backup in backup_rules.xml and data_extraction_rules.xml. */
         const val PREFS_FILE_NAME = "kobolink_pending_checkouts"
+        private const val SLOT_PREFIX = "pending/"
     }
 }

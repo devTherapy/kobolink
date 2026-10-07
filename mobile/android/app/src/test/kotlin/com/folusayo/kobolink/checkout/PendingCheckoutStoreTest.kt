@@ -50,9 +50,11 @@ class PendingCheckoutStoreTest {
     private val started = unknown.copy(reference = "kbl_abcdefghjk", confirmedAmountKobo = 1_500_000)
 
     @Test
-    fun `the codec round-trips an unknown outcome and a started payment`() {
+    fun `the codec round-trips an unknown outcome, a started payment and an owner`() {
         assertEquals(unknown, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(unknown)))
         assertEquals(started, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(started)))
+        val owned = started.copy(owner = "u1")
+        assertEquals(owned, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(owned)))
     }
 
     @Test
@@ -65,81 +67,95 @@ class PendingCheckoutStoreTest {
     @Test
     fun `a pending payment survives a new process, key included`() {
         val prefs = FakePrefs()
-        EncryptedPendingCheckoutStore(prefs).save("payer", request.code, started)
+        EncryptedPendingCheckoutStore(prefs).save(request.code, started)
 
-        assertEquals(started, EncryptedPendingCheckoutStore(prefs).load("payer", request.code))
+        assertEquals(started, EncryptedPendingCheckoutStore(prefs).load(request.code))
     }
 
     @Test
-    fun `each owner and each link has its own slot`() {
+    fun `each link has its own slot, found whoever is signed in`() {
         val store = EncryptedPendingCheckoutStore(FakePrefs())
-        store.save("payer", "7hK2mQ9x", unknown)
+        store.save("7hK2mQ9x", unknown.copy(owner = "u1"))
 
-        assertNull(store.load(ownerFor("u1"), "7hK2mQ9x"))
-        assertNull(store.load("payer", "Zz3Yy4Xx"))
-        store.save("payer", "Zz3Yy4Xx", started)
-        assertEquals(unknown, store.load("payer", "7hK2mQ9x"))
+        assertNull(store.load("Zz3Yy4Xx"))
+        store.save("Zz3Yy4Xx", started)
+        assertEquals(unknown.copy(owner = "u1"), store.load("7hK2mQ9x"))
     }
 
     @Test
     fun `saving null clears only that slot`() {
         val store = EncryptedPendingCheckoutStore(FakePrefs())
-        store.save("payer", "7hK2mQ9x", unknown)
-        store.save("payer", "Zz3Yy4Xx", unknown)
-        store.save("payer", "7hK2mQ9x", null)
+        store.save("7hK2mQ9x", unknown)
+        store.save("Zz3Yy4Xx", unknown)
+        store.save("7hK2mQ9x", null)
 
-        assertNull(store.load("payer", "7hK2mQ9x"))
-        assertEquals(unknown, store.load("payer", "Zz3Yy4Xx"))
+        assertNull(store.load("7hK2mQ9x"))
+        assertEquals(unknown, store.load("Zz3Yy4Xx"))
     }
 
     @Test
-    fun `clearing an owner removes all its links and nobody else's`() {
-        val store = EncryptedPendingCheckoutStore(FakePrefs())
-        val merchant = ownerFor("u1")
-        store.save(merchant, "7hK2mQ9x", unknown)
-        store.save(merchant, "Zz3Yy4Xx", unknown)
-        store.save(ownerFor("u10"), "7hK2mQ9x", unknown) // an id that merely starts the same
-        store.save("payer", "7hK2mQ9x", unknown)
+    fun `clearing a user's slots removes theirs and nobody else's`() {
+        for (store in listOf<PendingCheckoutStore>(EncryptedPendingCheckoutStore(FakePrefs()), InMemoryPendingCheckoutStore())) {
+            store.save("aaaaaaaa", unknown.copy(owner = "u1"))
+            store.save("bbbbbbbb", unknown.copy(owner = "u10")) // an id that merely starts the same
+            store.save("cccccccc", unknown) // a payer's
 
-        store.clearOwner(merchant)
+            store.clearOwnedBy("u1")
 
-        assertNull(store.load(merchant, "7hK2mQ9x"))
-        assertNull(store.load(merchant, "Zz3Yy4Xx"))
-        assertEquals(unknown, store.load(ownerFor("u10"), "7hK2mQ9x"))
-        assertEquals(unknown, store.load("payer", "7hK2mQ9x"))
+            assertNull(store.load("aaaaaaaa"))
+            assertEquals(unknown.copy(owner = "u10"), store.load("bbbbbbbb"))
+            assertEquals(unknown, store.load("cccccccc"))
+        }
+    }
+
+    @Test
+    fun `confirming a different user clears every other user's slots, never a payer's and never their own`() {
+        for (store in listOf<PendingCheckoutStore>(EncryptedPendingCheckoutStore(FakePrefs()), InMemoryPendingCheckoutStore())) {
+            store.save("aaaaaaaa", unknown.copy(owner = "u1"))
+            store.save("bbbbbbbb", unknown.copy(owner = "u2"))
+            store.save("cccccccc", unknown)
+
+            store.clearOwnedByOthers("u2")
+
+            assertNull(store.load("aaaaaaaa"))
+            assertEquals(unknown.copy(owner = "u2"), store.load("bbbbbbbb"))
+            assertEquals(unknown, store.load("cccccccc"))
+        }
     }
 
     @Test
     fun `a write that does not reach disk is reported, never swallowed`() {
         val prefs = FakePrefs(failCommits = true)
-        var thrown: Throwable? = null
-        try {
-            EncryptedPendingCheckoutStore(prefs).save("payer", request.code, unknown)
-        } catch (e: IOException) {
-            thrown = e
+        for (attempt in listOf<PendingCheckout?>(unknown, null)) {
+            var thrown: Throwable? = null
+            try {
+                EncryptedPendingCheckoutStore(prefs).save(request.code, attempt)
+            } catch (e: IOException) {
+                thrown = e
+            }
+            assertTrue("saving $attempt", thrown != null)
         }
-        assertTrue(thrown != null)
         assertTrue(prefs.disk.isEmpty())
     }
 
     @Test
     fun `the secure-storage-unavailable store refuses to record, so nothing is sent`() {
         val store = UnavailablePendingCheckoutStore(IllegalStateException("keystore"))
-        assertNull(store.load("payer", request.code))
+        assertNull(store.load(request.code))
         var thrown = false
         try {
-            store.save("payer", request.code, unknown)
+            store.save(request.code, unknown)
         } catch (e: IOException) {
             thrown = true
         }
         assertTrue(thrown)
-        store.save("payer", request.code, null) // clearing is always allowed
+        store.save(request.code, null) // clearing is always allowed
     }
 
     @Test
     fun `the stored text holds the payment's details and nothing like a token`() {
         val prefs = FakePrefs()
-        EncryptedPendingCheckoutStore(prefs).save("payer", request.code, unknown)
+        EncryptedPendingCheckoutStore(prefs).save(request.code, unknown)
         val raw = prefs.disk.values.single()
         assertFalse(raw.contains("token", ignoreCase = true))
         assertTrue(raw.contains("attempt-key-0-0123456789"))
