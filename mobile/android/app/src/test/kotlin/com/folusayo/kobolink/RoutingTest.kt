@@ -3,6 +3,8 @@ package com.folusayo.kobolink
 import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.auth.ngozi
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -21,33 +23,55 @@ class RoutingTest {
     )
 
     @Test
-    fun `a deep link reaches the link screen in every session state`() {
+    fun `a deep link reaches the checkout in every session state`() {
         for ((name, session) in sessions) {
-            assertEquals("session: $name", Destination.Link("abc12345"), route(session, "abc12345"))
+            assertEquals("session: $name", Destination.Link, route(session, linkOpen = true))
         }
     }
 
     @Test
     fun `without a link the session decides`() {
-        assertEquals(Destination.Resolving, route(SessionState.Resolving, null))
-        assertEquals(Destination.Offline("no connection"), route(SessionState.Offline("no connection"), null))
-        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), null))
-        assertEquals(Destination.Login("Your session ended."), route(SessionState.SignedOut("Your session ended."), null))
-        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), null))
+        assertEquals(Destination.Resolving, route(SessionState.Resolving, linkOpen = false))
+        assertEquals(Destination.Offline("no connection"), route(SessionState.Offline("no connection"), linkOpen = false))
+        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), linkOpen = false))
+        assertEquals(Destination.Login("Your session ended."), route(SessionState.SignedOut("Your session ended."), linkOpen = false))
+        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), linkOpen = false))
     }
 
     @Test
-    fun `backing out of a link while signed out lands on login, while signed in on home`() {
-        // MainActivity clears the link code on Back; the next route() call is with null.
-        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), null))
-        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), null))
+    fun `an open link survives the session changing underneath it`() {
+        // Signed out with a link, then the user signs in: still the checkout.
+        assertEquals(Destination.Link, route(SessionState.SignedOut(), linkOpen = true))
+        assertEquals(Destination.Link, route(SessionState.SignedIn(ngozi), linkOpen = true))
     }
 
     @Test
-    fun `a link survives the session changing underneath it`() {
-        // Signed out with a link, then the user signs in: still the same link.
-        assertEquals(Destination.Link("abc12345"), route(SessionState.SignedOut(), "abc12345"))
-        assertEquals(Destination.Link("abc12345"), route(SessionState.SignedIn(ngozi), "abc12345"))
+    fun `dismissing the link falls through to home when signed in`() {
+        // backFromLink says DismissLink; the checkout closes and the next route() call has no link.
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.SignedIn(ngozi)))
+        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), linkOpen = false))
+    }
+
+    // shouldOpenLaunchLink: the onCreate decision the M1 review found untested.
+
+    @Test
+    fun `a first launch opens the link in the intent`() {
+        assertTrue(shouldOpenLaunchLink(restoredFromSavedState = false, checkoutIsOpen = false, linkWasClosed = false))
+    }
+
+    @Test
+    fun `rotation does not reopen a link that is already open`() {
+        assertFalse(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = true, linkWasClosed = false))
+    }
+
+    @Test
+    fun `rotation does not resurrect a link the user backed out of`() {
+        assertFalse(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = false, linkWasClosed = true))
+    }
+
+    @Test
+    fun `process death while the link was on screen reopens it`() {
+        assertTrue(shouldOpenLaunchLink(restoredFromSavedState = true, checkoutIsOpen = false, linkWasClosed = false))
     }
 
     /**

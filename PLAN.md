@@ -104,7 +104,7 @@ static files. No component ships with half its states.
 | M0 | Scaffold both apps; generate Swift + Kotlin models from the OpenAPI document; API client | B7 | A model change in contracts regenerates and breaks the build if incompatible | done — Android half only (Kotlin models via openapi-generator, Retrofit client), verified the acceptance bar with a real contract-field rename that broke `compileDebugKotlin`; iOS deferred, no Xcode available in this environment |
 | M1 | Deep-link wiring: Associated Domains + `autoVerify` intent filter, URL parsing, routing | M0 F8 | Android: `adb shell pm get-app-links com.folusayo.kobolink` reports verified on the emulator | done — Android half only. Code and unit tests merged; the adb verification needs an emulator and the hosted assetlinks.json, so it is deferred to X3. iOS deferred (no Xcode) |
 | M2 | Login | M0 B2 | Token stored in Keychain / EncryptedSharedPreferences, never in plain storage | in-review (PR #37, Android; fix round after reviewer BLOCK) |
-| M3 | Checkout screen — the deep-link landing | M1 B4 | Tapping a link opens the app on the right link; Dark Mode and large Dynamic Type both hold | todo |
+| M3 | Checkout screen — the deep-link landing | M1 B4 | Tapping a link opens the app on the right link; Dark Mode and large Dynamic Type both hold | in-review — Android half only (PR open); iOS deferred, no Xcode. Layout is verified by reasoning and Compose previews, not on a device (no AVD): see the PR |
 | M4 | Result states: paid, failed, expired, disabled, already paid | M3 B5 | Every failure names what went wrong and whether money moved | todo |
 | M5 | **Phase 2** — wallet home, send money, scan QR | B8 | — | todo |
 

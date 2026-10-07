@@ -88,3 +88,23 @@ val inversePrimaryLight = Color(0xFFBAC3FF)
 val inverseSurfaceDark = Color(0xFFE4E1E6)
 val inverseOnSurfaceDark = Color(0xFF303034)
 val inversePrimaryDark = Color(0xFF3D5AFE)
+
+// Surface container roles. Compose's lightColorScheme()/darkColorScheme() fill any role left unset
+// with the *baseline purple* tones, so without these every M3 component that reads a container role
+// (skeleton bars, the checkout's amount card, a scrolled top bar) would be tinted purple against the
+// blue-neutral surface above. Same neutral hue as `surface*`, stepped up in tone like the M3 spec.
+val surfaceDimLight = Color(0xFFDDD9E0)
+val surfaceBrightLight = Color(0xFFFEFBFF)
+val surfaceContainerLowestLight = Color(0xFFFFFFFF)
+val surfaceContainerLowLight = Color(0xFFF7F2FA)
+val surfaceContainerLight = Color(0xFFF1ECF4)
+val surfaceContainerHighLight = Color(0xFFEBE6EE)
+val surfaceContainerHighestLight = Color(0xFFE5E0E9)
+
+val surfaceDimDark = Color(0xFF131318)
+val surfaceBrightDark = Color(0xFF39393F)
+val surfaceContainerLowestDark = Color(0xFF0E0E13)
+val surfaceContainerLowDark = Color(0xFF1B1B21)
+val surfaceContainerDark = Color(0xFF1F1F25)
+val surfaceContainerHighDark = Color(0xFF2A292F)
+val surfaceContainerHighestDark = Color(0xFF35343A)

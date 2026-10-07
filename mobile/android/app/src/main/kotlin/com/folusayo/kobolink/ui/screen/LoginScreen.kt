@@ -56,7 +56,7 @@ private sealed interface LoginState {
  *
  * M3 only: outlined text fields with the floating label on the outline,
  * fully-rounded filled button (M3's default `Button` shape — never overridden
- * here, same as [LinkLookupScreen]'s), Material Symbols (filled/solid) icons,
+ * here, same as [CheckoutScreen]'s), Material Symbols (filled/solid) icons,
  * 48dp-minimum touch target on the submit button, laid out inside the window
  * insets `Scaffold` already applies.
  */

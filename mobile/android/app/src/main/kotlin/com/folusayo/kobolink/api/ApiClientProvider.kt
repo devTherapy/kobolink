@@ -7,6 +7,7 @@ import com.folusayo.kobolink.auth.EncryptedTokenStore
 import com.folusayo.kobolink.auth.SessionExpiryBus
 import com.folusayo.kobolink.auth.TokenStore
 import com.folusayo.kobolink.generated.api.apis.AuthApi
+import com.folusayo.kobolink.generated.api.apis.CheckoutApi
 import com.folusayo.kobolink.generated.api.apis.LinksApi
 import com.folusayo.kobolink.generated.api.apis.WalletApi
 import com.folusayo.kobolink.generated.api.infrastructure.Serializer
@@ -102,6 +103,7 @@ object ApiClientProvider {
     }
 
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
+    val checkout: CheckoutApi by lazy { retrofit.create(CheckoutApi::class.java) }
     val auth: AuthApi by lazy { retrofit.create(AuthApi::class.java) }
     val wallet: WalletApi by lazy { retrofit.create(WalletApi::class.java) }
 }
