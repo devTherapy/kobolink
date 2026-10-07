@@ -10,11 +10,16 @@ import SwiftUI
 /// stack, outside the home screen, so a link works the same whether the app was launched
 /// by it (cold start) or was already running (warm start), and whether or not the
 /// server address is configured.
+///
+/// The screen under the stack is the session's (sign-in, signed-in home, and so on), and a link is
+/// pushed over it. So a link wins the route in every session state, including signed out and
+/// resolving: a payer never meets the merchant login on the way to a payment link, and Back from the
+/// link lands on whatever the session calls for.
 struct RootView: View {
     let home: Home
 
     enum Home {
-        case connection(host: String, checker: ConnectionChecker)
+        case ready(host: String, checker: ConnectionChecker, session: SessionController)
         case misconfigured(APIConfiguration.Problem)
     }
 
@@ -46,8 +51,8 @@ struct RootView: View {
 
     @ViewBuilder private var homeScreen: some View {
         switch home {
-        case .connection(let host, let checker):
-            ConnectionView(host: host, checker: checker)
+        case .ready(let host, let checker, let session):
+            SessionScreen(session: session, host: host, checker: checker)
         case .misconfigured(let problem):
             MisconfiguredView(problem: problem)
         }

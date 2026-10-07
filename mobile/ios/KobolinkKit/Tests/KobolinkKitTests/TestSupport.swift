@@ -15,6 +15,8 @@ struct StubTransport: ClientTransport {
 
     let recorder = RequestRecorder()
     let reply: Reply
+    /// Added to every response, for headers the contract does not declare (`Retry-After`).
+    var responseHeaders: [HTTPField.Name: String] = [:]
 
     func send(
         _ request: HTTPRequest,
@@ -22,13 +24,16 @@ struct StubTransport: ClientTransport {
         baseURL: URL,
         operationID: String
     ) async throws -> (HTTPResponse, HTTPBody?) {
-        recorder.record(.init(request: request, baseURL: baseURL, operationID: operationID))
+        var sentBody = ""
+        if let body { sentBody = (try? await String(collecting: body, upTo: 1 << 20)) ?? "" }
+        recorder.record(.init(request: request, baseURL: baseURL, operationID: operationID, bodyText: sentBody))
         switch reply {
         case .fail(let error):
             throw error
         case .respond(let status, let contentType, let text):
             var response = HTTPResponse(status: .init(code: status))
             if let contentType { response.headerFields[.contentType] = contentType }
+            for (name, value) in responseHeaders { response.headerFields[name] = value }
             return (response, HTTPBody(text))
         }
     }
@@ -39,6 +44,8 @@ final class RequestRecorder: @unchecked Sendable {
         let request: HTTPRequest
         let baseURL: URL
         let operationID: String
+        /// The request body as text, for asserting what was sent.
+        var bodyText: String = ""
     }
 
     private let lock = NSLock()

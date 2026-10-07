@@ -1,10 +1,9 @@
 import KobolinkKit
 import SwiftUI
 
-/// The first screen: which server this build talks to, and whether it
-/// answers. A real screen for later rows to replace; for now it proves the
-/// generated client reaches the API. It lives inside `RootView`'s navigation stack.
-struct ConnectionView: View {
+/// Which server this build talks to, and whether it answers. It proves the generated client reaches
+/// the API; the signed-in home shows it as a section.
+struct ServerStatusSection: View {
     let host: String
     @State private var checker: ConnectionChecker
 
@@ -14,23 +13,18 @@ struct ConnectionView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                LabeledContent("Server", value: host)
-                StatusRow(status: checker.status)
-            } footer: {
-                Text("Kobolink checks that its server is up before you rely on it.")
+        Section {
+            LabeledContent("Server", value: host)
+            StatusRow(status: checker.status)
+            Button("Check Again") {
+                Task { await checker.check() }
             }
-
-            Section {
-                Button("Check again") {
-                    Task { await checker.check() }
-                }
-                .disabled(checker.status == .checking)
-            }
+            .disabled(checker.status == .checking)
+        } header: {
+            Text("Connection")
+        } footer: {
+            Text("Kobolink checks that its server is up before you rely on it.")
         }
-        .navigationTitle("Kobolink")
-        .refreshable { await checker.check() }
         .task { await checker.check() }
     }
 }
@@ -106,14 +100,14 @@ struct MisconfiguredView: View {
 }
 
 #Preview("Reachable") {
-    NavigationStack {
-        ConnectionView(host: "pay.folusayo.com", checker: ConnectionChecker(api: PreviewHealth(result: nil)))
+    List {
+        ServerStatusSection(host: "pay.folusayo.com", checker: ConnectionChecker(api: PreviewHealth(result: nil)))
     }
 }
 
 #Preview("Unreachable") {
-    NavigationStack {
-        ConnectionView(
+    List {
+        ServerStatusSection(
             host: "localhost",
             checker: ConnectionChecker(api: PreviewHealth(result: .unreachable(.cannotConnectToHost)))
         )

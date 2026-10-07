@@ -10,7 +10,18 @@
 		0A0000000000000000000014 /* KobolinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000013 /* KobolinkKit */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		0A0000000000000000000028 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0A0000000000000000000008;
+			remoteInfo = Kobolink;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		0A0000000000000000000020 /* KobolinkAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KobolinkAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000007 /* Kobolink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kobolink.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000015 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		0A0000000000000000000016 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
@@ -40,6 +51,11 @@
 			path = Kobolink;
 			sourceTree = "<group>";
 		};
+		0A0000000000000000000021 /* KobolinkAppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = KobolinkAppTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,6 +67,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0A0000000000000000000024 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -58,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000000000000000000005 /* Kobolink */,
+				0A0000000000000000000021 /* KobolinkAppTests */,
 				0A0000000000000000000018 /* KobolinkKit */,
 				0A0000000000000000000019 /* OpenAPITooling */,
 				0A0000000000000000000004 /* Config */,
@@ -69,6 +93,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000000000000000000007 /* Kobolink.app */,
+				0A0000000000000000000020 /* KobolinkAppTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -110,6 +135,29 @@
 			productReference = 0A0000000000000000000007 /* Kobolink.app */;
 			productType = "com.apple.product-type.application";
 		};
+		0A0000000000000000000022 /* KobolinkAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A000000000000000000002A /* Build configuration list for PBXNativeTarget "KobolinkAppTests" */;
+			buildPhases = (
+				0A0000000000000000000023 /* Sources */,
+				0A0000000000000000000024 /* Frameworks */,
+				0A0000000000000000000025 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A0000000000000000000029 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0A0000000000000000000021 /* KobolinkAppTests */,
+			);
+			name = KobolinkAppTests;
+			packageProductDependencies = (
+			);
+			productName = KobolinkAppTests;
+			productReference = 0A0000000000000000000020 /* KobolinkAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -122,6 +170,10 @@
 				TargetAttributes = {
 					0A0000000000000000000008 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					0A0000000000000000000022 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 0A0000000000000000000008;
 					};
 				};
 			};
@@ -144,12 +196,20 @@
 			projectRoot = "";
 			targets = (
 				0A0000000000000000000008 /* Kobolink */,
+				0A0000000000000000000022 /* KobolinkAppTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		0A0000000000000000000011 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000000025 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -166,7 +226,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0A0000000000000000000023 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0A0000000000000000000029 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0A0000000000000000000008 /* Kobolink */;
+			targetProxy = 0A0000000000000000000028 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		0A000000000000000000000B /* Debug */ = {
@@ -244,6 +319,44 @@
 			};
 			name = Release;
 		};
+		0A000000000000000000002B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.folusayo.kobolink.AppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kobolink.app/Kobolink";
+			};
+			name = Debug;
+		};
+		0A000000000000000000002C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.folusayo.kobolink.AppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kobolink.app/Kobolink";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -261,6 +374,15 @@
 			buildConfigurations = (
 				0A000000000000000000000D /* Debug */,
 				0A000000000000000000000E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0A000000000000000000002A /* Build configuration list for PBXNativeTarget "KobolinkAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A000000000000000000002B /* Debug */,
+				0A000000000000000000002C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

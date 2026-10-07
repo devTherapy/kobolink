@@ -33,6 +33,7 @@ let package = Package(
                 "KobolinkAPI",
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
                 .product(name: "OpenAPIURLSession", package: "swift-openapi-urlsession"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
             ]
         ),
 

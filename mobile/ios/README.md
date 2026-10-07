@@ -5,6 +5,7 @@ SwiftUI app, iOS 17+, bundle id `com.folusayo.kobolink`. Xcode 26.
 ```
 Kobolink.xcodeproj   hand-authored, file-system-synchronised (no per-file entries)
 Kobolink/            app target: App, views, Info.plist, asset catalog
+KobolinkAppTests/    tests hosted by Kobolink.app (the real Keychain needs a host process)
 Config/              xcconfigs: API base URL per configuration, version, deployment target
 KobolinkKit/         package: typed API client, config, view model, and the generated models
   Sources/KobolinkAPI/openapi.json   symlink to apps/api/openapi.json (the only input)
@@ -104,6 +105,68 @@ What the owner has to do, once:
    the entitlement (Settings > Developer > Associated Domains Development), then remove it.
    Do not spend time on this in the Simulator: Apple's universal-link handling there is unreliable.
    X3 verifies the hosted file end to end.
+
+## Login and the session (I2)
+
+```
+KobolinkKit/Sources/KobolinkKit/
+  TokenStore.swift          SessionToken (redacts itself), TokenStore protocol, InMemoryTokenStore (tests, previews)
+  KeychainTokenStore.swift  the real store
+  InstallMarker.swift       first-launch flag, for the reinstall purge
+  AuthMiddleware.swift      Authorization: Bearer, and the 401 report; Retry-After capture
+  SessionController.swift   states: resolving, signedOut(reason), signedIn, offline, storageUnavailable
+  LoginViewModel.swift      the form: validation, error mapping, what is cleared and when
+Kobolink/LoginView.swift, SessionScreens.swift   the screens
+```
+
+- **Token.** The API returns it in `AuthResponse.token` for `client: "mobile"` and accepts it as
+  `Authorization: Bearer`. It lives only in the Keychain: a generic password,
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, `kSecAttrSynchronizable: false`. It is never in
+  `UserDefaults`, a file, a log, a URL or a notification. `SessionToken` prints as `<redacted>`
+  (`print`, interpolation, `dump`), so a stray `print(session)` cannot leak it; `reveal()` has two
+  callers, the Keychain write and the header. Nothing in the app prints, and the generated request and
+  response types hold the password and the token, so thrown errors are mapped to `APIError` and
+  discarded, never described.
+- **Cold start.** Read the token, ask `/api/auth/me`. 200: signed in. 401: the token is dead, clear it,
+  signed out with "Your session ended" (involuntary, distinct from a chosen sign-out, which has no
+  notice). No answer, a 5xx or an unreadable reply: **offline**, token kept, Try Again or Sign Out.
+  A Keychain that cannot be READ is its own state (`storageUnavailable`, Try Again), not "signed out":
+  the token may still be there (a locked Keychain after a restart), and nothing falls back to other
+  storage. A slot holding something that is not a token is cleared.
+- **Reinstall.** The Keychain outlives the app, `UserDefaults` does not. The first launch of an install
+  has no `InstallMarker`, so the controller removes whatever token the Keychain holds before trusting
+  it, then sets the marker. A purge that fails is reported and retried; the marker is set only after
+  it succeeds. A leftover token is never sent to the server.
+- **Sign out** removes the token and changes state first, then asks the server to revoke that token
+  (best effort, with the token passed explicitly because the store is already empty). Being offline cannot
+  leave the device signed in. If the Keychain refuses the removal the state says so (`tokenNotRemoved`).
+- **Mid-session 401.** `AuthMiddleware` reports the token that was rejected; the controller acts only
+  if it is still the stored one and the person is signed in, so a late 401 for an old token cannot sign
+  out the session that replaced it.
+- **The form.** The password leaves the view model the moment the form is submitted and the secure
+  field is rebuilt (a focused `SecureField` otherwise keeps showing, and can write back, what was typed
+  when its binding is cleared). A failed attempt asks for it again. The whole form is emptied when
+  the screen disappears (a link opened over it) and on success; a late answer to an attempt made
+  before that is dropped. Double taps send one request. The Keychain write after a 200 runs in a task the
+  screen's cancellation cannot reach.
+- **No silent retry.** `waitsForConnectivity` is off, URLSession does not resend a POST, and nothing in
+  the client does either; a failed login is shown and the person retries. Tests assert one request per failed login.
+- **Rate limit.** The API sets `Retry-After` on a 429, but the OpenAPI document does not declare it,
+  so the generated models drop it. `ResponseNotesMiddleware` records it into a per-call box and the
+  error carries `retryAfterSeconds`; the screen says "Try again in 14 minutes".
+- **Deep links.** A link is pushed over whatever the session screen is, so it wins in every state,
+  signed in or out, resolving or offline. A payer never meets the merchant login. The public calls
+  (link lookup, health) carry no token.
+- **Wrong password and unknown user** are one message on purpose; the API answers both the same.
+
+Not yet: there is no refresh, biometric unlock, "remember me" choice, or password reset. Any per-user
+state added later (I3/I5: payer name and email, pending payments) must be removed on sign-out and on a
+user change, and an entry saved while the session was not yet known must be owned before it is trusted.
+Per-user state to clear today: the token, the cached user (it lives only in `SessionState`), and the login
+form. `@SceneStorage("openLinkCode")` holds a public link code, not user data.
+
+To run against a stub instead of the real API, point `KOBOLINK_API_BASE_URL` at it in
+`Config/Local.xcconfig`; no real credentials are needed or used.
 
 ## Generated models
 
