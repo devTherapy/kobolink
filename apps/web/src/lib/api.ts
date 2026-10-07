@@ -14,6 +14,7 @@ import {
   isApiError,
   type ApiError,
   type AuthResponse,
+  type CreateLinkRequest,
   type DashboardStats,
   type InitializeCheckoutRequest,
   type InitializeCheckoutResponse,
@@ -246,6 +247,12 @@ export const client = {
     // browser cookie jar behind it, so the merchant-scoped session cookie
     // only reaches the API if the caller forwards it by hand — see
     // `src/lib/dashboard.ts`.
+    // `create` is a plain browser call (F4's drawer), so it relies on the real
+    // cookie jar and takes no `init`. The server owns the code: the body
+    // carries none, and a `conflict` here means the API's own bounded
+    // retries ran out — see `createLinkWithRetry`.
+    create: (body: CreateLinkRequest) =>
+      request<PaymentLink>(PaymentLinkSchema, API.links.collection, { method: 'POST', body }),
     list: (query?: PageQuery, init?: { headers?: HeadersInit }) =>
       request<LinkListResponse>(LinkListResponseSchema, API.links.collection, {
         query: pageQuery(query),

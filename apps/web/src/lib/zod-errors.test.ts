@@ -25,6 +25,12 @@ describe('humanizeFieldIssue — rewriting Zod v4 defaults into merchant-facing 
     )
   })
 
+  it('turns a too_big into "must be at most N characters"', () => {
+    const result = z.string().max(120).safeParse('x'.repeat(121))
+    if (result.success) throw new Error('expected failure')
+    expect(humanizeFieldIssue('title', result.error.issues[0]!)).toBe('Title must be at most 120 characters.')
+  })
+
   it('turns a min(1) too_small into "is required" rather than a character count', () => {
     const result = z.string().min(1).max(200).safeParse('')
     if (result.success) throw new Error('expected failure')

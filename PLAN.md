@@ -82,7 +82,7 @@ no `payments` table with a status column. One `users` table with roles, never a
 | F1 | UI kit from the tokens: Button, Field, Pill, Card, Table, EmptyState, Skeleton | F0 | Every component renders all seven states; `web-design-guidelines` pass is clean | done |
 | F2 | Auth screens, session handling, route protection | F1 | Signed-out access to `/dashboard` redirects; a bad password shows the error beside the field | done |
 | F3 | Dashboard: stat strip, links table | F2 | Matches the canvas at 375 / 768 / 1024 / 1440; empty and loading states present | todo |
-| F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | todo |
+| F4 | Create-link drawer | F3 | Validation errors are inline; a duplicate code retries invisibly | in-review |
 | F5 | Link detail: QR, copy, status toggle with optimistic UI, payments table | F3 | Toggle rolls back visibly when the request fails | todo |
 | F6 | Public checkout `/l/[code]` — **server component**, `generateMetadata`, all non-payable states | F0 | The rendered HTML contains the OG title before any JS runs | done |
 | F7 | SSE client → live dashboard | F3 | A payment in another tab moves the numbers without a reload; the stream survives a network blip | todo |

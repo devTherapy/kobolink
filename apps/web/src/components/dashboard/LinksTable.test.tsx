@@ -45,7 +45,9 @@ describe('LinksTable', () => {
     render(<LinksTable links={[]} />)
     expect(screen.getByRole('heading', { name: 'No links yet' })).toBeInTheDocument()
     expect(
-      screen.getByText('Once you create a payment link, it will show up here with its status and payment count.'),
+      screen.getByText(
+        'Choose “New link” above to create your first payment link. It will show up here with its status and payment count.',
+      ),
     ).toBeInTheDocument()
     expect(screen.queryByText('Ankara Two-Piece Set')).not.toBeInTheDocument()
   })

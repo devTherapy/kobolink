@@ -15,12 +15,25 @@ vi.mock('next/headers', () => ({
   cookies: () => Promise.resolve({ toString: () => cookieHeader }),
 }))
 
+/**
+ * `NewLinkButton` (F4's client island) calls `useRouter()`, which needs the
+ * App Router mounted — it is not, under `renderToStaticMarkup`. Rendering the
+ * closed CTA only needs the hook not to throw.
+ */
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
+}))
+
 describe('DashboardPage — Done when: matches the canvas, empty and loading states present', () => {
   it('renders the stat strip and the links table from the seeded snapshot', async () => {
     const element = await DashboardPage()
     const html = renderToStaticMarkup(element)
 
     expect(html).toContain('Welcome back, Adebayo Stores.')
+
+    // F4: the CTA is wired in, and the drawer it opens is not in the markup until used.
+    expect(html).toContain('New link')
+    expect(html).not.toContain('role="dialog"')
 
     // Stat strip — read from DashboardStats, matching the seeded fixture.
     expect(html).toContain('Total collected')
