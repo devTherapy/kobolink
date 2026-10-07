@@ -264,7 +264,9 @@ export const ROUTES: readonly RouteDef[] = [
       'validate every event frame — heartbeats included — against `DashboardEvent` alone. A `heartbeat` frame is ' +
       `sent every ${SSE_HEARTBEAT_MS}ms so an idle stream survives proxies; clients ignore it. \`id:\` is a ` +
       'monotonic cursor; the server does not yet replay past events for a `Last-Event-ID` header, so a ' +
-      'reconnecting client starts fresh. Authentication and role are checked before the first byte, so a ' +
+      'reconnecting client starts fresh. The session is re-checked for as long as the stream is open: when it ' +
+      'is revoked (logout elsewhere) or expires, the server stops sending and ends the response, and a ' +
+      'reconnect is then refused as `unauthenticated`. Authentication and role are checked before the first byte, so a ' +
       'refused request is an ordinary `ApiError` response, not a stream. Not callable through a generated ' +
       'JSON client (the Kotlin/Swift `streamDashboard` method would try to parse the whole stream as one ' +
       'object) — use an SSE client such as `EventSource`.',

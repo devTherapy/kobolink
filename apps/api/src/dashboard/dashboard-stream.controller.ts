@@ -2,7 +2,9 @@ import { Controller, Get, Logger, Req, Res, UseGuards } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import type { Request, Response } from 'express'
 import { SSE_HEARTBEAT_MS, type DashboardEvent, type User } from '@kobolink/contracts'
+import { AuthService, type ResolvedSession } from '../auth/auth.service.js'
 import { CurrentUser } from '../auth/current-user.decorator.js'
+import { extractToken } from '../auth/extract-token.js'
 import { MerchantGuard } from '../auth/merchant.guard.js'
 import { SessionGuard } from '../auth/session.guard.js'
 import { formatSseFrame } from './sse-frame.js'
@@ -49,6 +51,24 @@ import { DashboardStreamService } from './dashboard-stream.service.js'
  * `dashboard()`), so a piping proxy forwards the response head at once.
  * Every SSE parser ignores it; a hand-written Swift/Kotlin parser must
  * skip comment lines (lines starting with `:`) too.
+ *
+ * **The session is re-checked for the life of the stream.** The guards run
+ * once, at connect; a session revoked afterwards (logout in another tab, an
+ * admin revoke) or expired would otherwise keep receiving the merchant's
+ * payment events until the connection happened to drop. So every frame this
+ * connection writes -- each event and each heartbeat -- first passes
+ * `sessionStillValid` (the same `AuthService.resolveSession` lookup
+ * `SessionGuard` uses; the stored expiry is also checked in memory first,
+ * so an expired session never costs a query). The first failed check ends
+ * the response and releases the listener and the timer, exactly as a client
+ * disconnect does; the client sees a clean end of stream, reconnects, is
+ * refused with `unauthenticated` by the guard, and shows "signed out". A
+ * failed lookup (database error) ends the stream too: this fails closed,
+ * because the cost of a spurious reconnect is nothing next to the cost of
+ * delivering to a credential that may be revoked. The per-event check is one
+ * indexed read per open stream per payment event -- negligible at payment
+ * rates -- and checks run through a per-connection queue so frames can never
+ * be reordered by a slow lookup.
  */
 @Controller('stream')
 @UseGuards(SessionGuard, MerchantGuard)
@@ -58,6 +78,7 @@ export class DashboardStreamController {
   constructor(
     private readonly stream: DashboardStreamService,
     private readonly config: ConfigService,
+    private readonly authService: AuthService,
   ) {}
 
   @Get('dashboard')
@@ -78,21 +99,59 @@ export class DashboardStreamController {
     // `SSE_HEARTBEAT_MS` later. A comment line is ignored by every SSE parser.
     res.write(': open\n\n')
 
+    const auth = req.auth
+    const token = extractToken({
+      cookies: req.cookies as Record<string, string | undefined> | undefined,
+      authorizationHeader: req.headers.authorization,
+    })
+
+    let cleanedUp = false
+    // Frames are written strictly in the order they were handed in, one
+    // session check at a time, so a slow lookup cannot reorder or interleave.
+    let queue: Promise<void> = Promise.resolve()
+    let pendingChecks = 0
+
+    const end = (): void => {
+      if (cleanedUp) return
+      cleanup()
+      res.end()
+    }
+
     const write = (id: number, event: DashboardEvent): void => {
-      res.write(formatSseFrame(id, event))
+      pendingChecks += 1
+      queue = queue
+        .then(async () => {
+          if (cleanedUp) return
+          if (!(await this.sessionStillValid(auth, token))) {
+            end()
+            return
+          }
+          // The connection may have closed while the lookup was in flight.
+          if (cleanedUp) return
+          res.write(formatSseFrame(id, event))
+        })
+        .catch((error: unknown) => {
+          this.logger.warn(`dashboard stream: write failed: ${error instanceof Error ? error.message : String(error)}`)
+          end()
+        })
+        .finally(() => {
+          pendingChecks -= 1
+        })
     }
 
     const unsubscribe = this.stream.subscribe(user.id, (message) => write(message.id, message.event))
 
     const heartbeatMs = this.heartbeatIntervalMs()
     const heartbeat = setInterval(() => {
+      // A frame already waiting on its session check will revalidate anyway;
+      // do not stack heartbeats behind a stalled database.
+      if (pendingChecks > 0) return
       write(this.stream.nextId(), { type: 'heartbeat', at: new Date().toISOString() })
     }, heartbeatMs)
     // Never keeps the process alive on its own — see RateLimiterService's
     // sweep interval for the same reasoning.
     heartbeat.unref()
 
-    let cleanedUp = false
     const cleanup = (): void => {
       if (cleanedUp) return
       cleanedUp = true
@@ -108,6 +167,24 @@ export class DashboardStreamController {
       this.logger.warn(`dashboard stream: response error: ${error.message}`)
       cleanup()
     })
+  }
+
+  /**
+   * True while the session this stream was opened with still resolves to the
+   * same session and a merchant user. Never throws: an error is logged and
+   * counts as "not valid" (fail closed -- see the class doc comment).
+   */
+  private async sessionStillValid(auth: ResolvedSession | undefined, token: string | undefined): Promise<boolean> {
+    if (auth === undefined || token === undefined) return false
+    // Expiry is known without a query.
+    if (auth.session.expiresAt.getTime() <= Date.now()) return false
+    try {
+      const resolved = await this.authService.resolveSession(token)
+      return resolved?.session.id === auth.session.id &&resolved.user.role === 'merchant'
+    } catch (error) {
+      this.logger.warn(`dashboard stream: session re-check failed: ${error instanceof Error ? error.message : String(error)}`)
+      return false
+    }
   }
 
   private heartbeatIntervalMs(): number {
