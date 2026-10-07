@@ -40,17 +40,25 @@ class MainActivity : ComponentActivity() {
         // this app never draws its own status bar or gesture pill.
         enableEdgeToEdge()
 
-        // Guarded on savedInstanceState so a configuration change (e.g.
-        // rotation) — which recreates this Activity with the same Intent
-        // under singleTask's default configChanges handling — doesn't
-        // re-parse and re-trigger LinkLookupScreen's LaunchedEffect lookup
-        // for a code already in flight or resolved before the recreation.
-        // The resolved/loading state itself is not preserved across the
-        // recreation (this stub screen has no Saver for it); M3's real
-        // checkout screen should carry state through rotation properly.
-        if (savedInstanceState == null) {
-            deepLinkCode = codeFrom(intent)
-        }
+        // Re-parsed on every onCreate, including a configuration change
+        // (e.g. rotation) that recreates this Activity with the same Intent
+        // under singleTask's default configChanges handling — parsing is
+        // cheap and synchronous, so redoing it costs nothing. An earlier
+        // version of this code skipped this assignment whenever
+        // savedInstanceState was non-null, intending to avoid re-triggering
+        // LinkLookupScreen's LaunchedEffect lookup for a code already in
+        // flight or resolved. That guard backfired: skipping the assignment
+        // left deepLinkCode at this fresh Activity instance's default of
+        // null, so a rotation wiped the deep-linked code and the screen
+        // reverted to a blank manual-entry state — losing an already-
+        // resolved result, not just re-fetching it.
+        //
+        // The redundant-network-call problem is instead solved one layer
+        // down: LinkLookupScreen's `code`/lookup state survive the
+        // recreation via `rememberSaveable`, and its LaunchedEffect skips
+        // re-resolving a code it already has a terminal (resolved/failed)
+        // result for.
+        deepLinkCode = codeFrom(intent)
 
         setContent {
             KobolinkTheme {

@@ -28,8 +28,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,18 +39,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.folusayo.kobolink.api.ApiClientProvider
 import com.folusayo.kobolink.deeplink.LinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
 import com.folusayo.kobolink.money.Kobo
 import kotlinx.coroutines.launch
 
-private sealed interface LookupState {
-    data object Idle : LookupState
-    data object Loading : LookupState
-    data class Resolved(val response: PublicLinkResponse) : LookupState
-    data class Failed(val message: String) : LookupState
-}
+/**
+ * Saves [LookupState] across a configuration change (rotation, etc.), which
+ * recreates the host Activity and so discards every plain `remember`. The
+ * encoding lives in [toSaved]/[restoreLookupState] (see LookupState.kt).
+ */
+private val LookupStateSaver: Saver<LookupState, Any> = listSaver<LookupState, String?>(
+    save = { it.toSaved(ApiClientProvider.json) },
+    restore = { restoreLookupState(it, ApiClientProvider.json) },
+)
 
 /**
  * Proves the generated-model + Retrofit wiring end to end: type an 8-char
@@ -85,24 +91,32 @@ fun LinkLookupScreen(
     resolveLink: suspend (String) -> Result<PublicLinkResponse>,
     initialCode: String? = null,
 ) {
-    var code by remember { mutableStateOf(initialCode.orEmpty()) }
-    var state by remember { mutableStateOf<LookupState>(LookupState.Idle) }
+    // rememberSaveable, not remember: a rotation recreates the Activity and
+    // would otherwise reset all three to their initial values.
+    var code by rememberSaveable { mutableStateOf(initialCode.orEmpty()) }
+    var state by rememberSaveable(stateSaver = LookupStateSaver) { mutableStateOf<LookupState>(LookupState.Idle) }
+    var handledCode by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     // Fires once per distinct deep-link code — including a second link
     // tapped while this screen is already showing, since MainActivity's
-    // onNewIntent updates the same state that becomes this key. A manually
-    // typed code never re-triggers this (the user's own "Look up" tap
-    // handles that), and a plain launcher open leaves initialCode null so
-    // nothing runs.
+    // onNewIntent updates the same state that becomes this key. It also runs
+    // again after a configuration change (a new composition starts with the
+    // same key), which is why shouldAutoLookUp consults handledCode: a code
+    // already resolved or failed is not fetched twice, while a lookup that
+    // was interrupted mid-flight (never recorded as handled) is retried. A
+    // manually typed code never re-triggers this, and a plain launcher open
+    // leaves initialCode null so nothing runs.
     LaunchedEffect(initialCode) {
         val deepLinkCode = initialCode ?: return@LaunchedEffect
+        if (!shouldAutoLookUp(deepLinkCode, handledCode)) return@LaunchedEffect
         code = deepLinkCode
         state = LookupState.Loading
         state = resolveLink(deepLinkCode).fold(
             onSuccess = { LookupState.Resolved(it) },
             onFailure = { LookupState.Failed(it.message ?: "Something went wrong.") },
         )
+        handledCode = deepLinkCode
     }
 
     Scaffold(
