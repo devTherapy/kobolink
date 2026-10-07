@@ -1,0 +1,22 @@
+# Decisions made on the owner's behalf
+
+The owner asked that routine decisions be made by the main session and the
+orchestrator rather than waiting for them, with a log of each. One entry per
+decision. Limits that never move: no creating accounts, no payment details or
+credentials, no system or security settings. M3 (#47) stays on hold until the
+owner answers directly.
+
+| ID | Date | Decision | Why | Decided by |
+|---|---|---|---|---|
+| D1 | 2026-10-07 | The main session and orchestrator make routine decisions and keep this log. Limits: no account creation, payments, credentials, or system/security settings. | The owner does not want to be needed for routine calls. | Owner, in chat |
+| D4 | 2026-10-07 | M5 (Phase 2 wallet): retry once with a fresh isolated android agent after M3 and M4 are done, using the reviewer's recorded fix direction (never re-key a retry, persist pending payments encrypted, no silent OkHttp retry). If blocked again, leave M5 blocked and ship without the Phase 2 wallet. | Phase 2 is not core and the findings are concrete. | Main session |
+| D5 | 2026-10-07 | Usage-guard pause threshold is 75% of the 5-hour window (was 60%); the weekly window never pauses. | The owner's other session relayed it as the owner's rule; usage is far below either level. | Main session |
+| D6 | 2026-10-07 | `.claude/hooks/guard-commit.sh` stays unchanged. | The patch-transplant workaround works (an agent that cannot commit in its worktree hands over a patch, committed from a feature branch in the main checkout) and the hook is a safety rail. | Main session |
+| D7 | 2026-10-07 | iOS is added after Android, as I-rows in PLAN.md; Xcode 26.3 is active. | Owner decision. | Owner, in chat |
+| D8 | 2026-10-07 | X3: the host is chosen by the main session/orchestrator and the deployment config is prepared in the repo; the owner-only steps (account, DNS record for `pay`, secrets, payment) are listed once as a checklist. | Keeps the owner to the steps nobody else can do. | Main session |
+| D9 | 2026-10-07 | Disk fell below 20 GiB from another project's temp dirs: Kobolink held builds, touched nothing of theirs, and alerted their session. | Shared-machine rules. | Main session |
+| D10 | 2026-10-07 | Re-ran M5's cancelled e2e job (Playwright browser-install hang). | A cancelled job is not a code failure. | Main session |
+| D11 | 2026-10-07 | M5 (#52) marked `blocked` after three reviewer BLOCKs on the same theme (a refusal that applies only to a replay, or a local storage-write failure, was read as proof the first send never posted, which could double-pay). The branch stays open with all fixes. Re-opened under D4. | The three-round rule; paying twice is not something to merge on a judgement call. | Orchestrator |
+| D12 | 2026-10-07 | The PR-LOG follow-up "error.tsx reads `retry` but Next 16.3 passes `unstable_retry`" is closed as not a bug; no PR. | Checked on Next 16.3.4: the runtime passes `{error, reset, retry}`; `unstable_retry` was the 16.2 name and `retry` became stable in 16.3.0. The boundaries and their test already use `retry`. | Orchestrator |
+| D13 | 2026-10-07 | Plan/log-only `chore/` PRs merge on green CI without a reviewer pass. Code and doc PRs still get the gate, `/code-review low` and the reviewer. | Nothing there changes behaviour; the reviewer would have nothing to attack. | Orchestrator |
+| D14 | 2026-10-07 | While the held and blocked rows waited, free slots went to small reproduce-first fix PRs from the PR-LOG follow-ups: #54 (stream docs), #55 (e2e hardening), #57 (dashboard error classes), #58 (refresh after a failed create). | Standing instruction to use free slots for follow-ups; each passed the full gate and reviewer. | Orchestrator |
