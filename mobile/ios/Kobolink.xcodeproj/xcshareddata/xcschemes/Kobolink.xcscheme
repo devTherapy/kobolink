@@ -33,6 +33,16 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "0A0000000000000000000022"
+               BuildableName = "KobolinkAppTests.xctest"
+               BlueprintName = "KobolinkAppTests"
+               ReferencedContainer = "container:Kobolink.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "KobolinkKitTests"
                BuildableName = "KobolinkKitTests"
                BlueprintName = "KobolinkKitTests"

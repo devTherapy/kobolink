@@ -16,6 +16,8 @@ public struct ServerError: Error, Equatable, Sendable {
     public let moneyMoved: Bool?
     /// Present on `link_not_payable`: why the link cannot take a payment.
     public let linkState: Components.Schemas.ApiError.statePayload?
+    /// Whole seconds from the `Retry-After` header, when the server sent one (it does on a 429).
+    public let retryAfterSeconds: Int?
 
     public init(
         status: Int,
@@ -23,7 +25,8 @@ public struct ServerError: Error, Equatable, Sendable {
         message: String,
         fieldErrors: [String: [String]] = [:],
         moneyMoved: Bool? = nil,
-        linkState: Components.Schemas.ApiError.statePayload? = nil
+        linkState: Components.Schemas.ApiError.statePayload? = nil,
+        retryAfterSeconds: Int? = nil
     ) {
         self.status = status
         self.code = code
@@ -31,16 +34,18 @@ public struct ServerError: Error, Equatable, Sendable {
         self.fieldErrors = fieldErrors
         self.moneyMoved = moneyMoved
         self.linkState = linkState
+        self.retryAfterSeconds = retryAfterSeconds
     }
 
-    init(status: Int, body: Components.Schemas.ApiError) {
+    init(status: Int, body: Components.Schemas.ApiError, retryAfterSeconds: Int? = nil) {
         self.init(
             status: status,
             code: body.code,
             message: body.message,
             fieldErrors: body.fields?.additionalProperties ?? [:],
             moneyMoved: body.moneyMoved,
-            linkState: body.state
+            linkState: body.state,
+            retryAfterSeconds: retryAfterSeconds
         )
     }
 
@@ -81,6 +86,13 @@ public enum APIError: Error, Equatable, Sendable {
 }
 
 extension APIError {
+    /// The server rejected the credential this request carried (or, for `login`, the credentials it
+    /// was given). Only this says anything about whether a stored token is still good: offline, a
+    /// timeout and a 5xx do not.
+    public var isUnauthenticated: Bool {
+        if case .server(let error) = self { error.isUnauthenticated } else { false }
+    }
+
     /// Plain-language text for the person using the app; nil when there is
     /// nothing to say (a cancelled call).
     public var userMessage: String? {
