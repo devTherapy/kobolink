@@ -56,8 +56,10 @@ const NO_TELEMETRY = { NEXT_TELEMETRY_DISABLED: '1' }
 
 /**
  * How much of a failed step's log is echoed to the console. Both ends: a failed
- * Turbopack build puts its header and first error in the opening ~30 lines and
- * then repeats hundreds of stack frames (883 lines in the failures seen in CI).
+ * Turbopack build (883 lines in the failures seen in CI) has its `build failed
+ * with N errors` header on line 19 and the first `Module not found` on line 21,
+ * then repeats a ~35-line error block per error. The last 60 lines start
+ * mid-block and miss both, so the head is what names the failure.
  */
 const LOG_HEAD_LINES = 30
 const LOG_TAIL_LINES = 60
