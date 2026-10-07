@@ -2,6 +2,7 @@ package com.folusayo.kobolink.wallet
 
 import com.folusayo.kobolink.generated.api.models.TransferResponse
 import com.folusayo.kobolink.money.Kobo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,23 +94,78 @@ data class SendState(
  * - **One key per payment.** [newKey] is called each time the form is accepted for confirmation. The
  *   only path that reuses a key is [tryAgain], which replays the identical
  *   [TransferAttempt] after a failure whose outcome is not known to be "no".
- * - **No double payment by editing.** After an unknown outcome [editAgain]
- *   does nothing: changing the amount and sending would be a second payment
- *   while the first may have posted. Only a failure where no money moved can
- *   go back to the form.
+ * - **No double payment by editing, leaving, or dying.** Until an attempt is
+ *   settled (a success, or a failure where no money moved) it is [pending]:
+ *   remembered in [store] (which the ViewModel backs with saved state, so it
+ *   survives process death), kept by [start] instead of being overwritten,
+ *   and offered back as the thing to resolve. The person either replays it
+ *   under its own key ([tryAgain]) or says they checked and it did not go
+ *   through ([discardUnresolved]). There is no path that quietly forgets it
+ *   and lets a second, differently-keyed payment go out.
+ * - **No stale write.** A reply that arrives after [reset] (sign-out) is
+ *   dropped, so one person's payment never reaches the next person's screen.
  */
 class SendFlow(
     private val gateway: WalletGateway,
     private val scope: CoroutineScope,
     private val newKey: () -> String,
+    private val store: PendingAttemptStore = InMemoryPendingAttemptStore(),
     private val onSent: (TransferResponse) -> Unit = {},
+    private val onFailed: (TransferFailure) -> Unit = {},
 ) {
     private val _state = MutableStateFlow(SendState())
     val state: StateFlow<SendState> = _state
 
-    /** Begin a fresh payment, optionally pre-filled from a scanned QR code. */
-    fun start(form: SendForm = SendForm()) {
+    private val _pending = MutableStateFlow<TransferAttempt?>(null)
+
+    /** The attempt whose outcome is not settled, if any: in flight, or failed with the money possibly moved. */
+    val pending: StateFlow<TransferAttempt?> = _pending
+
+    // Bumped by reset() so a reply to a request from before it cannot land after.
+    private var generation = 0
+
+    init {
+        // A new process: the previous one died with a payment unresolved. We
+        // never saw how it ended, so say exactly that and offer the safe replay.
+        store.load()?.let { attempt ->
+            _pending.value = attempt
+            _state.value = SendState(
+                form = SendForm(phone = attempt.toPhone, amount = nairaFieldText(attempt.amountKobo), note = attempt.note.orEmpty(), payeeName = attempt.payeeName),
+                phase = SendPhase.Failed(attempt, TransferFailure(TransferFailureKind.Interrupted, MoneyMoved.Unknown)),
+            )
+        }
+    }
+
+    /**
+     * Begin a fresh payment, optionally pre-filled from a scanned QR code.
+     * Returns false, changing nothing, while an earlier payment is unresolved:
+     * the screen then shows that one, and the person settles it first.
+     */
+    fun start(form: SendForm = SendForm()): Boolean {
+        if (_pending.value != null) return false
         _state.value = SendState(form = form)
+        return true
+    }
+
+    /** Sign-out or session end: forget everything, including an unresolved payment, and ignore any reply still on its way. */
+    fun reset() {
+        generation += 1
+        store.save(null)
+        _pending.value = null
+        _state.value = SendState()
+    }
+
+    /**
+     * "I checked, and it did not go through." The only way to drop an
+     * unresolved attempt, and it is the person's explicit statement: the
+     * screen asks them to look at Recent activity first.
+     */
+    fun discardUnresolved() {
+        val phase = _state.value.phase
+        if (phase is SendPhase.Failed && phase.failure.retryWithSameRequest) {
+            settle()
+            _state.value = SendState()
+        }
     }
 
     fun edit(form: SendForm) {
@@ -178,16 +234,40 @@ class SendFlow(
     }
 
     private fun send(attempt: TransferAttempt) {
+        // Remember it BEFORE the request leaves: if the process dies mid-flight
+        // the next one knows there is a payment to resolve, and under which key.
+        store.save(attempt)
+        _pending.value = attempt
         _state.value = _state.value.copy(phase = SendPhase.Sending(attempt))
+        val started = generation
         scope.launch {
-            val result = gateway.transfer(attempt.key, attempt.toPhone, attempt.amountKobo, attempt.note)
+            val result = try {
+                gateway.transfer(attempt.key, attempt.toPhone, attempt.amountKobo, attempt.note)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Whatever it was, a request may have gone out: unknown, and replayable.
+                TransferResult.Failed(unexpectedFailure())
+            }
+            if (generation != started) return@launch
             when (result) {
                 is TransferResult.Sent -> {
+                    settle()
                     _state.value = _state.value.copy(phase = SendPhase.Sent(attempt, result.response))
                     onSent(result.response)
                 }
-                is TransferResult.Failed -> _state.value = _state.value.copy(phase = SendPhase.Failed(attempt, result.failure))
+                is TransferResult.Failed -> {
+                    // Only a definite "no money moved" settles it; anything else stays pending.
+                    if (result.failure.canEditAndResend) settle()
+                    _state.value = _state.value.copy(phase = SendPhase.Failed(attempt, result.failure))
+                    onFailed(result.failure)
+                }
             }
         }
+    }
+
+    private fun settle() {
+        store.save(null)
+        _pending.value = null
     }
 }

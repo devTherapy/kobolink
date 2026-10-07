@@ -259,4 +259,36 @@ class SendFlowTest {
 
         assertEquals(SendState(), h.flow.state.value)
     }
+
+    @Test
+    fun `a reply that lands after the flow was reset is ignored`() = runTest {
+        val h = harness()
+        h.gateway.transferResults += success
+        h.gateway.gate = CompletableDeferred()
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+        assertTrue(h.phase is SendPhase.Sending)
+
+        h.flow.reset() // sign-out / session expiry while the request is in flight
+        h.gateway.gate!!.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(SendState(), h.flow.state.value)
+        assertTrue("the previous user's payment must not reach the next user's home", h.sent.isEmpty())
+    }
+
+    @Test
+    fun `an unexpected exception from the transfer call is an unknown outcome, not a crash`() = runTest {
+        val h = harness()
+        h.gateway.transferThrows = IllegalStateException("boom")
+        h.flow.start(goodForm)
+        h.flow.submit()
+        h.flow.confirm()
+        advanceUntilIdle()
+
+        val failed = h.phase as SendPhase.Failed
+        assertEquals(MoneyMoved.Unknown, failed.failure.moneyMoved)
+        assertTrue(failed.failure.retryWithSameRequest)
+    }
 }

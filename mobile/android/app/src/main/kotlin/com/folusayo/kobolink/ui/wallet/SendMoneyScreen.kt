@@ -37,6 +37,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -74,6 +78,7 @@ class SendActions(
     val onNewPayment: () -> Unit,
     val onDone: () -> Unit,
     val onBack: () -> Unit,
+    val onDiscardUnresolved: () -> Unit,
 )
 
 /**
@@ -138,6 +143,8 @@ private fun SendFormBody(state: SendState, balanceKobo: Long?, actions: SendActi
     val check = if (state.showErrors) checkSendForm(form) as? SendFormCheck.Invalid else null
 
     if (form.payeeName != null) {
+        // The phone number is who gets the money. The name is only what the
+        // QR code's creator wrote: shown, labelled, never trusted.
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             shape = MaterialTheme.shapes.medium,
@@ -145,17 +152,22 @@ private fun SendFormBody(state: SendState, balanceKobo: Long?, actions: SendActi
         ) {
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Paying",
+                    text = "Scanned from a QR code",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
                 Text(
-                    text = form.payeeName,
+                    text = NigerianPhone.display(NigerianPhone.normalize(form.phone)),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
                 Text(
-                    text = "From the QR code you scanned. Check the name before you send.",
+                    text = "Name as written in the QR code: ${form.payeeName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    text = "Kobolink has not verified this name. Money goes to the number, so check it is right before you send.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
@@ -233,9 +245,12 @@ private fun ConfirmDialog(attempt: TransferAttempt, actions: SendActions) {
         title = { Text("Send ${Kobo.formatNaira(attempt.amountKobo)}?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("To ${attempt.recipientLabel()}", style = MaterialTheme.typography.bodyLarge)
+                Text("To ${attempt.recipientLabel()}", style = MaterialTheme.typography.titleMedium)
                 if (attempt.payeeName != null) {
-                    Text(NigerianPhone.display(attempt.toPhone), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Name as written in the QR code, not verified: ${attempt.payeeName}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
                 if (attempt.note != null) {
                     Text("Note: ${attempt.note}", style = MaterialTheme.typography.bodyMedium)
@@ -299,10 +314,19 @@ private fun SentBody(attempt: TransferAttempt, response: TransferResponse, actio
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "To ${response.transaction.counterparty ?: attempt.recipientLabel()}",
+            text = "To ${attempt.recipientLabel()}",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
         )
+        // The wallet's registered name, from the server, not from a QR code.
+        response.transaction.counterparty?.let {
+            Text(
+                text = "Wallet name: $it",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
         Text(
             text = "Your balance is now ${Kobo.formatNaira(response.wallet.balanceKobo)}.",
             style = MaterialTheme.typography.bodyLarge,
@@ -379,6 +403,33 @@ private fun FailedBody(text: FailureText, failure: TransferFailure, actions: Sen
             }
         }
         OutlinedButton(onClick = actions.onDone, modifier = fill) { Text("Back to wallet") }
+        if (failure.retryWithSameRequest) {
+            var asking by rememberSaveable { mutableStateOf(false) }
+            TextButton(onClick = { asking = true }, modifier = fill) { Text("I checked: it didn't go through") }
+            if (asking) {
+                AlertDialog(
+                    onDismissRequest = { asking = false },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    title = { Text("Forget this payment?") },
+                    text = {
+                        Text(
+                            "Only do this if Recent activity on your wallet does not show it. " +
+                                "Once forgotten, Kobolink can no longer tell this payment from a new one, " +
+                                "so sending it again could pay twice.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { asking = false; actions.onDiscardUnresolved() },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) { Text("Forget it") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { asking = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep it") }
+                    },
+                )
+            }
+        }
     }
 }
 

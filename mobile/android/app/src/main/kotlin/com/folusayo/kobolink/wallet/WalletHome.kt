@@ -113,8 +113,14 @@ class WalletHome(
     fun applyTransfer(response: TransferResponse) {
         transfers += 1
         val current = _state.value
+        // A replayed transfer (Try again after an unknown outcome) returns the
+        // ORIGINAL reply, stamped when it was first posted; its balance can be
+        // older than one already held. Never go backwards.
+        val held = current.wallet
+        val incoming = response.wallet
+        val incomingIsCurrent = held == null || !incoming.asOf.isBefore(held.asOf)
         _state.value = current.copy(
-            wallet = response.wallet.let { Wallet(it.accountId, Wallet.Currency.NGN, it.balanceKobo, it.asOf) },
+            wallet = if (incomingIsCurrent) Wallet(incoming.accountId, Wallet.Currency.NGN, incoming.balanceKobo, incoming.asOf) else held,
             walletError = null,
             items = listOf(response.transaction) + current.items.filterNot { it.postingId == response.transaction.postingId },
         )

@@ -44,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,7 +101,7 @@ fun ScanQrScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     var granted by remember { mutableStateOf(hasCameraPermission(context)) }
     var cameraBroken by remember { mutableStateOf(false) }
-    var requestedThisVisit by remember { mutableStateOf(false) }
+    var requestedThisVisit by rememberSaveable { mutableStateOf(false) }
 
     // The person may grant (or revoke) the permission in Settings and come back.
     DisposableEffect(lifecycleOwner) {

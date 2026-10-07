@@ -16,7 +16,7 @@ import retrofit2.Response
 
 internal val at: OffsetDateTime = OffsetDateTime.parse("2026-10-07T10:00:00Z")
 
-internal fun wallet(balanceKobo: Long) = Wallet("acc_1", Wallet.Currency.NGN, balanceKobo, at)
+internal fun wallet(balanceKobo: Long, asOf: OffsetDateTime = at) = Wallet("acc_1", Wallet.Currency.NGN, balanceKobo, asOf)
 
 internal fun entry(
     id: String,
@@ -33,9 +33,15 @@ internal fun entry(
     createdAt = at,
 )
 
-internal fun transferResponse(id: String, amountKobo: Long, newBalanceKobo: Long, counterparty: String? = "Ada Obi") = TransferResponse(
+internal fun transferResponse(
+    id: String,
+    amountKobo: Long,
+    newBalanceKobo: Long,
+    counterparty: String? = "Ada Obi",
+    asOf: OffsetDateTime = at,
+) = TransferResponse(
     transaction = entry(id, -amountKobo, counterparty),
-    wallet = TransferResponseWallet("acc_1", TransferResponseWallet.Currency.NGN, newBalanceKobo, at),
+    wallet = TransferResponseWallet("acc_1", TransferResponseWallet.Currency.NGN, newBalanceKobo, asOf),
 )
 
 internal fun page(vararg items: WalletEntry, next: String? = null) =
@@ -50,6 +56,7 @@ internal class FakeGateway : WalletGateway {
     var walletResults = ArrayDeque<Result<Wallet>>()
     var pageResults = ArrayDeque<Result<WalletTransactionListResponse>>()
     var transferResults = ArrayDeque<TransferResult>()
+    var transferThrows: Throwable? = null
 
     /** When set, the next [transfer] suspends until this completes. */
     var gate: CompletableDeferred<Unit>? = null
@@ -76,6 +83,7 @@ internal class FakeGateway : WalletGateway {
     override suspend fun transfer(idempotencyKey: String, toPhone: String, amountKobo: Long, note: String?): TransferResult {
         transferCalls += TransferCall(idempotencyKey, toPhone, amountKobo, note)
         gate?.await()
+        transferThrows?.let { throw it }
         return transferResults.removeFirstOrNull() ?: error("no transfer stub")
     }
 }

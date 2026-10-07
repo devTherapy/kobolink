@@ -7,7 +7,7 @@ package com.folusayo.kobolink.wallet
  * — the server is the authority — but checking them on the form gives a
  * field-level message instead of a failed round trip.
  *
- * `TransferLimitsTest` reads `apps/api/openapi.json` and fails if these
+ * `InputParsingTest` reads `apps/api/openapi.json` and fails if these
  * drift from the document the models are generated from.
  */
 object TransferLimits {

@@ -32,6 +32,7 @@ enum class TransferFailureKind {
     ServerError,
     Offline,
     Unreadable,
+    Interrupted,
 }
 
 /**
@@ -132,6 +133,10 @@ fun classifyTransferFailure(status: Int?, error: ApiError?, cause: Throwable?): 
  */
 fun unreadableSuccess(): TransferFailure =
     TransferFailure(kind = TransferFailureKind.Unreadable, moneyMoved = MoneyMoved.Unknown)
+
+/** Something this app did not anticipate went wrong around the call. A request may have gone out, so: unknown, and replayable. */
+fun unexpectedFailure(): TransferFailure =
+    TransferFailure(kind = TransferFailureKind.ServerError, moneyMoved = MoneyMoved.Unknown)
 
 private fun isSelfTransfer(error: ApiError): Boolean =
     error.fields?.get("toPhone").orEmpty().any { it.contains("yourself", ignoreCase = true) } ||

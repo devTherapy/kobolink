@@ -1,6 +1,7 @@
 package com.folusayo.kobolink.wallet
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
@@ -24,10 +25,24 @@ enum class WalletRoute { Home, Send, Scan }
 class WalletViewModel(
     gateway: WalletGateway,
     newKey: () -> String = { UUID.randomUUID().toString() },
+    pending: PendingAttemptStore = InMemoryPendingAttemptStore(),
 ) : ViewModel() {
 
     val home = WalletHome(gateway, viewModelScope)
-    val send = SendFlow(gateway, viewModelScope, newKey, onSent = home::applyTransfer)
+    val send = SendFlow(
+        gateway = gateway,
+        scope = viewModelScope,
+        newKey = newKey,
+        store = pending,
+        // The reply's balance can be older than what is held (a replay returns the
+        // original), so a success always reads the balance again as well.
+        onSent = { home.applyTransfer(it); home.refresh() },
+        // "Not enough money" means the balance on screen was wrong: look again.
+        onFailed = { if (it.kind == TransferFailureKind.InsufficientFunds) home.refresh() },
+    )
+
+    /** A payment whose outcome is not settled: the home screen flags it, and Send surfaces it before anything new. */
+    val pendingAttempt: StateFlow<TransferAttempt?> = send.pending
 
     private val _route = MutableStateFlow(WalletRoute.Home)
     val route: StateFlow<WalletRoute> = _route
@@ -41,6 +56,12 @@ class WalletViewModel(
         _cameraPermissionAsked.value = true
     }
 
+    /**
+     * Open the send screen, optionally pre-filled from a scan. If an earlier
+     * payment is unresolved, THAT is what the screen shows (its key and
+     * request intact) and the scanned payee is not used: the person settles
+     * the old payment first, then scans again.
+     */
     fun openSend(payee: ScannedPayee? = null) {
         send.start(
             if (payee == null) {
@@ -54,6 +75,8 @@ class WalletViewModel(
             },
         )
         _route.value = WalletRoute.Send
+        // Starting a payment: the balance on screen should be the real one ("Send another" included).
+        home.refresh()
     }
 
     fun openScan() {
@@ -73,26 +96,41 @@ class WalletViewModel(
         return true
     }
 
-    /** Done / Back to wallet: reload the balance, since a transfer may have changed it (or may have, if the outcome was unknown). */
+    /**
+     * Done / Back to wallet: reload the balance, since a transfer may have
+     * changed it. An unresolved payment is kept, not cleared (see
+     * [SendFlow.start]); the home screen flags it.
+     */
     fun leaveToHome() {
         send.start()
         _route.value = WalletRoute.Home
         home.refresh()
     }
 
-    /** Sign-out or session expiry: drop everything about the previous user. */
+    /** "I checked, and it did not go through": the one explicit way to drop an unresolved payment. */
+    fun discardUnresolvedPayment() {
+        send.discardUnresolved()
+    }
+
+    /** Sign-out or session end: drop everything about the previous user. */
     fun onSignedOut() {
         home.clear()
-        send.start()
+        send.reset()
         _route.value = WalletRoute.Home
     }
 
     companion object {
         val Factory = viewModelFactory {
-            initializer { WalletViewModel(WalletRepository(ApiClientProvider.wallet, ApiClientProvider.json)) }
+            initializer {
+                WalletViewModel(
+                    gateway = WalletRepository(ApiClientProvider.wallet, ApiClientProvider.json),
+                    pending = SavedStatePendingAttemptStore(createSavedStateHandle()),
+                )
+            }
         }
     }
 }
+
 
 /**
  * A scanned amount, as the text an amount field shows (`1500.50`, `100`).

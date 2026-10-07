@@ -37,7 +37,7 @@ class WalletScreensTest {
     val compose = createComposeRule()
 
     private val attempt = TransferAttempt("key-0123456789abcdef", "+2348031234567", 250_000L, null, "Ada Obi")
-    private val noopActions = SendActions({}, {}, {}, {}, {}, {}, {}, {}, {})
+    private val noopActions = SendActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 
     private fun show(fontScale: Float = 1f, content: @Composable () -> Unit) {
         compose.setContent {
@@ -71,7 +71,8 @@ class WalletScreensTest {
             )
         }
         compose.onNodeWithText("Send ₦2,500?").assertIsDisplayed()
-        compose.onNodeWithText("To Ada Obi").assertIsDisplayed()
+        compose.onNodeWithText("To +234 803 123 4567").assertIsDisplayed()
+        compose.onNodeWithText("Name as written in the QR code, not verified: Ada Obi").assertIsDisplayed()
     }
 
     @Test
@@ -111,6 +112,7 @@ class WalletScreensTest {
             WalletHomeScreen(
                 user = AuthenticatedUser("u_1", "ada@example.com", "Ada"),
                 state = HomeState(wallet = wallet, loadedOnce = true),
+                pending = null, onResolvePending = {},
                 onLoad = {}, onRefresh = {}, onLoadMore = {}, onSend = {}, onScan = {}, onLogout = {},
             )
         }
@@ -123,6 +125,7 @@ class WalletScreensTest {
             WalletHomeScreen(
                 user = AuthenticatedUser("u_1", "ada@example.com", "Ada"),
                 state = HomeState(loadedOnce = true),
+                pending = null, onResolvePending = {},
                 onLoad = {}, onRefresh = {}, onLoadMore = {}, onSend = {}, onScan = {}, onLogout = {},
             )
         }

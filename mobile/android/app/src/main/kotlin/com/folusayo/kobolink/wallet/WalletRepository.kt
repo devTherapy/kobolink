@@ -80,6 +80,10 @@ class WalletRepository(
             return TransferResult.Failed(unreadableSuccess())
         } catch (e: DateTimeException) {
             return TransferResult.Failed(unreadableSuccess())
+        } catch (e: Exception) {
+            // Anything else a converter or interceptor can throw (a Keystore
+            // failure reading the token, say): the request may have been sent.
+            return TransferResult.Failed(unexpectedFailure())
         }
 
         val body = response.body()

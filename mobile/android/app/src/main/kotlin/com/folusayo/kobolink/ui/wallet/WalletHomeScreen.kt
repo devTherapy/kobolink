@@ -51,7 +51,9 @@ import com.folusayo.kobolink.money.Kobo
 import com.folusayo.kobolink.ui.icons.QrScannerIcon
 import com.folusayo.kobolink.ui.screen.ErrorCard
 import com.folusayo.kobolink.wallet.HomeState
+import com.folusayo.kobolink.wallet.TransferAttempt
 import com.folusayo.kobolink.wallet.WalletEntry
+import com.folusayo.kobolink.wallet.recipientLabel
 import com.folusayo.kobolink.wallet.isOutgoing
 import com.folusayo.kobolink.wallet.signedNaira
 import com.folusayo.kobolink.wallet.title
@@ -78,6 +80,8 @@ import java.time.format.FormatStyle
 fun WalletHomeScreen(
     user: AuthenticatedUser,
     state: HomeState,
+    pending: TransferAttempt?,
+    onResolvePending: () -> Unit,
     onLoad: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -110,6 +114,9 @@ fun WalletHomeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item(key = "balance") { BalanceCard(userName = user.displayName, state = state, onRetry = onRefresh) }
+            if (pending != null) {
+                item(key = "pending") { PendingPaymentCard(pending, onResolvePending) }
+            }
             item(key = "actions") { ActionRow(onSend = onSend, onScan = onScan) }
             item(key = "activity-title") {
                 Text(
@@ -120,6 +127,31 @@ fun WalletHomeScreen(
                 )
             }
             activitySection(state = state, onRetry = onRefresh, onLoadMore = onLoadMore)
+        }
+    }
+}
+
+/** A payment that may or may not have gone through. It stays here until the person settles it. */
+@Composable
+private fun PendingPaymentCard(attempt: TransferAttempt, onResolve: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "A payment needs checking",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = "${Kobo.formatNaira(attempt.amountKobo)} to ${attempt.recipientLabel()} may not have finished. " +
+                    "Check Recent activity below, then resolve it before sending anything new.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            FilledTonalButton(onClick = onResolve, modifier = Modifier.heightIn(min = 48.dp)) { Text("Review payment") }
         }
     }
 }

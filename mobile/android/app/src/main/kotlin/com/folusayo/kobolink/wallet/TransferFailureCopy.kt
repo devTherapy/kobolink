@@ -12,8 +12,13 @@ data class FailureText(
     val moneyLine: String,
 )
 
-/** Who a payment is to, for a sentence: the QR code's name when there is one, otherwise the formatted number. */
-fun TransferAttempt.recipientLabel(): String = payeeName ?: NigerianPhone.display(toPhone)
+/**
+ * Who a payment is to, for a sentence: ALWAYS the phone number. A name that
+ * came from a scanned QR code is whatever its creator wrote, so it is never
+ * used as the identity of the recipient; screens show it separately and say
+ * it is unverified.
+ */
+fun TransferAttempt.recipientLabel(): String = NigerianPhone.display(toPhone)
 
 /**
  * Words for every way a transfer can fail. Each one says what went wrong and,
@@ -40,7 +45,7 @@ fun describeFailure(failure: TransferFailure, attempt: TransferAttempt, balanceK
             append(". Send a smaller amount, or add money first.")
         }
         TransferFailureKind.RecipientNotFound -> "No wallet for that number" to
-            "Kobolink has no wallet registered to ${NigerianPhone.display(attempt.toPhone)}. Check the number, or ask $who to join Kobolink."
+            "Kobolink has no wallet registered to $who. Check the number, or ask them to join Kobolink."
         TransferFailureKind.SelfTransfer -> "That's your own number" to
             "You can't send money to yourself. Enter someone else's phone number."
         TransferFailureKind.InvalidDetails -> "Kobolink couldn't accept those details" to
@@ -59,6 +64,8 @@ fun describeFailure(failure: TransferFailure, attempt: TransferAttempt, balanceK
             else -> "Lost the connection while sending" to
                 "The connection dropped while sending $amount to $who. ${tryAgainHint(failure)}"
         }
+        TransferFailureKind.Interrupted -> "This payment didn't finish" to
+            "The app closed while sending $amount to $who, so we never saw the result. ${tryAgainHint(failure)}"
         TransferFailureKind.Unreadable -> "Kobolink's reply was unreadable" to
             "The reply to sending $amount to $who couldn't be read. ${tryAgainHint(failure)}"
     }

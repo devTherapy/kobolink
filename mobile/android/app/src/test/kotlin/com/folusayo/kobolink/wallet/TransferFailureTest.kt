@@ -148,6 +148,7 @@ class TransferFailureTest {
             classifyTransferFailure(null, null, UnknownHostException()),
             classifyTransferFailure(null, null, SocketTimeoutException()),
             unreadableSuccess(),
+            TransferFailure(TransferFailureKind.Interrupted, MoneyMoved.Unknown),
         )
         assertEquals(TransferFailureKind.entries.toSet(), cases.map { it.kind }.toSet())
 
@@ -164,12 +165,13 @@ class TransferFailureTest {
     }
 
     @Test
-    fun `insufficient funds names the amount and the balance shown`() {
+    fun `insufficient funds names the amount, the number and the balance shown`() {
         val attempt = TransferAttempt("k", "+2348031234567", 250_000L, null, "Ada Obi")
         val text = describeFailure(classify(422, error(ApiError.Code.insufficient_funds)), attempt, balanceKobo = 100_000L)
         assertEquals("Not enough money in your wallet", text.title)
         assertTrue(text.detail, text.detail.contains("₦2,500"))
-        assertTrue(text.detail, text.detail.contains("Ada Obi"))
+        assertTrue(text.detail, text.detail.contains("+234 803 123 4567"))
+        assertTrue("a QR code's name is not the identity of the recipient: ${text.detail}", !text.detail.contains("Ada Obi"))
         assertTrue(text.detail, text.detail.contains("₦1,000"))
     }
 

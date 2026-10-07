@@ -27,6 +27,7 @@ fun SignedInApp(
     val home by viewModel.home.state.collectAsState()
     val send by viewModel.send.state.collectAsState()
     val cameraAsked by viewModel.cameraPermissionAsked.collectAsState()
+    val pending by viewModel.pendingAttempt.collectAsState()
 
     BackHandler(enabled = route != WalletRoute.Home) { viewModel.back() }
 
@@ -34,6 +35,8 @@ fun SignedInApp(
         WalletRoute.Home -> WalletHomeScreen(
             user = user,
             state = home,
+            pending = pending,
+            onResolvePending = { viewModel.openSend() },
             onLoad = viewModel.home::refresh,
             onRefresh = viewModel.home::refresh,
             onLoadMore = viewModel.home::loadMore,
@@ -54,6 +57,7 @@ fun SignedInApp(
                 onNewPayment = { viewModel.openSend() },
                 onDone = viewModel::leaveToHome,
                 onBack = { viewModel.back() },
+                onDiscardUnresolved = viewModel::discardUnresolvedPayment,
             ),
         )
         WalletRoute.Scan -> ScanQrScreen(

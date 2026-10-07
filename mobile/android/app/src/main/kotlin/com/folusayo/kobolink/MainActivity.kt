@@ -88,9 +88,11 @@ class MainActivity : ComponentActivity() {
             KobolinkTheme {
                 val session by viewModel.sessionState.collectAsState()
 
-                // Sign-out, an expired token, or a signed-out cold start: forget the wallet.
-                LaunchedEffect(session is SessionState.SignedIn) {
-                    if (session !is SessionState.SignedIn) walletViewModel.onSignedOut()
+                // Sign-out or an expired token: forget the wallet. Only SignedOut counts: during
+                // the cold-start check (Resolving) or a flaky connection (Offline) the same
+                // person is still signed in, and an unresolved payment must survive it.
+                LaunchedEffect(session is SessionState.SignedOut) {
+                    if (session is SessionState.SignedOut) walletViewModel.onSignedOut()
                 }
 
                 when (val destination = route(session, deepLinkCode)) {

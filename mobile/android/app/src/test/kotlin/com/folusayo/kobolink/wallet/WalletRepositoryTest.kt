@@ -107,6 +107,14 @@ class WalletRepositoryTest {
     }
 
     @Test
+    fun `any other exception from the call is an unknown outcome, not a crash`() = runTest {
+        val api = FakeWalletApi(transfer = { _, _ -> throw IllegalStateException("converter blew up") })
+        val failure = failed(repo(api).transfer("k".repeat(16), "+2348031234567", 250_000L, null))
+        assertEquals(MoneyMoved.Unknown, failure.moneyMoved)
+        assertTrue(failure.retryWithSameRequest)
+    }
+
+    @Test
     fun `a 201 with no body is treated the same way`() = runTest {
         val api = FakeWalletApi(transfer = { _, _ -> Response.success(201, null as com.folusayo.kobolink.generated.api.models.TransferResponse?) })
         val failure = failed(repo(api).transfer("k".repeat(16), "+2348031234567", 250_000L, null))

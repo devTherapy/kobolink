@@ -8,7 +8,7 @@ package com.folusayo.kobolink.wallet
  * `toPhone`. The server re-validates; this exists so a typo is caught on the
  * form, before a money-moving request is built.
  *
- * Pinned against the document by `NigerianPhoneTest` (the pattern) so a
+ * Pinned against the document by `InputParsingTest` (the pattern) so a
  * contracts change cannot silently drift from this.
  */
 object NigerianPhone {

@@ -45,7 +45,8 @@ val normalizedSpec = layout.buildDirectory.file("openapi/openapi.normalized.json
 // `nullable: true`); `const: X` becomes the one-value `enum: [X]` it already
 // generated as. Nothing in apps/api/openapi.json or packages/contracts is
 // edited: this only reshapes a copy under build/. Pinned by
-// WalletPayloadDecodeTest and AuthPayloadDecodeTest.
+// GeneratedPayloadDecodeTest (decoding) and SpecNormalizationTest (no 3.1-only
+// keyword survives).
 fun normalizeSchemaNode(node: Any?): Any? = when (node) {
     is Map<*, *> -> {
         val out = LinkedHashMap<String, Any?>()
@@ -71,6 +72,14 @@ fun normalizeSchemaNode(node: Any?): Any? = when (node) {
             // BigDecimal that does not compile, so it is just a number.
             val constant = out.remove("const")
             if (constant is String) out["enum"] = listOf(constant)
+        }
+        // 3.1 spells an exclusive bound as a number; 3.0 as a flag beside `minimum`/`maximum`.
+        for ((exclusiveKey, boundKey) in listOf("exclusiveMinimum" to "minimum", "exclusiveMaximum" to "maximum")) {
+            val bound = out[exclusiveKey]
+            if (bound is Number) {
+                out[boundKey] = bound
+                out[exclusiveKey] = true
+            }
         }
         // 3.1-only keyword on `fields` maps (string keys); 3.0 rejects it.
         if (out["propertyNames"] is Map<*, *>) out.remove("propertyNames")
@@ -203,7 +212,7 @@ openApiGenerate {
     // JSON Schema carries no `format: int64`), which the generator maps to a
     // 32-bit Int. A wallet balance is a ledger SUM and can pass 2^31-1 kobo
     // (about 21.4 million naira); the generated Wallet model then fails to
-    // decode (GeneratedMoneyWidthTest). Widen every integer to Long here
+    // decode (GeneratedPayloadDecodeTest). Widen every integer to Long here
     // rather than hand-edit generated models. The right long-term fix is
     // `format: int64` in contracts, which this module does not own.
     typeMappings.set(mapOf("integer" to "kotlin.Long"))

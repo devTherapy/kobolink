@@ -157,4 +157,35 @@ class WalletHomeTest {
         assertTrue(state.items.isEmpty())
         assertFalse(state.loadedOnce)
     }
+
+    @Test
+    fun `a replayed transfer's older balance does not overwrite a newer one`() = runTest {
+        val gateway = FakeGateway()
+        val later = at.plusMinutes(5)
+        gateway.walletResults += Result.success(wallet(600_000, asOf = later))
+        gateway.pageResults += Result.success(page())
+        val home = home(gateway)
+        home.refresh()
+        advanceUntilIdle()
+
+        // Try again after an unknown outcome returns the ORIGINAL reply, stamped when it was first posted.
+        home.applyTransfer(transferResponse("p_2", 250_000, newBalanceKobo = 750_000, asOf = at))
+
+        assertEquals(600_000L, home.state.value.wallet!!.balanceKobo)
+        assertEquals("the transaction itself is still shown", listOf("p_2"), home.state.value.items.map { it.postingId })
+    }
+
+    @Test
+    fun `a newer balance from a transfer reply does replace the held one`() = runTest {
+        val gateway = FakeGateway()
+        gateway.walletResults += Result.success(wallet(1_000_000, asOf = at))
+        gateway.pageResults += Result.success(page())
+        val home = home(gateway)
+        home.refresh()
+        advanceUntilIdle()
+
+        home.applyTransfer(transferResponse("p_2", 250_000, newBalanceKobo = 750_000, asOf = at.plusSeconds(1)))
+
+        assertEquals(750_000L, home.state.value.wallet!!.balanceKobo)
+    }
 }
