@@ -4,10 +4,8 @@ import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.models.AuthResponse
 import com.folusayo.kobolink.generated.api.models.AuthResponseSession
 import com.folusayo.kobolink.generated.api.models.AuthResponseUser
-import com.folusayo.kobolink.generated.api.models.AuthResponseUserPhone
 import com.folusayo.kobolink.generated.api.models.LoginRequest
 import com.folusayo.kobolink.generated.api.models.MeResponse
-import com.folusayo.kobolink.generated.api.models.MeResponseUser
 import com.folusayo.kobolink.generated.api.models.RegisterRequest
 import java.time.OffsetDateTime
 import okhttp3.MediaType.Companion.toMediaType
@@ -85,16 +83,16 @@ internal val authResponseUser = AuthResponseUser(
     id = "user_123",
     role = AuthResponseUser.Role.merchant,
     email = "ngozi@example.com",
-    phone = AuthResponseUserPhone(),
+    phone = null,
     displayName = "Ngozi",
     createdAt = OffsetDateTime.now(),
 )
 
-internal val meResponseUser = MeResponseUser(
+internal val meResponseUser = AuthResponseUser(
     id = "user_123",
-    role = MeResponseUser.Role.merchant,
+    role = AuthResponseUser.Role.merchant,
     email = "ngozi@example.com",
-    phone = AuthResponseUserPhone(),
+    phone = null,
     displayName = "Ngozi",
     createdAt = OffsetDateTime.now(),
 )

@@ -17,11 +17,9 @@ import retrofit2.Response
  * Retrofit interface, and [RecordingTokenStore] stands in for
  * [EncryptedTokenStore] (see AuthFakes.kt).
  *
- * `AuthResponse.user` and `MeResponse.user` are, per [AuthenticatedUser]'s
- * doc comment, two different generated classes (`AuthResponseUser`,
- * `MeResponseUser`) for the same conceptual `User` — these tests construct
- * both to prove [AuthRepository] normalizes either into one
- * [AuthenticatedUser] shape.
+ * `AuthResponse.user` and `MeResponse.user` are the same generated class
+ * (`AuthResponseUser`); these tests prove [AuthRepository] normalizes either
+ * response into one [AuthenticatedUser] shape.
  */
 class AuthRepositoryTest {
 

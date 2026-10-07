@@ -24,9 +24,17 @@ object Kobo {
      * kobo remainder only when it is non-zero, or when [alwaysShowKobo] asks
      * for it — same rule as `formatNaira` in packages/contracts.
      */
-    fun formatNaira(kobo: Int, alwaysShowKobo: Boolean = false): String {
+    fun formatNaira(kobo: Int, alwaysShowKobo: Boolean = false): String =
+        formatNaira(kobo.toLong(), alwaysShowKobo)
+
+    /**
+     * Same as the [Int] overload, for amounts that can pass 2^31-1 kobo: a
+     * wallet balance is a ledger sum, bounded by contracts at
+     * `Number.MAX_SAFE_INTEGER`, and the generated models carry it as a Long.
+     */
+    fun formatNaira(kobo: Long, alwaysShowKobo: Boolean = false): String {
         val negative = kobo < 0
-        val abs = kotlin.math.abs(kobo.toLong())
+        val abs = kotlin.math.abs(kobo)
         val whole = abs / PER_NAIRA
         val remainder = (abs % PER_NAIRA).toInt()
 

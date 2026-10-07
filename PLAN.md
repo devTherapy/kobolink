@@ -106,7 +106,7 @@ static files. No component ships with half its states.
 | M2 | Login | M0 B2 | Token stored in Keychain / EncryptedSharedPreferences, never in plain storage | done — Android half only (iOS deferred). Code and 60 JVM tests merged; the instrumented durability test (`connectedDebugAndroidTest`) compiles but has never run, no AVD available; run it when an emulator exists |
 | M3 | Checkout screen — the deep-link landing | M1 B4 | Tapping a link opens the app on the right link; Dark Mode and large Dynamic Type both hold | in-progress (Android; carries the M1 review fixes) |
 | M4 | Result states: paid, failed, expired, disabled, already paid | M3 B5 | Every failure names what went wrong and whether money moved | todo |
-| M5 | **Phase 2** — wallet home, send money, scan QR | B8 | — | todo |
+| M5 | **Phase 2** — wallet home, send money, scan QR | B8 | — | in-progress (Android only; iOS deferred) |
 
 **Platform constraints, already established.** iOS universal links need a paid
 Apple Developer account; until then M1 ships the custom URL scheme
