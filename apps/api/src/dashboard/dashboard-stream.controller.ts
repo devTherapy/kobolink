@@ -40,9 +40,15 @@ import { DashboardStreamService } from './dashboard-stream.service.js'
  * "proxies commonly cut idle streams at 30-60s") is a real, contract-
  * shaped `{type: 'heartbeat', at}` event, not a bare `:` comment — the
  * contract already defines `heartbeat` as one of `DashboardEvent`'s
- * variants specifically so a client validates every message it receives
- * against one schema, this one included, rather than treating heartbeats
- * as a special case its parser has to know about.
+ * variants specifically so a client validates every event frame it
+ * receives against one schema, this one included, rather than treating
+ * heartbeats as a special case.
+ *
+ * **Opening comment.** The one exception to "every frame is an event" is
+ * the `: open` comment line written right after the headers (see
+ * `dashboard()`), so a piping proxy forwards the response head at once.
+ * Every SSE parser ignores it; a hand-written Swift/Kotlin parser must
+ * skip comment lines (lines starting with `:`) too.
  */
 @Controller('stream')
 @UseGuards(SessionGuard, MerchantGuard)
