@@ -130,10 +130,16 @@ jobs:
       # `always()`, not `failure()`: a cancelled run (the hang case) still gets
       # its logs, and the stack logs (migrate, build-api, build-web, api, web)
       # are what explain a failure that happens before any test runs.
+      # Diagnostics must never decide the job's result: `continue-on-error`
+      # keeps an artifact-service blip from turning a green run red, and
+      # `overwrite` stops a re-run attempt of the same run from a 409 on the
+      # name the first attempt already took.
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: e2e-diagnostics
+          overwrite: true
           path: |
             apps/web/playwright-report
             apps/web/test-results

@@ -7,7 +7,7 @@ import { ANDROID_PACKAGE_NAME } from '@kobolink/contracts'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { assertPortsFree } from './assert-ports-free'
 import { E2E_API_PORT, E2E_WEB_PORT } from './ports'
-import { describeLogTail } from './tail-log'
+import { describeLogExcerpt } from './tail-log'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDir = path.resolve(here, '../..')
@@ -54,7 +54,12 @@ const NO_MOCKING = { NEXT_PUBLIC_API_MOCKING: '' }
  */
 const NO_TELEMETRY = { NEXT_TELEMETRY_DISABLED: '1' }
 
-/** How much of a failed step's log is echoed to the console. */
+/**
+ * How much of a failed step's log is echoed to the console. Both ends: a failed
+ * Turbopack build puts its header and first error in the opening ~30 lines and
+ * then repeats hundreds of stack frames (883 lines in the failures seen in CI).
+ */
+const LOG_HEAD_LINES = 30
 const LOG_TAIL_LINES = 60
 
 export interface RunningStack {
@@ -153,7 +158,7 @@ export async function startStack(): Promise<RunningStack> {
       const logPath = path.join(logDir, `${name}.log`)
       // The log is also uploaded as a CI artifact, but the reason belongs in
       // the job log where the failure is read first.
-      console.error(describeLogTail(logPath, LOG_TAIL_LINES))
+      console.error(describeLogExcerpt(logPath, LOG_HEAD_LINES, LOG_TAIL_LINES))
       const how = result.error ? `could not start (${result.error.message})` : result.signal ? `was killed by ${result.signal}` : `exited with ${String(result.status)}`
       throw new Error(`e2e stack: "${name}" ${how}; see ${logPath}`)
     }
