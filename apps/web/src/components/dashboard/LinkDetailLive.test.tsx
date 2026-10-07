@@ -188,6 +188,59 @@ describe('PaymentsSection, live', () => {
   })
 })
 
+describe('PaymentsSection, live, with older pages loaded', () => {
+  const LETTERS = 'abcdefghjkmnpqrstuvw'
+  /** A payment per index, newest first by index; references are valid and distinct. */
+  const payment = (index: number): Payment =>
+    examplePayment({ reference: `kbl_aaaaaaaa${LETTERS[Math.floor(index / 20)]}${LETTERS[index % 20]}`, code: CODE, payerName: `Payer ${index}` })
+  const range = (from: number, to: number): Payment[] => Array.from({ length: to - from + 1 }, (_unused, i) => payment(from + i))
+  const rowCount = () => screen.getAllByRole('row').length - 1
+  const shown = () => new Set(screen.getAllByText(/^Payer \d+$/).map((cell) => cell.textContent))
+
+  it('loses no payment when a live one pushes the last item of the first page off it', async () => {
+    // Keyset pages: the API returned 1..20 with a cursor after 20, then 21..40 for that cursor.
+    server.use(http.get(API.links.payments(':code'), () => HttpResponse.json({ items: range(21, 40), nextCursor: null })))
+    const first = range(1, 20)
+    const tree = (initialPayments: Payment[], initialCursor: string) => (
+      <DashboardStreamProvider>
+        <PaymentsSection code={CODE} initialPayments={initialPayments} initialCursor={initialCursor} />
+      </DashboardStreamProvider>
+    )
+    const { rerender } = render(tree(first, 'c-after-20'))
+    open()
+
+    await userEvent.click(screen.getByRole('button', { name: /show more payments/i }))
+    await waitFor(() => expect(rowCount()).toBe(40))
+
+    // A payment lands; router.refresh() delivers a first page of [new, 1..19] with a cursor after 19.
+    rerender(tree([payment(99), ...first.slice(0, 19)], 'c-after-19'))
+
+    expect(rowCount()).toBe(41)
+    expect(shown().has('Payer 20')).toBe(true)
+    // Newest first, no gap, no duplicate.
+    expect(screen.getAllByText(/^Payer \d+$/).map((cell) => cell.textContent)).toEqual(
+      ['Payer 99', ...range(1, 40).map((p) => p.payerName)],
+    )
+  })
+
+  it('keeps the "Showing N" note true after a refresh adds a row', async () => {
+    server.use(http.get(API.links.payments(':code'), () => HttpResponse.json({ items: range(21, 40), nextCursor: null })))
+    const first = range(1, 20)
+    const tree = (initialPayments: Payment[], initialCursor: string) => (
+      <DashboardStreamProvider>
+        <PaymentsSection code={CODE} initialPayments={initialPayments} initialCursor={initialCursor} />
+      </DashboardStreamProvider>
+    )
+    const { rerender } = render(tree(first, 'c-after-20'))
+    open()
+    await userEvent.click(screen.getByRole('button', { name: /show more payments/i }))
+    await screen.findByText('20 more payments loaded. Showing 40.')
+
+    rerender(tree([payment(99), ...first.slice(0, 19)], 'c-after-19'))
+    expect(screen.getByText('20 more payments loaded. Showing 41.')).toBeInTheDocument()
+  })
+})
+
 describe('LinkFigures, live', () => {
   function renderFigures(asOf = RENDERED_AT) {
     render(
