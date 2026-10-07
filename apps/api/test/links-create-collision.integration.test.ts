@@ -9,7 +9,7 @@ import { registerMerchant } from './support/register-user.js'
  * cross-merchant 404: "server generates the code and retries on collision"
  * (`packages/contracts/README.md`, `links.collection`). A true `links_pkey`
  * unique-violation is astronomically unlikely to happen on its own (8
- * characters from a 54-symbol alphabet), so this test controls it directly
+ * characters from a 57-symbol alphabet), so this test controls it directly
  * through the `LINK_CODE_GENERATOR` DI seam (`LinksModule`'s own doc
  * comment) rather than trying to provoke a real collision statistically.
  */
