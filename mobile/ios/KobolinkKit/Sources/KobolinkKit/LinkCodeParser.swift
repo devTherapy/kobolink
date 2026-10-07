@@ -108,6 +108,21 @@ public enum LinkCodeParser {
         parse(url.absoluteString)
     }
 
+    /// Is this an `https` URL on the verified link host (no port, or 443), whatever its path?
+    ///
+    /// The one question the in-app browser needs answered. It reads the authority with the same
+    /// WHATWG rules as `parse`, because the page is rendered by WebKit, which does: Foundation's
+    /// `URL.host` can disagree on `https://evil.example\@pay.folusayo.com/`, where WebKit's host is
+    /// `evil.example`. Anything else (another host, `http`, a port, no host) is `false`.
+    public static func isLinkHostWebURL(_ string: String) -> Bool {
+        guard let (scheme, rest) = splitScheme(whatwgPreprocessed(Array(string.utf8))), scheme == "https" else { return false }
+        return specialPath(rest) != nil
+    }
+
+    public static func isLinkHostWebURL(_ url: URL) -> Bool {
+        isLinkHostWebURL(url.absoluteString)
+    }
+
     // MARK: - Implementation (bytes)
 
     private static let slash = UInt8(ascii: "/")
@@ -126,19 +141,21 @@ public enum LinkCodeParser {
             return code(inPath: cut(raw, atFirstOf: [question, hash]))
         }
 
-        // WHATWG pre-processing: trim C0 controls and space from both ends, delete tab, LF and CR everywhere.
-        var start = 0
-        var end = raw.count
-        while start < end, raw[start] <= 0x20 { start += 1 }
-        while end > start, raw[end - 1] <= 0x20 { end -= 1 }
-        let input = raw[start..<end].filter { $0 != 0x09 && $0 != 0x0A && $0 != 0x0D }
-
-        guard let (scheme, rest) = splitScheme(input) else { return nil }
+        guard let (scheme, rest) = splitScheme(whatwgPreprocessed(raw)) else { return nil }
         switch scheme {
         case "https": return specialPath(rest).flatMap(code(inPath:))
         case customScheme: return customPath(rest).flatMap(code(inPath:))
         default: return nil
         }
+    }
+
+    /// WHATWG pre-processing: trim C0 controls and space from both ends, delete tab, LF and CR everywhere.
+    private static func whatwgPreprocessed(_ raw: [UInt8]) -> [UInt8] {
+        var start = 0
+        var end = raw.count
+        while start < end, raw[start] <= 0x20 { start += 1 }
+        while end > start, raw[end - 1] <= 0x20 { end -= 1 }
+        return raw[start..<end].filter { $0 != 0x09 && $0 != 0x0A && $0 != 0x0D }
     }
 
     /// `scheme ":" rest`, scheme lowercased. WHATWG: an ASCII letter, then letters, digits, `+`, `-`, `.`.

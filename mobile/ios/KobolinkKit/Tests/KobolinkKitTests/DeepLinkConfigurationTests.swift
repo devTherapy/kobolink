@@ -66,19 +66,47 @@ struct DeepLinkConfigurationTests {
         #expect(entitlements["com.apple.developer.associated-domains"] as? [String] == ["applinks:\(LinkCodeParser.linkHost)"])
     }
 
-    @Test("only Release references the entitlement; Debug (every Simulator and free-team run) must not")
+    /// Every non-comment line that sets `name`, in any spelling Xcode accepts: indented, with a
+    /// condition (`CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]`), or with spaces around `=`.
+    private func assignments(of name: String, in text: String) -> [String] {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") && $0.hasPrefix(name) }
+            .filter { line in
+                let rest = line.dropFirst(name.count).drop { $0 == " " || $0 == "\t" }
+                return rest.first == "=" || rest.first == "["
+            }
+    }
+
+    @Test("only Release.xcconfig sets the entitlement; Debug and Base (every Simulator and free-team run) must not")
     func entitlementIsReleaseOnly() throws {
-        func setting(_ name: String, in text: String) -> [Substring] {
-            text.split(separator: "\n").filter { $0.hasPrefix(name) }
+        let name = "CODE_SIGN_ENTITLEMENTS"
+        let release = assignments(of: name, in: try file("mobile/ios/Config/Release.xcconfig"))
+        #expect(release.count == 1, "\(release)")
+        #expect(release.first.map { $0.filter { !$0.isWhitespace } } == "\(name)=Config/Kobolink.entitlements")
+        for config in ["Base", "Debug", "Local.xcconfig.example"] {
+            let path = config.contains(".") ? config : "\(config).xcconfig"
+            #expect(assignments(of: name, in: try file("mobile/ios/Config/\(path)")).isEmpty, "\(path)")
         }
-        let release = try file("mobile/ios/Config/Release.xcconfig")
-        #expect(setting("CODE_SIGN_ENTITLEMENTS", in: release) == ["CODE_SIGN_ENTITLEMENTS = Config/Kobolink.entitlements"])
-        for config in ["Base", "Debug"] {
-            #expect(setting("CODE_SIGN_ENTITLEMENTS", in: try file("mobile/ios/Config/\(config).xcconfig")).isEmpty, "\(config).xcconfig")
-        }
+        // Xcode's Signing & Capabilities editor writes into the project file, which every configuration reads.
         let project = try file("mobile/ios/Kobolink.xcodeproj/project.pbxproj")
-        #expect(!project.contains("CODE_SIGN_ENTITLEMENTS"), "set it in Release.xcconfig only, not in the project")
+        #expect(!project.contains(name), "set it in Release.xcconfig only, not in the project")
         #expect(!project.contains("com.apple.developer.associated-domains"))
+        #expect(!project.contains("DEVELOPMENT_TEAM"), "set the team in Release.xcconfig (or Local.xcconfig for Debug), not in the project")
+    }
+
+    @Test("the checker itself catches the spellings that would slip past a plain prefix test")
+    func assignmentsCheckerIsRobust() {
+        let name = "CODE_SIGN_ENTITLEMENTS"
+        for line in [
+            "CODE_SIGN_ENTITLEMENTS = x", "   CODE_SIGN_ENTITLEMENTS = x", "\tCODE_SIGN_ENTITLEMENTS=x",
+            "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = x", "CODE_SIGN_ENTITLEMENTS  =  x",
+        ] {
+            #expect(assignments(of: name, in: "A = 1\n\(line)\nB = 2").count == 1, "\(line.debugDescription)")
+        }
+        for line in ["// CODE_SIGN_ENTITLEMENTS = x", "  // CODE_SIGN_ENTITLEMENTS = x", "OTHER_CODE_SIGN_ENTITLEMENTS = x", "CODE_SIGN_ENTITLEMENTS_X = x"] {
+            #expect(assignments(of: name, in: line).isEmpty, "\(line.debugDescription)")
+        }
     }
 
     @Test("the web app serves the association file this wiring relies on")

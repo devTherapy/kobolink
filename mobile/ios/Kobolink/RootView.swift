@@ -34,7 +34,7 @@ struct RootView: View {
             if let url = activity.webpageURL { navigator.open(url) }
         }
         .fullScreenCover(item: $navigator.external) { link in
-            SafariView(url: link.url).ignoresSafeArea()
+            SafariView(url: link.url, onFinish: { navigator.closeExternal() }).ignoresSafeArea()
         }
         .onChange(of: navigator.path) {
             openLinkCode = navigator.path.first?.code?.value
