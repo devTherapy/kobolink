@@ -1,0 +1,11 @@
+#include "Base.xcconfig"
+
+// `npm run dev` serves the API on 3001. The Simulator shares the Mac's
+// network, so localhost is the Mac (unlike the Android emulator's 10.0.2.2).
+KOBOLINK_API_BASE_URL = http:/$()/localhost:3001
+
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+ONLY_ACTIVE_ARCH = YES
+
+#include? "Local.xcconfig"

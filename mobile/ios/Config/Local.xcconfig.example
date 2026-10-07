@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig (gitignored) to point your builds somewhere else.
+// For example a staging API, or your Mac's LAN address when running on a device:
+//
+// KOBOLINK_API_BASE_URL = http:/$()/192.168.1.20:3001

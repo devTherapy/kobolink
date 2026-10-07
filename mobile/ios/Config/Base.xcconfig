@@ -1,0 +1,15 @@
+// Settings shared by every configuration. Per-machine overrides go in
+// Config/Local.xcconfig (gitignored); nothing secret belongs in any of these.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.folusayo.kobolink
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+SWIFT_VERSION = 6.0
+TARGETED_DEVICE_FAMILY = 1
+
+// The API the app talks to, as an origin. It reaches the app through the
+// Info.plist key KobolinkAPIBaseURL. A literal "//" starts a comment in an
+// xcconfig, so URLs are written http:/$()/host.
+KOBOLINK_API_BASE_URL = https:/$()/pay.folusayo.com
