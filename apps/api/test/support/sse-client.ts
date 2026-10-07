@@ -22,6 +22,13 @@ export interface SseClient {
    * condition, not a timer").
    */
   waitForFrame(predicate?: (frame: SseFrame) => boolean, timeoutMs?: number): Promise<SseFrame>
+  /**
+   * Resolves once the server has ended the response (or the connection
+   * otherwise closed); rejects if it is still open after `timeoutMs`. A server
+   * that closes a stream on purpose (a revoked session) is observable here,
+   * which `waitForFrame` alone cannot express: it only sees frames arrive.
+   */
+  waitForEnd(timeoutMs?: number): Promise<void>
   /** Destroys the client socket — simulates a dropped connection / a closed browser tab. */
   close(): void
 }
@@ -80,6 +87,7 @@ export async function openDashboardStream(ctx: ApiTestContext, cookie: string): 
   const frames: SseFrame[] = []
   const emitter = new EventEmitter()
   let buffer = ''
+  let ended = false
 
   const req = http.request(
     {
@@ -91,6 +99,10 @@ export async function openDashboardStream(ctx: ApiTestContext, cookie: string): 
     },
     (res) => {
       res.setEncoding('utf8')
+      res.on('close', () => {
+        ended = true
+        emitter.emit('end')
+      })
       res.on('data', (chunk: string) => {
         buffer += chunk
         // Drains every complete "\n\n"-terminated frame already in the buffer.
@@ -132,6 +144,20 @@ export async function openDashboardStream(ctx: ApiTestContext, cookie: string): 
           reject(new Error(`openDashboardStream: timed out after ${timeoutMs}ms waiting for a matching SSE frame`))
         }, timeoutMs)
         emitter.on('frame', onFrame)
+      })
+    },
+    waitForEnd(timeoutMs = 5_000) {
+      if (ended) return Promise.resolve()
+      return new Promise((resolve, reject) => {
+        const onEnd = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(() => {
+          emitter.off('end', onEnd)
+          reject(new Error(`openDashboardStream: stream still open ${timeoutMs}ms after it was expected to end`))
+        }, timeoutMs)
+        emitter.once('end', onEnd)
       })
     },
     close() {
