@@ -24,6 +24,17 @@ export interface PaymentsSectionProps {
   initialCursor: string | null
 }
 
+/** The pages fetched by "Show more", and the first page (`anchor`) their cursor continues from. */
+interface LoadedPages {
+  anchor: string
+  payments: Payment[]
+  /** `undefined` until a page has been fetched; then the API's own next cursor, `null` at the end. */
+  cursor: string | null | undefined
+  lastAdded: number | null
+}
+
+const NOTHING_LOADED: LoadedPages = { anchor: '', payments: [], cursor: undefined, lastAdded: null }
+
 /**
  * The link's payments (DESIGN-SPEC §4.2), newest first. The first page is
  * rendered on the server by the page — present in the HTML before any JS —
@@ -53,51 +64,48 @@ export interface PaymentsSectionProps {
  * is a row too, saying no money moved. Nothing live is copied into state:
  * `initialPayments` / `initialCursor` are read on every render, so when the
  * `router.refresh()` that each event schedules delivers a newer first page, it
- * simply shows. State holds only what this component fetched itself — the pages
- * after the first — so a refresh never discards a "Show more" the merchant did,
- * and the cursor follows those pages once there are any. Because a new payment
- * pushes the first page's last item onto the second, that item is kept between
- * the two (`slidOff`) rather than falling into the gap between the first page
- * and the cursor the older pages were fetched with.
+ * simply shows. State holds only what this component fetched itself — the
+ * pages after the first — and stores it with the first page it was fetched
+ * against. A refresh that changes that first page (a new payment pushes its last
+ * item off it, so the old cursor no longer lines up) drops those pages, and a
+ * response still in flight for them, and "Show more" starts again from the new
+ * cursor: older pages are never kept across a first-page change, so nothing can
+ * fall in a gap. A refresh that finds nothing new keeps what was loaded.
  */
 export function PaymentsSection({ code, initialPayments, initialCursor }: PaymentsSectionProps) {
   const { events } = useDashboardStream()
-  // Pages fetched by "Show more", after the rendered first page; `undefined` until one is.
-  const [olderPayments, setOlderPayments] = useState<Payment[]>([])
-  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined)
   const livePayments = useMemo(() => livePaymentsFor(code, events), [code, events])
   const firstPage = useMemo(() => mergePayments(initialPayments, livePayments), [initialPayments, livePayments])
 
-  // Pages are keyset-paginated: a new payment pushes the last item of the first page off it, but the
-  // older pages were fetched with a cursor that starts *after* that item, so it would be in neither
-  // list. When the first page changes while older pages are loaded, what slid off is kept (newest
-  // first) between the two, so the table stays gap-free and agrees with the API's own counts. Before
-  // any "Show more" there is nothing to bridge: the cursor then comes from the latest first page.
-  const [slidOff, setSlidOff] = useState<Payment[]>([])
-  const [previousFirstPage, setPreviousFirstPage] = useState(firstPage)
-  if (firstPage !== previousFirstPage) {
-    setPreviousFirstPage(firstPage)
-    if (olderCursor !== undefined) {
-      const stillOnFirstPage = new Set(firstPage.map((payment) => payment.reference))
-      const slid = previousFirstPage.filter((payment) => !stillOnFirstPage.has(payment.reference))
-      if (slid.length > 0) setSlidOff((previous) => appendUnique(slid, previous))
-    }
-  }
+  // What the pages after the first were fetched against. A cursor only means something next to the
+  // first page it came with, and the first page moves (a new payment pushes its last item off it), so
+  // everything fetched here is stored with this key and used only while it still matches the props.
+  // When a refresh changes the first page (or its cursor) the old pages are simply not shown any more
+  // and "Show more" continues from the new cursor — nothing can fall in a gap between the two. A
+  // refresh that finds nothing new produces the same key and keeps what was loaded.
+  const anchor = `${initialCursor ?? ''}|${initialPayments.map((payment) => payment.reference).join(',')}`
+  const [loaded, setLoaded] = useState<LoadedPages>(NOTHING_LOADED)
+  const older = loaded.anchor === anchor ? loaded : NOTHING_LOADED
 
-  const payments = useMemo(
-    () => appendUnique(appendUnique(firstPage, slidOff), olderPayments),
-    [firstPage, slidOff, olderPayments],
-  )
-  const cursor = olderCursor === undefined ? initialCursor : olderCursor
+  const payments = useMemo(() => appendUnique(firstPage, older.payments), [firstPage, older.payments])
+  const cursor = older.cursor === undefined ? initialCursor : older.cursor
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [sessionExpired, setSessionExpired] = useState(false)
-  // How many rows the last "Show more" added, and a counter that is new on every load. The note's
-  // running total is derived at render, so it stays true when a refresh or a live payment changes the list.
-  const [lastAdded, setLastAdded] = useState<number | null>(null)
+  // A counter that is new on every accepted load: the focus effect keys on it. The note's running total
+  // is derived at render, so it stays true when a live payment changes the list.
   const [loadCount, setLoadCount] = useState(0)
   const loadedNote =
-    lastAdded === null ? '' : `${lastAdded} more payment${lastAdded === 1 ? '' : 's'} loaded. Showing ${payments.length}.`
+    older.lastAdded === null
+      ? ''
+      : `${older.lastAdded} more payment${older.lastAdded === 1 ? '' : 's'} loaded. Showing ${payments.length}.`
   const noteRef = useRef<HTMLParagraphElement>(null)
+
+  // The latest list and anchor, for a request that resolves later: it must be judged against the page
+  // as it is *then*, not as it was when the button was pressed.
+  const latest = useRef({ anchor, payments })
+  useEffect(() => {
+    latest.current = { anchor, payments }
+  })
 
   // After the last page the pressed button is gone; land focus on the line that says what arrived.
   // Keyed on the load, not the note text: a live payment changes the total but is not a reason to move focus.
@@ -107,14 +115,24 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
 
   async function handleShowMore() {
     if (cursor === null) return
+    const requestedAgainst = anchor
     setLoadState('loading')
     setSessionExpired(false)
     try {
       const page = await client.links.payments(code, { cursor, limit: PAGE_SIZE })
-      const added = appendUnique(payments, page.items).length - payments.length
-      setOlderPayments((previous) => appendUnique(previous, page.items))
-      setOlderCursor(page.nextCursor)
-      setLastAdded(added)
+      if (latest.current.anchor !== requestedAgainst) {
+        // The first page changed while this was in flight; this page continues from the old one.
+        setLoadState('idle')
+        return
+      }
+      const current = latest.current.payments
+      const added = appendUnique(current, page.items).length - current.length
+      setLoaded((previous) => ({
+        anchor: requestedAgainst,
+        payments: appendUnique(previous.anchor === requestedAgainst ? previous.payments : [], page.items),
+        cursor: page.nextCursor,
+        lastAdded: added,
+      }))
       setLoadCount((count) => count + 1)
       setLoadState('idle')
     } catch (error) {
