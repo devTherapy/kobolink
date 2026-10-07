@@ -1,11 +1,6 @@
-// F9 wires this in. This file is intentionally excluded from
-// apps/web/tsconfig.json's project (see its "exclude": [..., "e2e"] entry)
-// and from ESLint (see eslint.config.mjs's "e2e/**" ignore), because
-// @playwright/test is not a dependency of this workspace — adding it here
-// would make every `npm ci` (CI included) resolve and install the full
-// Playwright package for a suite that does not run yet. Once F9 adds the
-// dependency, a playwright.config.ts, and a test:e2e script, remove both
-// exclusions; this spec should typecheck and run unchanged.
+// Runs inside the F9 full-stack suite: `e2e/global-setup.ts` starts the stack
+// with a placeholder (non-secret) APPLE_APP_ID and sets EXPECTED_APP_ID to
+// match, so these assertions execute on every `npm run test:e2e`.
 import { ANDROID_PACKAGE_NAME } from '@kobolink/contracts'
 import { expect, test } from '@playwright/test'
 
