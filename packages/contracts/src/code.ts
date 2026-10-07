@@ -6,7 +6,7 @@ import { customAlphabet } from 'nanoid'
  * no query, no composite index, no pagination.
  *
  * The alphabet drops the characters people mistranscribe when reading a link
- * off a screen or a printed QR: 0/O, 1/l/I. 54 symbols, 8 characters, so
+ * off a screen or a printed QR: 0/O, 1/l/I. 57 symbols, 8 characters, so
  * ~46 bits of entropy. Collisions are handled by the create-only write failing
  * and the caller retrying, not by hoping.
  */
