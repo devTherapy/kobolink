@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -22,6 +23,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,8 +113,9 @@ internal fun LoadFailedNotice(kind: FailureKind, onRetry: () -> Unit, onClose: (
  * started, it has not been confirmed, and no money has moved.
  */
 @Composable
-internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, onDone: () -> Unit) {
+internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, onDone: () -> Unit, onStartOver: () -> Unit) {
     val reference = started.reference
+    var confirmingStartOver by rememberSaveable { mutableStateOf(false) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -163,6 +169,36 @@ internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, o
         FilledTonalButton(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text("Done")
         }
+        // The way out for a link that is paid more than once: until M4 can confirm a payment, this one stays on
+        // screen every time the link is opened. Deliberate and confirmed, because it may already have been paid.
+        TextButton(onClick = { confirmingStartOver = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text("Start a new payment")
+        }
+    }
+
+    if (confirmingStartOver) {
+        AlertDialog(
+            onDismissRequest = { confirmingStartOver = false },
+            title = { Text("Start a new payment?") },
+            text = {
+                Text(
+                    "This forgets payment $reference on this phone and starts again. " +
+                        "If you already paid, check with ${link.merchantName} first.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingStartOver = false
+                        onStartOver()
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Start a new payment") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingStartOver = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
+            },
+        )
     }
 }
 

@@ -42,6 +42,12 @@ enum class FailureKind {
 
     /** A 2xx whose body this app could not read. */
     Unreadable,
+
+    /**
+     * Not a failed call but a remembered one: a payment request was sent in an earlier session of the app (it was
+     * closed, backgrounded or killed before the answer arrived) and nobody saw how it ended.
+     */
+    Interrupted,
 }
 
 sealed interface LookupOutcome {

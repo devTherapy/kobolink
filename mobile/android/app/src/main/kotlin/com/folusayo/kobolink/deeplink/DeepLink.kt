@@ -127,6 +127,10 @@ fun parseLinkCode(input: String): String? {
  * NOTHING ELSE is. In particular an empty segment survives, so `//l/x` stays `//l/x` and does not match `/l/`.
  * `java.net.URI.normalize()` is not this: it also collapses runs of slashes, which made
  * `https://pay.folusayo.com//l/aBcDeFgH` a valid link here and an invalid one in contracts.
+ *
+ * Only the literal `.` and `..` are resolved. WHATWG also treats the percent-encoded forms (`%2e`, `%2E`) as dot
+ * segments, so `/l/%2e/aBcDeFgH` is a link to contracts; here it is not (the code would read `%2e/aBcDeFgH`). That is
+ * a deliberate, stricter difference, never a more permissive one.
  */
 private fun withoutDotSegments(path: String): String {
     if (!path.startsWith("/")) return path

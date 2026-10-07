@@ -13,6 +13,7 @@ import com.folusayo.kobolink.checkout.ApiCheckoutGateway
 import com.folusayo.kobolink.checkout.CheckoutController
 import com.folusayo.kobolink.checkout.CheckoutGateway
 import com.folusayo.kobolink.checkout.CheckoutState
+import com.folusayo.kobolink.checkout.PendingCheckoutStore
 import com.folusayo.kobolink.checkout.code
 import com.folusayo.kobolink.ui.screen.CheckoutFormState
 import kotlinx.coroutines.async
@@ -31,6 +32,7 @@ class MainViewModel(
     private val session: SessionController,
     sessionExpired: Flow<Unit>,
     checkoutGateway: CheckoutGateway,
+    pendingCheckouts: PendingCheckoutStore,
 ) : ViewModel() {
 
     val sessionState: StateFlow<SessionState> = session.state
@@ -39,7 +41,7 @@ class MainViewModel(
      * The payer checkout (M3). Lives here, not in the screen, so a rotation neither drops a loaded
      * link nor re-runs its lookup; all of its logic is in [CheckoutController], which is JVM-tested.
      */
-    val checkout = CheckoutController(checkoutGateway, viewModelScope)
+    val checkout = CheckoutController(checkoutGateway, viewModelScope, pendingCheckouts)
 
     /** What the payer has typed. Outlives the screen's content for the same reason [checkout] does. */
     val checkoutForm = CheckoutFormState()
@@ -82,6 +84,10 @@ class MainViewModel(
         // Subscribe before resolving so an expiry signalled by the very first
         // request is not missed.
         viewModelScope.launch { session.observeExpiry(sessionExpired) }
+        // Whose pending payments the checkout reads and writes follows the session; leaving a signed-in user clears theirs.
+        viewModelScope.launch {
+            session.state.collect { checkout.bindOwner((it as? SessionState.SignedIn)?.user?.id) }
+        }
         viewModelScope.launch { session.resolve() }
     }
 
@@ -110,6 +116,7 @@ class MainViewModel(
                     ),
                     sessionExpired = ApiClientProvider.sessionExpiry.events,
                     checkoutGateway = ApiCheckoutGateway(ApiClientProvider.links, ApiClientProvider.checkout, ApiClientProvider.json),
+                    pendingCheckouts = ApiClientProvider.pendingCheckouts,
                 )
             }
         }

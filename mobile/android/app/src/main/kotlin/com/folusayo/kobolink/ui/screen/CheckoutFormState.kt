@@ -44,6 +44,18 @@ class CheckoutFormState {
         }
     }
 
+    /**
+     * Puts a remembered attempt's details back into an EMPTY form: after the app was closed and the link re-tapped
+     * the form is blank, and "Try again" has to send the identical request to reuse the attempt's idempotency key.
+     * A form the payer has already started typing in is never overwritten.
+     */
+    fun restoreIfBlank(amountText: String, name: String, email: String) {
+        if (this.amountText.isNotBlank() || this.name.isNotBlank() || this.email.isNotBlank()) return
+        this.amountText = amountText
+        this.name = name
+        this.email = email
+    }
+
     /** The payer edited [field]: whatever was said about its old value (here or by the server) no longer applies. */
     fun clearError(field: PayerField) {
         if (field in errors) errors = errors - field

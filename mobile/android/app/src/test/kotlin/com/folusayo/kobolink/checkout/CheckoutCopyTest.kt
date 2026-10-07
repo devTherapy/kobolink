@@ -122,7 +122,9 @@ class CheckoutCopyTest {
             "The price of this link changed to ₦18,000. Check it, then pay again. No money has moved.",
             priceChangedMessage(1_800_000),
         )
-        assertTrue(priceChangedMessage(null).contains("changed"))
+        // No trustworthy price (the re-read failed, or found the very amount that was refused): it says so and
+        // names the one way forward.
+        assertTrue(priceChangedMessage(null).contains("Reload"))
         assertTrue(priceChangedMessage(null).endsWith(NO_MONEY_MOVED))
     }
 

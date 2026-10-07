@@ -86,7 +86,7 @@ fun rejectionMessage(message: String, moneyMoved: Boolean?): String =
 fun priceChangedMessage(newAmountKobo: Int?): String = if (newAmountKobo != null) {
     "The price of this link changed to ${Kobo.formatNaira(newAmountKobo)}. Check it, then pay again. $NO_MONEY_MOVED"
 } else {
-    "The price of this link changed, and we couldn't load the new one. Reload to see the new price. $NO_MONEY_MOVED"
+    "The price on this screen didn't match this link, and we couldn't confirm the current price. Reload to check it. $NO_MONEY_MOVED"
 }
 
 /** A button's visible text and what a screen reader says instead (it reads "₦" inconsistently). */
@@ -129,7 +129,16 @@ private fun failureSentence(kind: FailureKind): String = when (kind) {
     FailureKind.RateLimited -> "Kobolink is getting too many requests from this device. Wait a moment."
     FailureKind.Server -> "Kobolink had a problem on its side."
     FailureKind.Unreadable -> "Kobolink answered with something this app couldn't read. If this keeps happening, update the app."
+    FailureKind.Interrupted -> "This payment was started earlier and the app never saw how it ended."
 }
+
+/**
+ * The payment was NOT sent because this device could not record it first (secure storage unavailable or full). Sending
+ * an unrecorded payment could be sent twice after the app is closed, so none is sent.
+ */
+const val PAY_NOT_RECORDED_MESSAGE =
+    "We couldn't save this payment securely on your phone, so we didn't start it. No money was taken. " +
+        "Try again; if it keeps happening, restart the app."
 
 /**
  * "7 Oct 2026, 5:00 PM WAT". Pinned to Africa/Lagos and to the zone's own name rather than the phone's zone: a payer

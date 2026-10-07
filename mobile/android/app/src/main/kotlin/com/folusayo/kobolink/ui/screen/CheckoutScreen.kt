@@ -37,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -59,12 +60,15 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.folusayo.kobolink.checkout.CheckoutLink
+import com.folusayo.kobolink.checkout.PAY_NOT_RECORDED_MESSAGE
 import com.folusayo.kobolink.checkout.CheckoutState
+import com.folusayo.kobolink.checkout.FailureKind
 import com.folusayo.kobolink.checkout.LinkAvailability
 import com.folusayo.kobolink.checkout.PayPhase
 import com.folusayo.kobolink.checkout.PayerField
 import com.folusayo.kobolink.checkout.PayerInput
 import com.folusayo.kobolink.checkout.PayerValidation
+import com.folusayo.kobolink.checkout.amountFieldText
 import com.folusayo.kobolink.checkout.formatCheckoutDate
 import com.folusayo.kobolink.checkout.matches
 import com.folusayo.kobolink.checkout.needsFreshRead
@@ -100,6 +104,7 @@ fun CheckoutScreen(
     form: CheckoutFormState,
     onPay: (PayerInput) -> Unit,
     onReload: () -> Unit,
+    onStartOver: () -> Unit,
     onClose: () -> Unit,
 ) {
     Scaffold(
@@ -138,7 +143,7 @@ fun CheckoutScreen(
                         state.availability != LinkAvailability.Payable ->
                             NonPayableNotice(state.availability, state.link, onCheckAgain = onReload, onClose = onClose)
                         state.pay is PayPhase.Started ->
-                            PaymentStartedStub(link = state.link, started = state.pay, onDone = onClose)
+                            PaymentStartedStub(link = state.link, started = state.pay, onDone = onClose, onStartOver = onStartOver)
                         else -> PayableContent(state.link, state.pay, form, onPay, onReload)
                     }
                 }
@@ -157,6 +162,19 @@ private fun PayableContent(
 ) {
     val focus = LocalFocusManager.current
     val submitting = pay is PayPhase.Submitting
+
+    // An attempt remembered from an earlier run of the app: its form is empty now, and "Try again" resends the
+    // identical request (same idempotency key), so put the same details back.
+    LaunchedEffect(pay) {
+        if (pay is PayPhase.Failed && pay.kind == FailureKind.Interrupted) {
+            val request = pay.request
+            form.restoreIfBlank(
+                amountText = if (link.amountKobo == null) amountFieldText(request.amountKobo) else "",
+                name = request.payerName,
+                email = request.payerEmail,
+            )
+        }
+    }
     val serverFieldErrors = (pay as? PayPhase.Rejected)?.fieldErrors.orEmpty()
         .filterKeys { it !in form.editedSinceRefusal }
     fun errorFor(field: PayerField): String? = form.errors[field] ?: serverFieldErrors[field]
@@ -435,6 +453,7 @@ private fun PayBanner(pay: PayPhase, visibleFieldErrors: Map<PayerField, String>
                 )
             }
         }
+        is PayPhase.NotRecorded -> Banner(PAY_NOT_RECORDED_MESSAGE, BannerTone.Error)
         is PayPhase.PriceChanged -> Banner(priceChangedMessage(pay.newAmountKobo), BannerTone.Warning)
         PayPhase.Idle, PayPhase.Submitting, is PayPhase.Started -> Unit
     }

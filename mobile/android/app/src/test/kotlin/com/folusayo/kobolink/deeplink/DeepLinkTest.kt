@@ -122,6 +122,14 @@ class DeepLinkTest {
         assertEquals("contracts rejects these, the app accepted them", emptyList<String>(), wronglyAccepted)
     }
 
+    /** Contracts (WHATWG) resolves `%2e` as a dot segment and accepts these; the app does not. Stricter is allowed. */
+    @Test
+    fun `does not resolve percent-encoded dot segments, which is stricter than contracts and never looser`() {
+        for (input in listOf("https://pay.folusayo.com/l/%2e/aBcDeFgH", "https://pay.folusayo.com/x/%2E%2e/l/aBcDeFgH")) {
+            assertNull(input, parseLinkCode(input))
+        }
+    }
+
     /** The other half of the oracle run: shapes contracts accepts must keep working, or "stricter" becomes "broken". */
     @Test
     fun `still accepts the shapes contracts accepts that normalisation used to make work`() {

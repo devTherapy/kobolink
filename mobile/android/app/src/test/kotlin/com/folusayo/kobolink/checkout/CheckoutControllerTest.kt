@@ -820,7 +820,7 @@ class CheckoutControllerTest {
     }
 
     @Test
-    fun `a different link does not inherit a started payment, and forgets it`() = runTest {
+    fun `a different link does not inherit a started payment, but the first link keeps its own`() = runTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         started(gateway, checkout)
@@ -828,12 +828,10 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(code = "Zz3Yy4Xx"))
         assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
 
-        // Back on the first link, its earlier payment was left behind by the switch: this is a fresh checkout.
+        // Back on the first link its payment is still there (each link has its own slot, on disk): opening another
+        // link used to drop an unsettled attempt, which is how a second pending checkout got made.
         loaded(gateway, checkout)
-        assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
-        checkout.pay(payer)
-        runCurrent()
-        assertTrue(gateway.initializes[0].request.second != gateway.initializes[1].request.second)
+        assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
     }
 
     @Test
@@ -848,15 +846,36 @@ class CheckoutControllerTest {
     }
 
     @Test
-    fun `an unreadable link forgets a started payment`() = runTest {
+    fun `an unreadable link in between does not disturb a started payment`() = runTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         started(gateway, checkout)
 
         checkout.openUnreadable()
+        assertEquals(CheckoutState.NotFound(code = null), checkout.state.value)
         loaded(gateway, checkout)
 
-        assertEquals(PayPhase.Idle, (checkout.state.value as CheckoutState.Loaded).pay)
+        assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
+    }
+
+    @Test
+    fun `a re-read that finds the very amount that was refused does not unlock Pay`() = runTest {
+        // The server said the amount does not match, yet the link still says the same amount: whatever is wrong is
+        // not something sending it again can fix. "Price changed to the same price" and a live Pay button is a loop.
+        val gateway = FakeCheckoutGateway()
+        val checkout = controller(gateway)
+        loaded(gateway, checkout, link(amountKobo = 1_500_000))
+        checkout.pay(payer)
+        runCurrent()
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        runCurrent()
+        gateway.lookups[1].complete(found(link(amountKobo = 1_500_000)))
+        runCurrent()
+
+        assertTrue((checkout.state.value as CheckoutState.Loaded).pay.needsFreshRead)
+        checkout.pay(payer)
+        runCurrent()
+        assertEquals("the refused amount is not sent again", 1, gateway.initializes.size)
     }
 
     @Test

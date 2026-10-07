@@ -1,5 +1,6 @@
 package com.folusayo.kobolink.checkout
 
+import com.folusayo.kobolink.money.Kobo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,6 +56,14 @@ class PayerValidationTest {
     fun `every problem is reported at once`() {
         val problems = errors(validatePayer(null, "", "", ""))
         assertEquals(setOf(PayerField.Amount, PayerField.Name, PayerField.Email), problems.keys)
+    }
+
+    @Test
+    fun `a remembered amount goes back into the field as the same number`() {
+        for (kobo in listOf(10_000, 1_500_000, 1_500_050, 999_999_999, 1_000_000_000)) {
+            assertEquals(kobo, Kobo.parseNaira(amountFieldText(kobo)))
+        }
+        assertEquals("15000.50", amountFieldText(1_500_050))
     }
 
     @Test

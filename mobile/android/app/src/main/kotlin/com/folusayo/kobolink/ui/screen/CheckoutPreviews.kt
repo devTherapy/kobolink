@@ -45,7 +45,7 @@ private val worstCaseLink = sampleLink.copy(
 @Composable
 private fun Screen(state: CheckoutState, form: CheckoutFormState = CheckoutFormState()) {
     KobolinkTheme {
-        CheckoutScreen(state = state, form = form, onPay = {}, onReload = {}, onClose = {})
+        CheckoutScreen(state = state, form = form, onPay = {}, onReload = {}, onStartOver = {}, onClose = {})
     }
 }
 

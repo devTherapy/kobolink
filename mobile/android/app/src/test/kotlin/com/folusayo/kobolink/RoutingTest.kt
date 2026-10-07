@@ -62,7 +62,25 @@ class RoutingTest {
         fromHistory: Boolean = false,
         intent: LinkRef = LinkRef.None,
         merchantSession: Boolean = false,
-    ) = linkToOpenOnCreate(restored, checkoutIsOpen, saved, fromHistory, intent, hasMerchantSession = merchantSession)
+        sessionReads: MutableList<Unit> = mutableListOf(),
+    ) = linkToOpenOnCreate(
+        restored, checkoutIsOpen, saved, fromHistory, intent,
+        hasMerchantSession = { sessionReads += Unit; merchantSession },
+    )
+
+    /** The token is decrypted on the main thread: only a start from Recents may ask for it. */
+    @Test
+    fun `the stored session is read only for a fresh start from Recents`() {
+        fun reads(restored: Boolean = false, checkoutIsOpen: Boolean = false, fromHistory: Boolean = false): Int {
+            val log = mutableListOf<Unit>()
+            open(restored = restored, checkoutIsOpen = checkoutIsOpen, fromHistory = fromHistory, intent = a, sessionReads = log)
+            return log.size
+        }
+        assertEquals(0, reads())
+        assertEquals(0, reads(checkoutIsOpen = true, fromHistory = true))
+        assertEquals(0, reads(restored = true, fromHistory = true))
+        assertEquals(1, reads(fromHistory = true))
+    }
 
     @Test
     fun `a first launch opens the link in the intent`() {

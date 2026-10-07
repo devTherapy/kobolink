@@ -116,10 +116,12 @@ fun linkToOpenOnCreate(
     savedLink: LinkRef,
     fromHistory: Boolean,
     intentLink: LinkRef,
-    hasMerchantSession: Boolean,
+    hasMerchantSession: () -> Boolean,
 ): LinkRef = when {
     checkoutIsOpen -> LinkRef.None
     restoredFromSavedState -> savedLink
-    fromHistory && hasMerchantSession -> LinkRef.None
+    // A function, not a value: reading it decrypts the session token on the main thread, so it runs only for the
+    // one start that needs the answer.
+    fromHistory && hasMerchantSession() -> LinkRef.None
     else -> intentLink
 }

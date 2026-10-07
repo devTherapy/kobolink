@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
             savedLink = linkRefFromSaved(savedInstanceState?.getString(KEY_OPEN_LINK)),
             fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0,
             intentLink = linkRefFrom(intent),
-            hasMerchantSession = viewModel.hasStoredSession(),
+            hasMerchantSession = viewModel::hasStoredSession,
         )
         viewModel.open(link)
 
@@ -99,6 +99,7 @@ class MainActivity : ComponentActivity() {
                         form = viewModel.checkoutForm,
                         onPay = viewModel.checkout::pay,
                         onReload = viewModel.checkout::reload,
+                        onStartOver = viewModel.checkout::startOver,
                         onClose = { leaveLink(session) },
                     )
                 }

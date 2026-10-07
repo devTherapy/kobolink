@@ -6,6 +6,10 @@ import com.folusayo.kobolink.auth.AuthInterceptor
 import com.folusayo.kobolink.auth.EncryptedTokenStore
 import com.folusayo.kobolink.auth.SessionExpiryBus
 import com.folusayo.kobolink.auth.TokenStore
+import com.folusayo.kobolink.auth.openEncryptedPrefs
+import com.folusayo.kobolink.checkout.EncryptedPendingCheckoutStore
+import com.folusayo.kobolink.checkout.PendingCheckoutStore
+import com.folusayo.kobolink.checkout.UnavailablePendingCheckoutStore
 import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.apis.CheckoutApi
 import com.folusayo.kobolink.generated.api.apis.LinksApi
@@ -56,10 +60,25 @@ object ApiClientProvider {
 
     private var initialized = false
 
+    private lateinit var appContext: Context
+
     fun init(context: Context) {
         if (initialized) return
+        appContext = context.applicationContext
         tokenStore = EncryptedTokenStore(context.applicationContext)
         initialized = true
+    }
+
+    /**
+     * Where an unsettled payment is remembered (encrypted, per owner and link). If secure storage cannot be opened
+     * this is a store that refuses to record, so no payment is sent without a record: the checkout says so.
+     */
+    val pendingCheckouts: PendingCheckoutStore by lazy {
+        try {
+            EncryptedPendingCheckoutStore(openEncryptedPrefs(appContext, EncryptedPendingCheckoutStore.PREFS_FILE_NAME))
+        } catch (e: Exception) {
+            UnavailablePendingCheckoutStore(e)
+        }
     }
 
     private val okHttpClient: OkHttpClient by lazy {
