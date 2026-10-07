@@ -8,7 +8,13 @@
  * one moment a phishing link most wants control of). Only a value that is
  * unambiguously "this app, this origin" is safe to use.
  *
+ * Takes `unknown`, not `string`: Next.js types `searchParams` values as
+ * `string`, but a repeated key (`?next=/a&next=/b`) arrives as `string[]` at
+ * runtime. A non-string is never a valid path, so it is rejected here rather
+ * than at every call site, where a missed guard is a 500 on a public page.
+ *
  * Rejects:
+ * - anything that is not a string (e.g. the `string[]` of a repeated key)
  * - anything not starting with a single `/` (a bare path segment, or an
  *   absolute URL like `https://evil.example`)
  * - `//evil.example` — a *protocol-relative* URL. Browsers resolve a leading
@@ -22,8 +28,8 @@
  * are exactly the class of bug open-redirect filters keep getting wrong, so
  * this defers to the real parser rather than re-deriving its rules by hand.
  */
-export function sameOriginPath(value: string | null | undefined): string | null {
-  if (!value) return null
+export function sameOriginPath(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null
   if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return null
 
   const base = 'http://kobolink.invalid'

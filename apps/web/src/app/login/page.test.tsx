@@ -90,6 +90,22 @@ describe('/login — signed out — the `next` query param passed to the form', 
   })
 })
 
+describe('/login — a repeated `?next=` query key, or none', () => {
+  it('does not crash on a repeated key — Next.js delivers it as string[] — and passes no `next`', async () => {
+    cookieHeader = ''
+    const element = await LoginPage({ searchParams: Promise.resolve({ next: ['/a', '/b'] }) })
+    const html = renderToStaticMarkup(element)
+    expect(html).toContain('<div data-testid="next-prop"></div>')
+  })
+
+  it('passes no `next` when the key is absent', async () => {
+    cookieHeader = ''
+    const element = await LoginPage({ searchParams: Promise.resolve({}) })
+    const html = renderToStaticMarkup(element)
+    expect(html).toContain('<div data-testid="next-prop"></div>')
+  })
+})
+
 describe('/login — already signed in — the redirect destination', () => {
   it('redirects to the validated same-origin `next`', async () => {
     cookieHeader = `${MOCK_SESSION_COOKIE_NAME}=${MOCK_SESSION_TOKEN}`
