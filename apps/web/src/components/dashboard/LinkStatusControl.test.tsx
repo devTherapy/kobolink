@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
@@ -106,6 +106,58 @@ describe('LinkStatusControl — Done when: the toggle rolls back visibly when th
     await user.click(screen.getByRole('switch'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/session has expired/i)
+  })
+
+  it('an expired link whose switch change failed is described as still expired, not "still accepting payments"', async () => {
+    const user = userEvent.setup()
+    server.use(http.patch(API.links.status(':code'), failWith500))
+    render(<LinkStatusControl link={exampleLink({ expiresAt: '2000-01-01T00:00:00.000Z' })} />)
+
+    await user.click(screen.getByRole('switch'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/still expired/i)
+    expect(alert).not.toHaveTextContent(/still accepting payments/i)
+    expect(screen.getByText('Expired')).toBeInTheDocument()
+  })
+
+  it('a spent single-use link whose switch change failed is described as still paid', async () => {
+    const user = userEvent.setup()
+    server.use(http.patch(API.links.status(':code'), failWith500))
+    render(<LinkStatusControl link={exampleLink({ isReusable: false, paymentCount: 1 })} />)
+
+    await user.click(screen.getByRole('switch'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/still paid/i)
+    expect(alert).not.toHaveTextContent(/still accepting payments/i)
+  })
+
+  it('an expired session offers a way to sign in again, back to this very link', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.patch(API.links.status(':code'), () =>
+        HttpResponse.json({ code: 'unauthenticated', message: 'Sign in.' }, { status: 401 }),
+      ),
+    )
+    render(<LinkStatusControl link={exampleLink()} />)
+
+    await user.click(screen.getByRole('switch'))
+
+    const alert = await screen.findByRole('alert')
+    const signIn = within(alert).getByRole('link', { name: /sign in again/i })
+    expect(signIn).toHaveAttribute('href', '/login?next=%2Fdashboard%2Flinks%2FaBcDeFgH')
+  })
+
+  it('offers no sign-in link for a failure that signing in would not fix', async () => {
+    const user = userEvent.setup()
+    server.use(http.patch(API.links.status(':code'), failWith500))
+    render(<LinkStatusControl link={exampleLink()} />)
+
+    await user.click(screen.getByRole('switch'))
+
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
   it('clears the error as soon as the merchant tries again, and a retry that works confirms and announces', async () => {

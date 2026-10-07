@@ -1,5 +1,15 @@
 import { encode } from 'uqr'
 
+/**
+ * Literal colours, on purpose — not `--color-*` tokens. A scanner needs dark
+ * modules on a light field, so a theme (a future dark mode redefining
+ * `--color-ink` and `--color-surface`) must not be able to reach this and
+ * invert it. `MODULE_COLOR` is the same value as the ink token today; it is
+ * pinned here, not referenced.
+ */
+const FIELD_COLOR = '#FFFFFF'
+const MODULE_COLOR = '#0C1626'
+
 /** Quiet zone, in modules. The QR spec asks for 4; a scanner needs it. */
 const QUIET_ZONE = 4
 
@@ -44,8 +54,8 @@ function modulesToPath(matrix: boolean[][]): string {
  * pure-JS encoder (MIT). No `"use client"`: encoding is synchronous and deterministic, so it
  * runs on the server and ships no QR code to the browser — only the SVG.
  *
- * Always dark-on-white with its own white quiet zone, whatever surface it
- * sits on: scanners expect dark modules on a light field, and a themed or
+ * Always dark-on-white (literal colours, above) with its own white quiet
+ * zone, whatever surface it sits on: scanners expect dark modules on a light field, and a themed or
  * inverted code is the classic way to ship one that does not scan. Error
  * correction `M` (15%) is the usual middle: a URL this short stays at a low
  * QR version, and a larger-module code is easier to scan off a screen.
@@ -70,8 +80,8 @@ export function QrCode({ value, label, size = 192 }: QrCodeProps) {
       className="h-auto w-full rounded-(--radius-input) border border-(--color-border)"
       style={{ maxWidth: size }}
     >
-      <rect width={total} height={total} className="fill-white" />
-      <path d={modulesToPath(data)} className="fill-(--color-ink)" />
+      <rect width={total} height={total} fill={FIELD_COLOR} />
+      <path d={modulesToPath(data)} fill={MODULE_COLOR} />
     </svg>
   )
 }

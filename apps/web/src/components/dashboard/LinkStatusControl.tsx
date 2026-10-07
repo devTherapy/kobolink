@@ -1,12 +1,21 @@
 'use client'
 
 import { useId, useOptimistic, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { displayStatus, type PaymentLink } from '@kobolink/contracts'
 import { Card } from '@/components/ui/Card'
 import { StatusPill } from '@/components/ui/Pill'
 import { Switch } from '@/components/ui/Switch'
 import { client } from '@/lib/api'
-import { describeStatusFailure } from '@/lib/link-status'
+import { describeStatusFailure, isSessionExpired, signInHref } from '@/lib/link-status'
+
+/**
+ * Only what the switch and badge read — not the whole `PaymentLink` — because
+ * every prop of a client component is serialised into the page's payload
+ * (`server-serialization`). A full `PaymentLink` satisfies this.
+ */
+export type LinkStatusSource = Pick<PaymentLink, 'code' | 'status' | 'isReusable' | 'expiresAt' | 'paymentCount'>
+
 
 /**
  * The link's on/off switch and the status badge it drives (PLAN.md F5).
@@ -33,23 +42,21 @@ import { describeStatusFailure } from '@/lib/link-status'
  * badge shows the derived word, and a line of help says so when it
  * overrides the switch.
  *
- * Two live regions, both always mounted (one inserted at the moment it has
- * content is not reliably announced): `role="status"` for the success
- * message, and the failure is a `role="alert"` linked to the switch by
- * `aria-describedby`, so a screen-reader user hears it and finds it again.
+ * Two live regions. `role="status"` (success) is always mounted, because one
+ * inserted at the moment it has content is not reliably announced. The
+ * failure is a `role="alert"`, rendered only while there is a failure — an
+ * alert is announced on insertion, which is the point — and linked to the
+ * switch by `aria-describedby` so a screen-reader user hears it and finds it
+ * again.
+ *
+ * A failure that signing in would fix (the API answered `unauthenticated`)
+ * carries a link to `/login?next=` this very page; a retry could never succeed.
  */
-/**
- * Only what the switch and badge read — not the whole `PaymentLink` — because
- * every prop of a client component is serialised into the page's payload
- * (`server-serialization`). A full `PaymentLink` satisfies this.
- */
-export type LinkStatusSource = Pick<PaymentLink, 'code' | 'status' | 'isReusable' | 'expiresAt' | 'paymentCount'>
-
 export function LinkStatusControl({ link }: { link: LinkStatusSource }) {
   const [confirmed, setConfirmed] = useState(link)
   const [status, setOptimisticStatus] = useOptimistic(confirmed.status)
   const [isPending, startTransition] = useTransition()
-  const [failure, setFailure] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{ message: string; needsSignIn: boolean } | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const failureId = useId()
 
@@ -70,7 +77,12 @@ export function LinkStatusControl({ link }: { link: LinkStatusSource }) {
         })
       } catch (error) {
         startTransition(() => {
-          setFailure(describeStatusFailure(error, attempted))        })
+          setFailure({
+            // The *confirmed* state, not the optimistic one: that is what the server last said and what the switch has just snapped back to.
+            message: describeStatusFailure(error, attempted, displayStatus(confirmed)),
+            needsSignIn: isSessionExpired(error),
+          })
+        })
       }
     })
   }
@@ -104,7 +116,18 @@ export function LinkStatusControl({ link }: { link: LinkStatusSource }) {
       </p>
       {failure ? (
         <p id={failureId} role="alert" className="text-[13px] text-(--color-danger)">
-          <strong className="font-semibold">Change not saved.</strong> {failure}
+          <strong className="font-semibold">Change not saved.</strong> {failure.message}
+          {failure.needsSignIn ? (
+            <>
+              {' '}
+              <Link
+                href={signInHref(`/dashboard/links/${confirmed.code}`)}
+                className="inline-flex min-h-11 items-center font-medium text-(--color-brand) underline underline-offset-2 hover:text-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)"
+              >
+                Sign in again
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : null}
     </Card>

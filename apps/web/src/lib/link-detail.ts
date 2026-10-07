@@ -2,6 +2,7 @@ import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import { LinkCodeSchema, type PaymentLink, type PaymentListResponse } from '@kobolink/contracts'
 import { ApiRequestError, client } from './api'
+import { signInHref } from './link-status'
 import { resolveCookieHeader } from './session'
 
 export interface LinkDetailData {
@@ -62,7 +63,7 @@ export const loadLinkDetail = cache(async (code: string, cookieHeader?: string):
     if (error instanceof ApiRequestError) {
       if (error.error.code === 'not_found') return { found: false }
       if (error.error.code === 'unauthenticated') {
-        redirect(`/login?next=${encodeURIComponent(`/dashboard/links/${code}`)}`)
+        redirect(signInHref(`/dashboard/links/${code}`))
       }
       throw new LinkDetailUnavailableError(error.error.message, { cause: error })
     }

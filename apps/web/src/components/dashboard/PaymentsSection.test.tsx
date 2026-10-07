@@ -162,6 +162,89 @@ describe('PaymentsSection', () => {
     expect(cursors).toEqual(['cur_1', 'cur_1'])
   })
 
+  describe('after "Show more" loads the last page', () => {
+    it('moves focus off the button that unmounts, onto the live message that says what arrived', async () => {
+      const user = userEvent.setup()
+      server.use(
+        http.get(API.links.payments(':code'), () =>
+          HttpResponse.json({ items: [declined, pending], nextCursor: null }),
+        ),
+      )
+      render(<PaymentsSection code={CODE} initialPayments={[paid]} initialCursor="cur_1" />)
+
+      await user.click(screen.getByRole('button', { name: 'Show more payments' }))
+
+      await screen.findByText('Tunde Bello')
+      expect(screen.queryByRole('button', { name: 'Show more payments' })).not.toBeInTheDocument()
+      // Not <body>: keyboard and screen-reader users stay where the list grew.
+      const message = screen.getByRole('status')
+      expect(message).toHaveTextContent('2 more payments loaded.')
+      expect(message).toHaveFocus()
+    })
+
+    it('says the count in the singular for one payment', async () => {
+      const user = userEvent.setup()
+      server.use(
+        http.get(API.links.payments(':code'), () => HttpResponse.json({ items: [declined], nextCursor: null })),
+      )
+      render(<PaymentsSection code={CODE} initialPayments={[paid]} initialCursor="cur_1" />)
+
+      await user.click(screen.getByRole('button', { name: 'Show more payments' }))
+
+      expect(await screen.findByRole('status')).toHaveTextContent('1 more payment loaded.')
+    })
+  })
+
+  it('announces a middle page too, and leaves focus on the button that is still there', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get(API.links.payments(':code'), () => HttpResponse.json({ items: [declined], nextCursor: 'cur_2' })),
+    )
+    render(<PaymentsSection code={CODE} initialPayments={[paid]} initialCursor="cur_1" />)
+
+    await user.click(screen.getByRole('button', { name: 'Show more payments' }))
+
+    await screen.findByText('Tunde Bello')
+    expect(screen.getByRole('status')).toHaveTextContent('1 more payment loaded.')
+    expect(screen.getByRole('button', { name: 'Show more payments' })).toHaveFocus()
+  })
+
+  it('an expired session says so and offers sign-in back to this page — a retry could never succeed', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get(API.links.payments(':code'), () =>
+        HttpResponse.json({ code: 'unauthenticated', message: 'Sign in.' }, { status: 401 }),
+      ),
+    )
+    render(<PaymentsSection code={CODE} initialPayments={[paid]} initialCursor="cur_1" />)
+
+    await user.click(screen.getByRole('button', { name: 'Show more payments' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/session has expired/i)
+    expect(alert).toHaveTextContent(/payments above are unaffected/i)
+    expect(within(alert).getByRole('link', { name: /sign in again/i })).toHaveAttribute(
+      'href',
+      '/login?next=%2Fdashboard%2Flinks%2FaBcDeFgH',
+    )
+    expect(screen.queryByRole('button', { name: 'Show more payments' })).not.toBeInTheDocument()
+    expect(screen.getByText('Ngozi Okafor')).toBeInTheDocument()
+  })
+
+  it('a failure that is not a session problem still offers Try again and no sign-in link', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get(API.links.payments(':code'), () => HttpResponse.json({ code: 'internal', message: 'x' }, { status: 500 })),
+    )
+    render(<PaymentsSection code={CODE} initialPayments={[paid]} initialCursor="cur_1" />)
+
+    await user.click(screen.getByRole('button', { name: 'Show more payments' }))
+
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show more payments' })).toBeInTheDocument()
+  })
+
   it('every payment row is a plain table row — real row and cell roles, nothing clickable', () => {
     const rows: Payment[] = [paid, declined]
     render(<PaymentsSection code={CODE} initialPayments={rows} initialCursor={null} />)

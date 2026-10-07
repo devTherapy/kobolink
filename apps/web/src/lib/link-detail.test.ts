@@ -130,18 +130,43 @@ describe('describeStatusFailure', () => {
     new ApiRequestError(status, { code, message: 'x' })
 
   it('says what was attempted, what the link really is, and that no payments were affected', () => {
-    const off = describeStatusFailure(api('internal', 500), 'disabled')
+    const off = describeStatusFailure(api('internal', 500), 'disabled', 'Active')
     expect(off).toMatch(/couldn't turn off this link/i)
     expect(off).toMatch(/still accepting payments/i)
     expect(off).toMatch(/no payments were affected/i)
 
-    const on = describeStatusFailure(api('internal', 500), 'active')
+    const on = describeStatusFailure(api('internal', 500), 'active', 'Disabled')
     expect(on).toMatch(/couldn't turn on this link/i)
     expect(on).toMatch(/still turned off/i)
   })
 
   it('gives a dropped connection the same plain answer as a 5xx', () => {
-    expect(describeStatusFailure(new TypeError('fetch failed'), 'disabled')).toMatch(/couldn't turn off this link/i)
+    expect(describeStatusFailure(new TypeError('fetch failed'), 'disabled', 'Active')).toMatch(
+      /couldn't turn off this link/i,
+    )
+  })
+
+  // The true state is the *derived* one (the badge's `displayStatus`), not a guess from the attempted action:
+  // a failed PATCH on an expired or spent link must never claim it is "still accepting payments".
+  it.each([
+    ['Active', 'disabled', /still accepting payments/i],
+    ['Disabled', 'active', /still turned off/i],
+    ['Expired', 'disabled', /still expired.*(not|n't|cannot) accept/i],
+    ['Expired', 'active', /still expired.*(not|n't|cannot) accept/i],
+    ['Paid', 'disabled', /still paid.*(not|n't|cannot) accept/i],
+    ['Paid', 'active', /still paid.*(not|n't|cannot) accept/i],
+  ] as const)('a %s link whose switch change (%s) failed is described as it really is', (state, attempted, truth) => {
+    const message = describeStatusFailure(api('internal', 500), attempted, state)
+
+    expect(message).toMatch(truth)
+    if (state === 'Expired' || state === 'Paid') expect(message).not.toMatch(/still accepting payments/i)
+    expect(message).toMatch(/no payments were affected/i)
+  })
+
+  it('names the true state in every API-error wording too, not only the generic one', () => {
+    expect(describeStatusFailure(api('unauthenticated', 401), 'disabled', 'Expired')).toMatch(/still expired/i)
+    expect(describeStatusFailure(api('forbidden', 403), 'disabled', 'Paid')).toMatch(/still paid/i)
+    expect(describeStatusFailure(api('rate_limited', 429), 'active', 'Disabled')).toMatch(/still turned off/i)
   })
 
   it.each([
@@ -150,6 +175,6 @@ describe('describeStatusFailure', () => {
     ['forbidden', 403, /isn't allowed/i],
     ['rate_limited', 429, /too many changes/i],
   ] as const)('names a %s answer in its own words', (code, status, expected) => {
-    expect(describeStatusFailure(api(code, status), 'disabled')).toMatch(expected)
+    expect(describeStatusFailure(api(code, status), 'disabled', 'Active')).toMatch(expected)
   })
 })

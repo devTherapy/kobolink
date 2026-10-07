@@ -11,8 +11,9 @@ import { Button } from '@/components/ui/Button'
  * copy is about "your dashboard" — this names the link.
  *
  * Renders inside `DashboardLayout`, so the header and "Log out" stay on
- * screen. A failed *read* moves no money and changes nothing, and the copy
- * says exactly that; the next step is either retry or go back.
+ * screen. A failed *read* changes nothing, and the copy says so without
+ * claiming anything about money (this screen only reads, same as F3's
+ * dashboard boundary); the next step is either retry or go back.
  *
  * `retry`, not `reset`: `reset()` alone re-renders the already-failed tree
  * without re-running the page's fetch, so "Try again" would keep showing the
@@ -51,8 +52,8 @@ export default function LinkDetailError({
         We couldn&apos;t load this link
       </h1>
       <p className="max-w-sm text-[14px] text-(--color-ink-2)">
-        Something went wrong reaching Kobolink&apos;s servers. The link and its payments are unaffected, and no money
-        has moved — this only stopped them loading.
+        Something went wrong reaching Kobolink&apos;s servers. The link and its payments are unaffected — this only
+        stopped them loading.
       </p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
         <Button onClick={handleTryAgain}>Try again</Button>

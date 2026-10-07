@@ -40,11 +40,13 @@ describe('link detail — error', () => {
     vi.restoreAllMocks()
   })
 
-  it('names what failed, says nothing was lost and no money moved, and offers both next steps', () => {
+  it('names what failed, says nothing was lost, and offers both next steps', () => {
     render(<LinkDetailError error={new Error('boom')} retry={vi.fn()} reset={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: /couldn.t load this link/i })).toBeInTheDocument()
-    expect(screen.getByText(/no money\s+has moved/i)).toBeInTheDocument()
+    expect(screen.getByText(/link and its payments are unaffected/i)).toBeInTheDocument()
+    // A read-only screen moves no money to begin with; it must not claim a reassurance nobody asked for.
+    expect(document.body).not.toHaveTextContent(/no money/i)
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to all links' })).toHaveAttribute('href', '/dashboard')
   })

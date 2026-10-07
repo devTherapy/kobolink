@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import type { Payment } from '@kobolink/contracts'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Table } from '@/components/ui/Table'
 import { client } from '@/lib/api'
+import { isSessionExpired, signInHref } from '@/lib/link-status'
 import { CoinsIcon } from './icons'
 import { PAYMENTS_TABLE_COLUMNS } from './PaymentsTable'
 
@@ -39,22 +41,46 @@ function appendUnique(existing: Payment[], incoming: Payment[]): Payment[] {
  * (`appendUnique` drops a reference that is already on screen, which is also
  * what keeps a future live-update feed from doubling a row).
  *
+ * Two things happen when a page arrives. It is *announced* ("N more payments
+ * loaded. Showing M.") in an always-mounted `role="status"`, because rows
+ * appearing below the fold are otherwise silent. And if it was the last page
+ * the button that was just pressed unmounts, which would drop focus to
+ * `<body>` — so focus moves to that same status line, which sits where the
+ * button was. (A middle page leaves the button, and focus, in place.)
+ *
+ * A failure that signing in would fix (`unauthenticated`) offers a link to
+ * `/login?next=` this page instead of a retry that can never succeed.
+ *
  * Not live yet: F7 (SSE) owns "a payment in another tab moves the numbers".
  */
 export function PaymentsSection({ code, initialPayments, initialCursor }: PaymentsSectionProps) {
   const [payments, setPayments] = useState(initialPayments)
   const [cursor, setCursor] = useState(initialCursor)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const [loadedNote, setLoadedNote] = useState('')
+  const noteRef = useRef<HTMLParagraphElement>(null)
+
+  // After the last page the pressed button is gone; land focus on the line that says what arrived.
+  // Keyed on the note, which is new text on every load (it carries the running total).
+  useEffect(() => {
+    if (loadedNote !== '' && cursor === null) noteRef.current?.focus()
+  }, [loadedNote, cursor])
 
   async function handleShowMore() {
     if (cursor === null) return
     setLoadState('loading')
+    setSessionExpired(false)
     try {
       const page = await client.links.payments(code, { cursor, limit: PAGE_SIZE })
-      setPayments((current) => appendUnique(current, page.items))
+      const merged = appendUnique(payments, page.items)
+      const added = merged.length - payments.length
+      setPayments(merged)
       setCursor(page.nextCursor)
+      setLoadedNote(`${added} more payment${added === 1 ? '' : 's'} loaded. Showing ${merged.length}.`)
       setLoadState('idle')
-    } catch {
+    } catch (error) {
+      setSessionExpired(isSessionExpired(error))
       setLoadState('error')
     }
   }
@@ -79,25 +105,49 @@ export function PaymentsSection({ code, initialPayments, initialCursor }: Paymen
       />
       {cursor !== null ? (
         <div className="flex flex-col items-start gap-2 border-t border-(--color-border-soft) px-4 py-3">
-          <Button
-            variant="secondary"
-            surface="surface"
-            status={loadState}
-            errorMessage="Couldn't load more payments."
-            onClick={() => {
-              void handleShowMore()
-            }}
-          >
-            Show more payments
-          </Button>
+          {sessionExpired ? null : (
+            <Button
+              variant="secondary"
+              surface="surface"
+              status={loadState}
+              errorMessage="Couldn't load more payments."
+              onClick={() => {
+                void handleShowMore()
+              }}
+            >
+              Show more payments
+            </Button>
+          )}
           {loadState === 'error' ? (
             <p role="alert" className="text-[13px] text-(--color-danger)">
-              <strong className="font-semibold">Couldn&apos;t load more payments.</strong> The payments above are
-              unaffected and no money moved — this only stopped the next page loading. Try again.
+              <strong className="font-semibold">Couldn&apos;t load more payments.</strong>{' '}
+              {sessionExpired ? (
+                <>
+                  Your session has expired. The payments above are unaffected and no money moved.{' '}
+                  <Link
+                    href={signInHref(`/dashboard/links/${code}`)}
+                    className="inline-flex min-h-11 items-center font-medium text-(--color-brand) underline underline-offset-2 hover:text-(--color-brand-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-brand)"
+                  >
+                    Sign in again
+                  </Link>
+                </>
+              ) : (
+                'The payments above are unaffected and no money moved — this only stopped the next page loading. Try again.'
+              )}
             </p>
           ) : null}
         </div>
       ) : null}
+      {/* Always mounted, and focusable by script only (`tabIndex={-1}`): a live region inserted
+          with its text is not reliably announced, and this is where focus lands after the last page. */}
+      <p
+        ref={noteRef}
+        role="status"
+        tabIndex={-1}
+        className="px-4 text-[13px] text-(--color-ink-2) outline-none empty:hidden not-empty:py-3"
+      >
+        {loadedNote}
+      </p>
     </Card>
   )
 }

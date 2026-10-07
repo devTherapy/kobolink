@@ -23,7 +23,21 @@ describe('QrCode', () => {
     // One white field, one dark path — not a rect per module.
     expect(container.querySelectorAll('rect')).toHaveLength(1)
     expect(container.querySelectorAll('path')).toHaveLength(1)
-    expect(container.querySelector('rect')?.getAttribute('class')).toMatch(/fill-white/)
+  })
+
+  // A QR code is dark-on-light, always. Colours come from literals, not theme tokens: a token redefined by a
+  // future dark theme would invert the code into something scanners reject.
+  it('pins its colours: literal dark modules on a literal white field, no theme token anywhere', () => {
+    const { container } = render(<QrCode value={URL_TEXT} label="QR" />)
+    const field = container.querySelector('rect')
+    const modules = container.querySelector('path')
+
+    expect(field?.getAttribute('fill')).toBe('#FFFFFF')
+    expect(modules?.getAttribute('fill')).toBe('#0C1626')
+    // Nothing that paints the code may reach for a theme token (the frame's border class is not part of the code).
+    const painted = `${field?.outerHTML}${modules?.outerHTML.replace(/ d="[^"]*"/, '')}`
+    expect(painted).not.toContain('--color-')
+    expect(painted).not.toMatch(/class=/)
   })
 
   it('encodes exactly the module matrix the encoder produces — every dark module is in the path, no others', () => {

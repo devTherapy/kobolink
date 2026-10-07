@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { API, exampleLink } from '@kobolink/contracts'
+import { API, exampleLink, linkUrl } from '@kobolink/contracts'
+import { QrCode } from '@/components/dashboard/QrCode'
 import { MOCK_SESSION_COOKIE_NAME, MOCK_SESSION_TOKEN } from '@/mocks/handlers'
 import { server } from '@/mocks/server'
 import { linkStore, paymentsByCode } from '@/mocks/state'
@@ -43,6 +44,21 @@ describe('/dashboard/links/[code]', () => {
     // First page of payments is in the HTML before any JS.
     expect(html).toContain('Ngozi Okafor')
     expect(html).toContain('kbl_7hK2mN9pQr')
+  })
+
+  // The aria-label and the text field could both be right while the picture encodes something else
+  // (`link.code`, an http:// URL) — so compare the drawn modules themselves with the contract URL's.
+  it('encodes exactly linkUrl(code) in the QR modules — not the bare code, not another URL', async () => {
+    const modulesOf = (html: string) => /role="img"[\s\S]*?<path d="([^"]+)"/.exec(html)?.[1]
+
+    const html = renderToStaticMarkup(await LinkDetailPage({ params }))
+    const expected = modulesOf(renderToStaticMarkup(<QrCode value={linkUrl('aBcDeFgH')} label="x" />))
+
+    expect(expected).toBeDefined()
+    expect(modulesOf(html)).toBe(expected)
+    for (const wrong of ['aBcDeFgH', 'http://pay.folusayo.com/l/aBcDeFgH', 'https://pay.folusayo.com/aBcDeFgH']) {
+      expect(modulesOf(html)).not.toBe(modulesOf(renderToStaticMarkup(<QrCode value={wrong} label="x" />)))
+    }
   })
 
   it('says "Any amount" for an open-amount link rather than ₦0', async () => {
