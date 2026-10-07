@@ -8,6 +8,7 @@ import { createLinkWithRetry } from '@/lib/create-link'
 import {
   CREATE_LINK_FIELD_ORDER,
   formFieldErrorsFromApi,
+  todayLocalDate,
   validateCreateLink,
   type CreateLinkFieldErrors,
   type CreateLinkFieldName,
@@ -39,6 +40,15 @@ const FIELD_ID: Record<CreateLinkFieldName, string> = {
   expiresOn: 'create-link-expires-on',
 }
 
+/**
+ * No definite answer from the API: `fetch` itself rejected, or the response
+ * was not an `ApiError` body (`ApiRequestError.transport`). The request may
+ * have been processed before the connection died.
+ */
+function isTransportFailure(error: unknown): boolean {
+  return !(error instanceof ApiRequestError) || error.transport
+}
+
 interface CreateLinkFormProps {
   onCreated: (link: PaymentLink) => void
   onCancel: () => void
@@ -47,6 +57,14 @@ interface CreateLinkFormProps {
    * refused until it settles — closing mid-request would orphan the result.
    */
   onPendingChange: (pending: boolean) => void
+  /**
+   * Tells the owner a request failed without a definite answer (a dead
+   * connection, a proxy's 502): the link may exist anyway, so whatever list
+   * shows the merchant's links is stale until it is re-read. Called for
+   * exactly the failures whose banner says "if the link appears in your list,
+   * it was created" — never for a response that said nothing was created.
+   */
+  onTransportFailure: () => void
 }
 
 /**
@@ -65,7 +83,7 @@ interface CreateLinkFormProps {
  * this component ever hearing about it; only when those retries are spent
  * does `conflict` arrive here, as a plain "nothing was created, try again".
  */
-export function CreateLinkForm({ onCreated, onCancel, onPendingChange }: CreateLinkFormProps) {
+export function CreateLinkForm({ onCreated, onCancel, onPendingChange, onTransportFailure }: CreateLinkFormProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [amountKobo, setAmountKobo] = useState<number | null>(null)
@@ -163,6 +181,7 @@ export function CreateLinkForm({ onCreated, onCancel, onPendingChange }: CreateL
       // form; resetting state it will never render again is pure waste.
     } catch (error) {
       onPendingChange(false)
+      if (isTransportFailure(error)) onTransportFailure()
       setStatus('error')
       setFormError(describeFailure(error))
     }
@@ -270,6 +289,7 @@ export function CreateLinkForm({ onCreated, onCancel, onPendingChange }: CreateL
           id={FIELD_ID.expiresOn}
           name="expiresOn"
           type="date"
+          min={todayLocalDate()}
           label="Expires on"
           value={expiresOn}
           onChange={edited('expiresOn', setExpiresOn)}

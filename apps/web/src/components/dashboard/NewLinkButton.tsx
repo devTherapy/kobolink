@@ -19,6 +19,9 @@ import { CreateLinkForm } from './CreateLinkForm'
  * no client-side copy of the list to keep in step. The refresh runs in a
  * transition so the page never blanks into `loading.tsx` for it.
  *
+ * A transport failure (no definite answer) may still have created the link,
+ * so closing the drawer afterwards refreshes the list too.
+ *
  * The result is said twice, for two audiences: a persistent `role="status"`
  * line next to the button (visible, and announced politely — it outlives the
  * drawer, which is gone by the time the announcement would otherwise fire),
@@ -33,6 +36,10 @@ export function NewLinkButton() {
   // A ref, not state: nothing renders from it. `Drawer` asks the owner (via
   // `onClose`) and the owner answers from here.
   const pendingRef = useRef(false)
+  // Also a ref. Set when a submit died without a definite answer, so the link
+  // may exist though the page does not show it; cleared by whichever refresh
+  // re-reads the list (close, or a later success).
+  const staleListRef = useRef(false)
 
   function handleOpen(event: MouseEvent<HTMLButtonElement>) {
     openerRef.current = event.currentTarget
@@ -44,10 +51,26 @@ export function NewLinkButton() {
     // Refused while a request is in flight: closing now would orphan its result.
     if (pendingRef.current) return
     setOpen(false)
+    refreshIfStale()
+  }
+
+  /**
+   * After a transport failure the form told the merchant "if the link appears
+   * in your list, it was created". That is only true if the list is re-read
+   * when they leave the drawer; otherwise they see nothing, assume it failed,
+   * and create a duplicate.
+   */
+  function refreshIfStale() {
+    if (!staleListRef.current) return
+    staleListRef.current = false
+    startRefresh(() => {
+      router.refresh()
+    })
   }
 
   function handleCreated(link: PaymentLink) {
     pendingRef.current = false
+    staleListRef.current = false
     setCreatedTitle(link.title)
     setOpen(false)
     startRefresh(() => {
@@ -74,6 +97,9 @@ export function NewLinkButton() {
         <CreateLinkForm
           onCreated={handleCreated}
           onCancel={handleClose}
+          onTransportFailure={() => {
+            staleListRef.current = true
+          }}
           onPendingChange={(pending) => {
             pendingRef.current = pending
           }}

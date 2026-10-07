@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { API, type ApiError, type PaymentLink } from '@kobolink/contracts'
 import { server } from '@/mocks/server'
 import { linkStore } from '@/mocks/state'
+import { todayLocalDate } from '@/lib/create-link-form'
 import { CreateLinkForm } from './CreateLinkForm'
 
 vi.mock('next/navigation', () => ({
@@ -28,9 +29,17 @@ function setup() {
   const onCreated = vi.fn<(link: PaymentLink) => void>()
   const onCancel = vi.fn()
   const onPendingChange = vi.fn<(pending: boolean) => void>()
+  const onTransportFailure = vi.fn()
   const user = userEvent.setup()
-  render(<CreateLinkForm onCreated={onCreated} onCancel={onCancel} onPendingChange={onPendingChange} />)
-  return { user, onCreated, onCancel, onPendingChange }
+  render(
+    <CreateLinkForm
+      onCreated={onCreated}
+      onCancel={onCancel}
+      onPendingChange={onPendingChange}
+      onTransportFailure={onTransportFailure}
+    />,
+  )
+  return { user, onCreated, onCancel, onPendingChange, onTransportFailure }
 }
 
 const titleInput = () => screen.getByLabelText('Title', { exact: false })
@@ -92,6 +101,11 @@ describe('CreateLinkForm — Done when: validation errors are inline', () => {
 
     expect(screen.getByText('Enter an amount between ₦100 and ₦10,000,000.')).toBeInTheDocument()
     expect(amountInput()).toHaveFocus()
+  })
+
+  it('offers the picker no day before today (local)', () => {
+    setup()
+    expect(screen.getByLabelText('Expires on')).toHaveAttribute('min', todayLocalDate())
   })
 
   it('rejects a past expiry date', async () => {
@@ -294,6 +308,31 @@ describe('CreateLinkForm — other failures name what happened and what to do', 
     expect(alert).toHaveTextContent(/could not reach kobolink/i)
     expect(alert).toHaveTextContent(/if the link appears in your list, it was created/i)
     expect(alert).not.toHaveTextContent('No link was created')
+  })
+
+  it.each([
+    ['a dropped connection', () => HttpResponse.error()],
+    ['a 502 with a proxy HTML body', () => new HttpResponse('<h1>Bad Gateway</h1>', { status: 502 })],
+  ])('tells the owner the list may be stale after %s', async (_name, respond) => {
+    server.use(http.post(API.links.collection, () => respond()))
+    const { user, onTransportFailure } = setup()
+    await user.type(titleInput(), 'Ankara set')
+    await user.click(submit())
+
+    await screen.findByRole('alert')
+    expect(onTransportFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not tell the owner anything is stale when the API said nothing was created', async () => {
+    server.use(
+      http.post(API.links.collection, () => HttpResponse.json(errorBody('internal', 'Something broke.'), { status: 500 })),
+    )
+    const { user, onTransportFailure } = setup()
+    await user.type(titleInput(), 'Ankara set')
+    await user.click(submit())
+
+    await screen.findByRole('alert')
+    expect(onTransportFailure).not.toHaveBeenCalled()
   })
 
   it('moves focus to the alert so a keyboard user lands where the news is', async () => {

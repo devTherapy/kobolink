@@ -130,3 +130,90 @@ describe('NewLinkButton — Done when: the table shows the new link without a fu
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 })
+
+describe('NewLinkButton — a transport failure may have created the link anyway', () => {
+  /** Drives the drawer to a failed submit and waits for the banner. */
+  async function failCreating(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(trigger())
+    await user.type(screen.getByLabelText('Title', { exact: false }), 'Ankara set')
+    await user.click(screen.getByRole('button', { name: 'Create link' }))
+    await screen.findByRole('alert')
+  }
+
+  const closers: readonly [string, (user: ReturnType<typeof userEvent.setup>) => Promise<void>][] = [
+    ['Cancel', (user) => user.click(screen.getByRole('button', { name: 'Cancel' }))],
+    ['Esc', (user) => user.keyboard('{Escape}')],
+  ]
+
+  const transportFailures: readonly [string, () => Response][] = [
+    ['a 502 with a proxy HTML body', () => new HttpResponse('<h1>Bad Gateway</h1>', { status: 502 })],
+    ['a dropped connection', () => HttpResponse.error()],
+  ]
+
+  it.each(
+    transportFailures.flatMap(([failure, respond]) =>
+      closers.map(([closer, close]) => [failure, closer, respond, close] as const),
+    ),
+  )('after %s, closing with %s refreshes the list', async (_failure, _closer, respond, close) => {
+    server.use(http.post(API.links.collection, () => respond()))
+    const user = userEvent.setup()
+    render(<NewLinkButton />)
+    await failCreating(user)
+    expect(refresh).not.toHaveBeenCalled()
+
+    await close(user)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh when the API gave a definite answer that nothing was created', async () => {
+    server.use(
+      http.post(API.links.collection, () =>
+        HttpResponse.json({ code: 'validation_failed', message: 'Title is too long.' }, { status: 400 }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<NewLinkButton />)
+    await failCreating(user)
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it('refreshes once, not twice, when a retry after the transport failure succeeds', async () => {
+    let attempts = 0
+    server.use(
+      http.post(API.links.collection, () => {
+        attempts++
+        return attempts === 1 ? HttpResponse.error() : (undefined)
+      }),
+    )
+    const user = userEvent.setup()
+    render(<NewLinkButton />)
+    await failCreating(user)
+
+    await user.click(screen.getByRole('button', { name: 'Create link' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('forgets the failure once the list was refreshed, so a later clean cancel does not refresh again', async () => {
+    server.use(http.post(API.links.collection, () => HttpResponse.error()))
+    const user = userEvent.setup()
+    render(<NewLinkButton />)
+    await failCreating(user)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(refresh).toHaveBeenCalledTimes(1)
+
+    await user.click(trigger())
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+})
