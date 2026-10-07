@@ -158,86 +158,124 @@ describe('PaymentsSection, live', () => {
     )
     expect(payerOrder()[0]).toBe('Chidi Obi')
   })
-
-  it('a refresh does not throw away pages the merchant already loaded with "Show more"', async () => {
-    const older = examplePayment({ reference: 'kbl_ffffffffff', payerName: 'Chidi Obi' })
-    server.use(
-      http.get(API.links.payments(':code'), () =>
-        HttpResponse.json({ items: [older], nextCursor: null }),
-      ),
-    )
-    const { rerender } = renderSection({ initialCursor: 'cursor-1' })
-
-    await userEvent.click(screen.getByRole('button', { name: /show more payments/i }))
-    await waitFor(() => expect(screen.getByText('Chidi Obi')).toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /show more payments/i })).not.toBeInTheDocument()
-
-    // A refresh arrives with a new first page — and an unrelated cursor for it.
-    rerender(
-      <DashboardStreamProvider>
-        <PaymentsSection
-          code={CODE}
-          initialPayments={[examplePayment({ reference: 'kbl_cccccccccc', payerName: 'Amaka Eze' }), ...rendered]}
-          initialCursor="cursor-2"
-        />
-      </DashboardStreamProvider>,
-    )
-    expect(payerOrder()).toEqual(['Amaka Eze', 'Ngozi Okafor', 'Tunde Bello', 'Chidi Obi'])
-    // The merchant had reached the end; a refresh does not offer a page they have already read.
-    expect(screen.queryByRole('button', { name: /show more payments/i })).not.toBeInTheDocument()
-  })
 })
 
-describe('PaymentsSection, live, with older pages loaded', () => {
+describe('PaymentsSection, live, pages loaded with "Show more"', () => {
   const LETTERS = 'abcdefghjkmnpqrstuvw'
   /** A payment per index, newest first by index; references are valid and distinct. */
   const payment = (index: number): Payment =>
     examplePayment({ reference: `kbl_aaaaaaaa${LETTERS[Math.floor(index / 20)]}${LETTERS[index % 20]}`, code: CODE, payerName: `Payer ${index}` })
   const range = (from: number, to: number): Payment[] => Array.from({ length: to - from + 1 }, (_unused, i) => payment(from + i))
-  const rowCount = () => screen.getAllByRole('row').length - 1
-  const shown = () => new Set(screen.getAllByText(/^Payer \d+$/).map((cell) => cell.textContent))
+  const payers = () => screen.queryAllByText(/^Payer \d+$/).map((cell) => cell.textContent)
+  const names = (...parts: (number | [number, number])[]) =>
+    parts.flatMap((part) => (typeof part === 'number' ? [`Payer ${part}`] : range(part[0], part[1]).map((p) => p.payerName)))
+  const showMore = () => screen.queryByRole('button', { name: /show more payments/i })
 
-  it('loses no payment when a live one pushes the last item of the first page off it', async () => {
-    // Keyset pages: the API returned 1..20 with a cursor after 20, then 21..40 for that cursor.
-    server.use(http.get(API.links.payments(':code'), () => HttpResponse.json({ items: range(21, 40), nextCursor: null })))
-    const first = range(1, 20)
-    const tree = (initialPayments: Payment[], initialCursor: string) => (
-      <DashboardStreamProvider>
-        <PaymentsSection code={CODE} initialPayments={initialPayments} initialCursor={initialCursor} />
-      </DashboardStreamProvider>
+  const first = range(1, 20)
+  const refreshedFirst = [payment(99), ...first.slice(0, 19)]
+  const tree = (initialPayments: Payment[], initialCursor: string) => (
+    <DashboardStreamProvider>
+      <PaymentsSection code={CODE} initialPayments={initialPayments} initialCursor={initialCursor} />
+    </DashboardStreamProvider>
+  )
+
+  /** Keyset pages as the API serves them: each cursor names the item it continues after. */
+  function serveKeysetPages(onRequest?: () => Promise<void>) {
+    server.use(
+      http.get(API.links.payments(':code'), async ({ request }) => {
+        await onRequest?.()
+        const cursor = new URL(request.url).searchParams.get('cursor')
+        if (cursor === 'c-after-20') return HttpResponse.json({ items: range(21, 40), nextCursor: 'c-after-40' })
+        if (cursor === 'c-after-19') return HttpResponse.json({ items: range(20, 39), nextCursor: 'c-after-39' })
+        return HttpResponse.json({ items: [], nextCursor: null })
+      }),
     )
+  }
+
+  it('a refreshed first page starts the older pages over from its own cursor, so no payment falls in a gap', async () => {
+    serveKeysetPages()
     const { rerender } = render(tree(first, 'c-after-20'))
     open()
+    await userEvent.click(showMore()!)
+    await waitFor(() => expect(payers()).toEqual(names([1, 40])))
 
-    await userEvent.click(screen.getByRole('button', { name: /show more payments/i }))
-    await waitFor(() => expect(rowCount()).toBe(40))
+    // A payment lands; the refresh delivers [new, 1..19] with a cursor after 19.
+    rerender(tree(refreshedFirst, 'c-after-19'))
+    expect(payers()).toEqual(names(99, [1, 19]))
 
-    // A payment lands; router.refresh() delivers a first page of [new, 1..19] with a cursor after 19.
-    rerender(tree([payment(99), ...first.slice(0, 19)], 'c-after-19'))
-
-    expect(rowCount()).toBe(41)
-    expect(shown().has('Payer 20')).toBe(true)
-    // Newest first, no gap, no duplicate.
-    expect(screen.getAllByText(/^Payer \d+$/).map((cell) => cell.textContent)).toEqual(
-      ['Payer 99', ...range(1, 40).map((p) => p.payerName)],
-    )
+    // The merchant presses Show more again: the page continues from item 19, so 20 is there.
+    await userEvent.click(showMore()!)
+    await waitFor(() => expect(payers()).toEqual(names(99, [1, 39])))
   })
 
-  it('keeps the "Showing N" note true after a refresh adds a row', async () => {
-    server.use(http.get(API.links.payments(':code'), () => HttpResponse.json({ items: range(21, 40), nextCursor: null })))
-    const first = range(1, 20)
-    const tree = (initialPayments: Payment[], initialCursor: string) => (
-      <DashboardStreamProvider>
-        <PaymentsSection code={CODE} initialPayments={initialPayments} initialCursor={initialCursor} />
-      </DashboardStreamProvider>
+  it('a request already in flight when the first page changes is discarded, not appended after a gap', async () => {
+    let release: () => void = () => undefined
+    serveKeysetPages(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
     )
     const { rerender } = render(tree(first, 'c-after-20'))
     open()
-    await userEvent.click(screen.getByRole('button', { name: /show more payments/i }))
+    await userEvent.click(showMore()!)
+
+    rerender(tree(refreshedFirst, 'c-after-19'))
+    await act(async () => {
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    // 21..40 was fetched against the old first page: showing it would leave 20 missing.
+    expect(payers()).toEqual(names(99, [1, 19]))
+    expect(showMore()).toBeEnabled()
+  })
+
+  it('a refresh that changes nothing visible does not collapse what was loaded', async () => {
+    serveKeysetPages()
+    const { rerender } = render(tree(first, 'c-after-20'))
+    open()
+    await userEvent.click(showMore()!)
+    await waitFor(() => expect(payers()).toEqual(names([1, 40])))
+
+    // Same first page, new array identity — as when a reconnect refresh finds nothing new.
+    rerender(tree([...first], 'c-after-20'))
+    expect(payers()).toEqual(names([1, 40]))
+  })
+
+  it('keeps the "Showing N" note true as live payments change the list', async () => {
+    serveKeysetPages()
+    render(tree(first, 'c-after-20'))
+    open()
+    await userEvent.click(showMore()!)
     await screen.findByText('20 more payments loaded. Showing 40.')
 
-    rerender(tree([payment(99), ...first.slice(0, 19)], 'c-after-19'))
+    send(paymentCompleted())
     expect(screen.getByText('20 more payments loaded. Showing 41.')).toBeInTheDocument()
+  })
+
+  it('counts "N more loaded" against the list as it was when the response arrived', async () => {
+    let release: () => void = () => undefined
+    server.use(
+      http.get(API.links.payments(':code'), async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return HttpResponse.json({ items: range(21, 40), nextCursor: null })
+      }),
+    )
+    render(tree(first, 'c-after-20'))
+    open()
+    await userEvent.click(showMore()!)
+
+    // While the request is out, the stream already delivers one of the payments the page contains.
+    send({ type: 'payment.completed', payment: payment(21), stats: exampleStats({ asOf: LATER }) })
+    await act(async () => {
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(await screen.findByText('19 more payments loaded. Showing 40.')).toBeInTheDocument()
   })
 })
 
