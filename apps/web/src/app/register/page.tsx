@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 /** `/register` — the server shell around `RegisterForm`'s client island. See `/login/page.tsx` for the split this mirrors. */
 interface PageProps {
-  searchParams: Promise<{ next?: string }>
+  searchParams: Promise<{ next?: string | string[] }>
 }
 
 export default async function RegisterPage({ searchParams }: PageProps) {
