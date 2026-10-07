@@ -33,19 +33,28 @@ class AuthInterceptor(
         val request = chain.request()
         if (!request.url.hasSameOriginAs(apiBaseUrl)) return chain.proceed(request)
 
-        val token = tokenStore.token() ?: return chain.proceed(request)
+        // A Keystore/decryption failure here would otherwise throw a non-IOException on
+        // OkHttp's dispatcher thread and crash the process. Send the request without a
+        // bearer instead; the server's 401 is handled like any other signed-out call.
+        val token = readToken() ?: return chain.proceed(request)
         val response = chain.proceed(
             request.newBuilder()
                 .header("Authorization", "Bearer $token")
                 .build(),
         )
 
-        if (response.code == 401 && tokenStore.token() == token) {
+        if (response.code == 401 && readToken() == token) {
             // The caller still gets the 401 response regardless of whether the clear succeeds.
             runCatching { tokenStore.clear() }
             onSessionExpired()
         }
         return response
+    }
+
+    private fun readToken(): String? = try {
+        tokenStore.token()
+    } catch (e: Exception) {
+        null
     }
 
     private fun HttpUrl.hasSameOriginAs(other: HttpUrl) =

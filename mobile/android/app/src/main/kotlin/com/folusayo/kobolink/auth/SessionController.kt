@@ -53,7 +53,15 @@ class SessionController(private val auth: AuthRepository) {
     }
 
     private suspend fun check() {
-        if (!auth.isSignedIn) {
+        // Reading the token can itself fail (Keystore/decryption). Fail safe to signed-out with a
+        // message naming secure storage: never crash, never fall back to plain storage.
+        val hasToken = try {
+            auth.isSignedIn
+        } catch (e: Exception) {
+            _state.value = SessionState.SignedOut(notice = STORAGE_UNREADABLE_NOTICE)
+            return
+        }
+        if (!hasToken) {
             _state.value = SessionState.SignedOut()
             return
         }
@@ -62,13 +70,27 @@ class SessionController(private val auth: AuthRepository) {
             onFailure = { error ->
                 val failure = error as? AuthException
                 _state.value = if (failure?.isUnauthorized == true) {
-                    auth.forgetLocalSession()
+                    discardDeadToken()
                     SessionState.SignedOut(notice = SESSION_ENDED_NOTICE)
                 } else {
                     SessionState.Offline(offlineMessage(failure?.httpStatus))
                 }
             },
         )
+    }
+
+    /**
+     * The server said 401, so the token is dead. [AuthInterceptor] has normally
+     * cleared it already; only clear if it is still there. A failed clear must
+     * not stop the move to signed-out (that would crash-loop every launch while
+     * storage can't write): the next launch gets the same 401 and tries again.
+     */
+    private fun discardDeadToken() {
+        try {
+            if (auth.isSignedIn) auth.forgetLocalSession()
+        } catch (e: Exception) {
+            // Deliberately ignored; see above.
+        }
     }
 
     suspend fun login(email: String, password: String): Result<AuthenticatedUser> =
@@ -104,6 +126,8 @@ class SessionController(private val auth: AuthRepository) {
     }
 
     private companion object {
+        const val STORAGE_UNREADABLE_NOTICE =
+            "Couldn't read your saved session from secure storage on this device, so you're signed out. Sign in again."
         const val SESSION_ENDED_NOTICE = "Your session ended. Sign in again to continue."
         const val LOGOUT_INCOMPLETE_NOTICE =
             "Signed out, but this device couldn't remove your saved session. Restart the app and sign out again."

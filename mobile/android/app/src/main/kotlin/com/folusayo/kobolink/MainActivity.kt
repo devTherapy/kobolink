@@ -18,7 +18,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.folusayo.kobolink.api.ApiClientProvider
-import com.folusayo.kobolink.auth.SessionState
 import com.folusayo.kobolink.deeplink.parseLinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
 import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
@@ -33,7 +32,12 @@ import java.io.IOException
 import kotlinx.serialization.SerializationException
 
 /**
- * Entry point: a sign-in gate (M2) in front of the App Links flow (M1).
+ * Entry point. Two separate flows (docs/DESIGN-SPEC.md 4.3 and 11):
+ *
+ * - The payer's deep-link landing ([LinkLookupScreen]; M3 builds the checkout
+ *   there) is public. A link code, when present, shows it whether the session
+ *   is signed in, signed out, resolving or offline: [route] is the rule.
+ * - Merchant sign-in (M2) gates only [HomeScreen] and the wallet.
  *
  * `launchMode="singleTask"` (see AndroidManifest.xml) means a link tapped
  * while this activity is already on top delivers here via [onNewIntent]
@@ -41,11 +45,8 @@ import kotlinx.serialization.SerializationException
  * payment link twice from a chat app would stack two activities that both
  * think they're the current screen.
  *
- * Deep link + sign-in: the link code lives in [deepLinkCode], which is
- * independent of [SessionState] and is never consumed by the sign-in gate. A link
- * received while signed out therefore simply waits: the login screen shows,
- * and once the user is signed in the same code routes to [LinkLookupScreen].
- * Signed in with no pending link, the user lands on [HomeScreen].
+ * [deepLinkCode] is independent of the session. Back from the link screen
+ * clears it, landing on Home if signed in, otherwise on login.
  */
 class MainActivity : ComponentActivity() {
 
@@ -79,30 +80,27 @@ class MainActivity : ComponentActivity() {
             KobolinkTheme {
                 val session by viewModel.sessionState.collectAsState()
 
-                when (val current = session) {
-                    is SessionState.Resolving -> ResolvingScreen()
-                    is SessionState.Offline -> OfflineScreen(message = current.message, onRetry = viewModel::retry)
-                    is SessionState.SignedOut -> LoginScreen(
+                when (val destination = route(session, deepLinkCode)) {
+                    is Destination.Resolving -> ResolvingScreen()
+                    is Destination.Offline -> OfflineScreen(message = destination.message, onRetry = viewModel::retry)
+                    is Destination.Login -> LoginScreen(
                         login = viewModel::login,
                         // MainViewModel.login has already moved the session to SignedIn.
                         onLoginSuccess = {},
-                        notice = current.notice,
+                        notice = destination.notice,
                     )
-                    is SessionState.SignedIn -> {
-                        val code = deepLinkCode
-                        if (code != null) {
-                            BackHandler {
-                                viewModel.dismissedLinkCode = code
-                                deepLinkCode = null
-                            }
-                            LinkLookupScreen(resolveLink = ::resolvePublicLink, initialCode = code)
-                        } else {
-                            HomeScreen(
-                                user = current.user,
-                                fetchWallet = ::fetchWallet,
-                                onLogout = viewModel::logout,
-                            )
+                    is Destination.Home -> HomeScreen(
+                        user = destination.user,
+                        fetchWallet = ::fetchWallet,
+                        onLogout = viewModel::logout,
+                    )
+                    is Destination.Link -> {
+                        // Back leaves the link: to Home if signed in, otherwise to the login screen.
+                        BackHandler {
+                            viewModel.dismissedLinkCode = destination.code
+                            deepLinkCode = null
                         }
+                        LinkLookupScreen(resolveLink = ::resolvePublicLink, initialCode = destination.code)
                     }
                 }
             }

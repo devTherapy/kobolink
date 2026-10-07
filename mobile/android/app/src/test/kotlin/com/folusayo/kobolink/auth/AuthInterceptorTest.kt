@@ -150,6 +150,23 @@ class AuthInterceptorTest {
     }
 
     @Test
+    fun `an unreadable token store sends the request without a bearer instead of throwing`() {
+        server.enqueue(MockResponse().setResponseCode(200))
+        val unreadable = object : TokenStore {
+            override fun saveToken(token: String) = Unit
+            override fun token(): String? = throw SecurityException("Keystore unavailable")
+            override fun clear() = Unit
+        }
+        val client = clientFor(unreadable)
+
+        val response = client.newCall(Request.Builder().url(server.url("/api/auth/me")).build()).execute()
+        response.close()
+
+        assertEquals(200, response.code)
+        assertNull(server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
     fun `a late 401 for an old token does not clear a newer token`() {
         val store = FakeTokenStore("old-token")
         // Another sign-in lands while this request is in flight: by the time

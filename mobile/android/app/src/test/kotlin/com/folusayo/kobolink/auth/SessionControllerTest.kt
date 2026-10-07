@@ -89,6 +89,51 @@ class SessionControllerTest {
     }
 
     @Test
+    fun `a 401 on cold start whose local clear fails still signs out instead of crashing`() = runTest {
+        // clear() throws IOException when the commit fails; if that escaped resolve() the app would
+        // crash on every launch while storage can't write, stuck on Resolving.
+        val store = RecordingTokenStore(clearFailure = IOException("disk error")).also { it.saveToken("dead-token") }
+        val api = FakeAuthApi(meResponse = Response.error(401, jsonErrorBody("unauthenticated", "Session expired.")))
+        val (controller, _) = controllerWith(api, store)
+
+        controller.resolve()
+
+        val state = controller.state.value
+        assertTrue("expected SignedOut but was $state", state is SessionState.SignedOut)
+        assertTrue((state as SessionState.SignedOut).notice != null)
+    }
+
+    @Test
+    fun `a 401 on cold start does not clear again when the interceptor already did`() = runTest {
+        val store = signedInStore()
+        val api = FakeAuthApi(meResponse = Response.error(401, jsonErrorBody("unauthenticated", "Session expired.")))
+        api.onGetMe = { store.clear() } // AuthInterceptor clears the token on the 401, before the repository sees it
+        val (controller, _) = controllerWith(api, store)
+
+        controller.resolve()
+
+        assertEquals("the token was already gone; no second clear", 1, store.clearCalls)
+        assertTrue(controller.state.value is SessionState.SignedOut)
+    }
+
+    @Test
+    fun `an unreadable token store resolves to signed out naming secure storage, not a crash`() = runTest {
+        val store = RecordingTokenStore(readFailure = SecurityException("Keystore unavailable"))
+        val api = FakeAuthApi(meResponse = meSuccess())
+        val (controller, _) = controllerWith(api, store)
+
+        controller.resolve()
+
+        val state = controller.state.value
+        assertTrue("expected SignedOut but was $state", state is SessionState.SignedOut)
+        assertTrue(
+            "notice should name secure storage: ${(state as SessionState.SignedOut).notice}",
+            state.notice.orEmpty().contains("secure storage"),
+        )
+        assertEquals("no network call without a readable token", 0, api.getMeCalls)
+    }
+
+    @Test
     fun `retry from offline succeeds once the network is back`() = runTest {
         val api = FakeAuthApi(meThrows = IOException("down"))
         val (controller, store) = controllerWith(api, signedInStore())

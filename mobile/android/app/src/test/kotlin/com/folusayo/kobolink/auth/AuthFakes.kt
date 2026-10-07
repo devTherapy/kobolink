@@ -22,6 +22,7 @@ import retrofit2.Response
 internal class RecordingTokenStore(
     private val saveFailure: Exception? = null,
     private val clearFailure: Exception? = null,
+    private val readFailure: Exception? = null,
 ) : TokenStore {
     var saved: String? = null
         private set
@@ -33,7 +34,10 @@ internal class RecordingTokenStore(
         saved = token
     }
 
-    override fun token(): String? = saved
+    override fun token(): String? {
+        readFailure?.let { throw it }
+        return saved
+    }
 
     override fun clear() {
         clearCalls += 1
@@ -49,11 +53,14 @@ internal class FakeAuthApi(
     private val logoutThrows: Exception? = null,
 ) : AuthApi {
     var logoutCalled = false
+    /** Runs when `getMe()` is called, e.g. to play the part of [AuthInterceptor] clearing the token on the 401. */
+    var onGetMe: () -> Unit = {}
     var getMeCalls = 0
         private set
 
     override suspend fun getMe(): Response<MeResponse> {
         getMeCalls += 1
+        onGetMe()
         meThrows?.let { throw it }
         return meResponse ?: error("no getMe() stub configured")
     }
