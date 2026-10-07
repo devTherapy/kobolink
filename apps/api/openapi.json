@@ -669,6 +669,47 @@
         }
       }
     },
+    "/api/dashboard/stats": {
+      "get": {
+        "operationId": "getDashboardStats",
+        "summary": "The signed-in merchant's dashboard stat strip.",
+        "tags": [
+          "Dashboard"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The stat strip as of `asOf`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardStats"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error. Body is `ApiError`; see its `code` for the machine-readable reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Derived from the ledger on every call: `totalCollectedKobo`/`paymentCount` are the sum/count of the merchant's successful `link_payment` postings, and `activeLinks` counts links that resolve to `payable` at `asOf` (not rows with `status = active`). Read-only; no `Idempotency-Key`.\n\nRequires the merchant role: a signed-in customer gets `403` with `code: \"forbidden\"`, a missing or invalid credential `401` with `code: \"unauthenticated\"`.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/stream/dashboard": {
       "get": {
         "operationId": "streamDashboard",

@@ -70,13 +70,13 @@ describe('ROUTES vs. the controllers AppModule actually mounts', () => {
     expect(missing).toEqual([])
   })
 
-  it('mounts exactly the 18 routes this document describes, no more, no fewer', () => {
+  it('mounts exactly the 19 routes this document describes, no more, no fewer', () => {
     // A change to this number is either a new route (add it to ROUTES too)
     // or a route removed (delete its ROUTES entry) — never silent. B7
-    // documented 13, B8 added 4 wallet routes, and B6's SSE stream is the
-    // 18th.
-    expect(mounted).toHaveLength(18)
-    expect(ROUTES).toHaveLength(18)
+    // documented 13, B8 added 4 wallet routes, B6's SSE stream was the
+    // 18th and B9's `GET /api/dashboard/stats` the 19th.
+    expect(mounted).toHaveLength(19)
+    expect(ROUTES).toHaveLength(19)
   })
 
   it('agrees with the manifest on method, path and auth for every route, one by one', () => {
