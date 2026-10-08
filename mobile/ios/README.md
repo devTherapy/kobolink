@@ -372,6 +372,59 @@ has a metadata output for QR codes and no photo, movie or data output.
 Not done: top-up (the endpoint exists, the app has no way to add money yet), transfer to a contact, a recipient lookup,
 iPad, VoiceOver by ear, a physical device and a real camera.
 
+## Running against the real API
+
+Every other test here runs against a stub. This is the opt-in way to run the app, and its client, against the REAL
+`apps/api` and a real Postgres (feature X2). Nothing here is part of CI: it needs Docker, and the iOS job has no runner
+for it yet (GitHub macOS runners are a follow-up).
+
+```sh
+npm ci --ignore-scripts                       # once, at the repo root
+./scripts/ios-real-api-smoke.sh               # up + curl-level contract checks + down
+```
+
+`scripts/ios-real-api-smoke.sh` starts ONE container (`kobolink-x2-pg`, `postgres:17-alpine`, on `127.0.0.1` and a random
+port), runs the migrations, builds and starts `apps/api` (`node dist/main.js`) on a random free port, and runs the exact
+calls the iOS client makes (login as `client: mobile`, the payer's calls with no `Authorization`, the wallet, the
+idempotency replays, the refusals and their statuses, `Retry-After` on a 429, a paginated activity read) so a contract
+change the generated models cannot see (a header, a status code, a replay that stopped returning the stored body) fails
+here. Passwords and the database password are generated per run (`openssl rand`) and live only in a mode-700 state
+directory outside the repository. It removes only what it created (the container by that name, the API by its recorded
+PID, the state directory). Subcommands: `up`, `check`, `down`, `status`.
+
+The API's login limiter counts every register and every login, successful or not, against 20 per 15 minutes per IP,
+so give each run its own stack (`up` ... `down`) instead of repeating `check` against one.
+
+**The Swift suite.** `RealAPIIntegrationTests` runs the app's own client (`KobolinkAPIClient`, with the real
+`AuthMiddleware`) against the running API. It is skipped, and says why, unless `KOBOLINK_REAL_API` is set:
+
+```sh
+./scripts/ios-real-api-smoke.sh up            # prints the base URL
+KOBOLINK_REAL_API=http://localhost:<port> swift test --package-path mobile/ios/KobolinkKit --filter RealAPIIntegration
+./scripts/ios-real-api-smoke.sh down
+```
+
+**The app in the Simulator.** `up` prints `http://localhost:<port>`. Put it in `Config/Local.xcconfig` (gitignored; Debug
+only, and Debug already allows cleartext to localhost):
+
+```
+KOBOLINK_API_BASE_URL = http:/$()/localhost:<port>
+```
+
+then build and run as usual. Create users and links through the API (`POST /api/auth/register` with `"client":"mobile"`,
+`POST /api/links`, `POST /api/wallet/topup`), open links with `xcrun simctl openurl booted kobolink://l/<code>`, and
+sign in with what you registered. Useful against a real server and not against a stub: a payer email starting with
+`fail@` is declined by the simulated gateway; stopping the API (or a proxy in front of it) mid-payment shows the
+"couldn't confirm" states; `UPDATE sessions SET revoked_at = now()` in the container ends a session under a running app.
+
+`docs/x2-screenshots/` holds what the app looked like against the real server (iPhone 17 Simulator, iOS 26.3): sign-in
+rate limit, the wallet, a note-less send whose connection dropped after the server committed and its same-key replay,
+insufficient funds, paying, a decline, a disabled / expired / already-paid link, a link that expired before `verify`,
+Dark Mode, AX XXXL, and a cold start with the API down.
+
+`RealServerPayloadTests` is the hermetic twin: bodies the real server sent, captured in that run (invented names, ids and
+codes), decoded through the same client so a regression is caught without Docker.
+
 ## Generated models
 
 Nothing generated is checked in. Every build of `KobolinkAPI` runs `GenerateAPI`, which
