@@ -784,7 +784,7 @@ struct CheckoutBlockedStorageTests {
 
     @Test("a record that may already have been sent is never described as nothing having been sent")
     func blockedCopy() {
-        for block in [StorageBlock.unreadable, .undecodable, .undecodableClearFailed, .cannotClear] {
+        for block in [StorageBlock.unreadable, .undecodable, .undecodableClearFailed, .cannotClear, .obligationUnreadable, .resetFailed] {
             let notice = CheckoutCopy.storageBlocked(block)
             let words = [notice.heading, notice.body ?? "", notice.moneyLine, notice.nextStep].joined(separator: " ")
             #expect(!words.contains("Nothing was sent"), "\(block)")

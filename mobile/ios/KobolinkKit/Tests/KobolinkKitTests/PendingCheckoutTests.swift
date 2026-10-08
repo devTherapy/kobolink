@@ -42,37 +42,26 @@ struct PendingCheckoutCodecTests {
     }
 }
 
-@Suite("The owed cleanup")
-struct CleanupObligationTests {
-    private let cutoff = Date(timeIntervalSince1970: 1_790_000_000)
-    private var before: Date { cutoff.addingTimeInterval(-60) }
-    private var after: Date { cutoff.addingTimeInterval(60) }
-
-    @Test("sign-out removes every session attempt made up to the moment of sign-out, and never a payer's")
-    func allSession() {
-        let owed = CleanupObligation(scope: .allSession, cutoff: cutoff)
-        #expect(owed.removes(.session(userID: nil), createdAt: before))
-        #expect(owed.removes(.session(userID: "usr_one"), createdAt: cutoff))
-        #expect(!owed.removes(.payer, createdAt: before))
-        // A LATER session's attempt is not this obligation's to remove.
-        #expect(!owed.removes(.session(userID: "usr_two"), createdAt: after))
+@Suite("The owed sign-out cleanup")
+struct SignOutObligationTests {
+    @Test("it names attempts by link code and key, and an unreadable slot by its code alone")
+    func naming() {
+        let owed = SignOutObligation(entries: [.init(code: "aBcDeFgH", key: "key-1"), .init(code: "kLmNpQrS", key: nil)])
+        #expect(owed.contains(code: "aBcDeFgH", key: "key-1"))
+        #expect(owed.contains(code: "kLmNpQrS", key: nil))
+        // A LATER attempt on the same link has a key of its own: it is not named.
+        #expect(!owed.contains(code: "aBcDeFgH", key: "key-2"))
+        #expect(!owed.contains(code: "kLmNpQrS", key: "key-1"))
+        #expect(!owed.contains(code: "zzzzzzzz", key: nil))
     }
 
-    @Test("a confirmed user's cleanup removes other CONFIRMED users' attempts, never an unconfirmed one, never their own")
-    func foreign() {
-        let owed = CleanupObligation(scope: .foreign, userID: "usr_two", cutoff: cutoff)
-        #expect(owed.removes(.session(userID: "usr_one"), createdAt: before))
-        #expect(!owed.removes(.session(userID: "usr_two"), createdAt: before))
-        #expect(!owed.removes(.session(userID: nil), createdAt: before))
-        #expect(!owed.removes(.payer, createdAt: before))
-        #expect(!owed.removes(.session(userID: "usr_one"), createdAt: after))
-    }
-
-    @Test("it round-trips through JSON as whole seconds")
+    @Test("it round-trips through JSON, and holds no time")
     func codable() throws {
-        for owed in [CleanupObligation(scope: .allSession, cutoff: cutoff), CleanupObligation(scope: .foreign, userID: "usr_one", cutoff: cutoff)] {
-            #expect(try JSONDecoder().decode(CleanupObligation.self, from: JSONEncoder().encode(owed)) == owed)
-        }
+        let owed = SignOutObligation(entries: [.init(code: "aBcDeFgH", key: "key-1"), .init(code: "kLmNpQrS", key: nil)])
+        let data = try JSONEncoder().encode(owed)
+        #expect(try JSONDecoder().decode(SignOutObligation.self, from: data) == owed)
+        let text = String(decoding: data, as: UTF8.self).lowercased()
+        #expect(!text.contains("cutoff") && !text.contains("date") && !text.contains("time"))
     }
 }
 

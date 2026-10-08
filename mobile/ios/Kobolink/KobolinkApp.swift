@@ -33,6 +33,7 @@ struct KobolinkApp: App {
                 ownerNow: { session.attemptOwner }
             )
             session.onChange = { checkout.sessionDidChange($0) }
+            session.willSignOut = { checkout.prepareSignOut() }
             home = .ready(host: configuration.host, checker: ConnectionChecker(api: client), session: session, checkout: checkout)
         } catch {
             home = .misconfigured(error)

@@ -43,14 +43,6 @@ public final class CheckoutForm {
         errors = [:]
         resetCount += 1
     }
-
-    func fill(from request: InitializeRequest) {
-        name = request.payerName
-        email = request.payerEmail
-        amountText = Kobo.fieldText(request.amountKobo)
-        errors = [:]
-        resetCount += 1
-    }
 }
 
 /// What a `POST /api/checkout/initialize` answer lets the app conclude about the attempt it belongs to.
@@ -171,10 +163,13 @@ public final class CheckoutController {
     /// Keys whose request is in flight now.
     @ObservationIgnored private var inFlight: Set<String> = []
     @ObservationIgnored private var confirmedUserID: String?
-    /// A removal still owed (sign-out, a change of user) because it failed. It is written to storage before it is
-    /// attempted, loaded again by a new process before any slot is shown, and hides what it would remove until done.
-    @ObservationIgnored private var pendingCleanup: CleanupObligation?
+    /// What a sign-out still owes the device. It is written to storage BEFORE the sign-out, read again by a new
+    /// process BEFORE anything else a session event does (a merge or an adoption without it would overwrite or
+    /// relabel what it names), and hides what it names until the removal succeeds.
+    @ObservationIgnored private var owed: SignOutObligation?
     @ObservationIgnored private var obligationLoaded = false
+    /// Set when a sign-out could not be prepared in time: every session attempt is hidden until it can be.
+    @ObservationIgnored private var hideSessionAttempts = false
     /// A user whose adoption of unconfirmed attempts could not be saved; retried the next time a link is shown.
     @ObservationIgnored private var pendingAdoption: String?
 
@@ -340,12 +335,19 @@ public final class CheckoutController {
     /// Decide what `code` shows: its remembered attempt, a block, or a fresh lookup.
     private func present(_ code: LinkCode) {
         // What a previous process owed comes first: until it is known, no slot may be shown.
-        guard loadObligationOnce() else {
+        switch loadObligationOnce() {
+        case .ok:
+            break
+        case .unavailable:
             held = nil
             screen = .storageBlocked(code, .unreadable)
             return
+        case .undecodable:
+            held = nil
+            screen = .storageBlocked(code, .obligationUnreadable)
+            return
         }
-        if pendingCleanup != nil { runCleanup(nil) }
+        runOwed()
         if let user = pendingAdoption { adoptUnconfirmed(by: user) }
 
         let slot: PendingCheckout?
@@ -362,10 +364,21 @@ public final class CheckoutController {
             showLookup(code)
             return
         }
-        if let cleanup = pendingCleanup, cleanup.removes(slot.owner, createdAt: slot.createdAt) {
+        if isHidden(slot) {
             // An earlier session's attempt that could not be removed: never shown, never resumed.
             held = nil
             screen = .storageBlocked(code, .cannotClear)
+            return
+        }
+        if case .session(let id?) = slot.owner, let me = confirmedUserID, id != me {
+            // Another CONFIRMED user's attempt is never shown to this one: remove it, or if that fails, hide it.
+            held = nil
+            do throws(PendingStoreError) {
+                try store.remove(code)
+                showLookup(code)
+            } catch {
+                screen = .storageBlocked(code, .cannotClear)
+            }
             return
         }
 
@@ -604,6 +617,46 @@ public final class CheckoutController {
         }
     }
 
+    /// Asked by the session BEFORE it signs the person out. It writes down what the sign-out owes (every session
+    /// attempt and unreadable slot on the device, by identity) and returns `true` only when that is safely stored,
+    /// or when nothing is owed. `false` means the sign-out must not happen: a sign-out whose clearing could be
+    /// forgotten by a restart would show this person's attempt to whoever holds the phone.
+    public func prepareSignOut() -> Bool {
+        guard loadObligationOnce() == .ok else { return false }
+        let slots: [PendingSlot]
+        do throws(PendingStoreError) {
+            slots = try store.all()
+        } catch {
+            return false
+        }
+        var entries = owed?.entries ?? []
+        for slot in slots {
+            switch slot {
+            case .pending(let pending) where pending.owner.isSession:
+                entries.append(.init(code: pending.request.code.value, key: pending.key))
+            case .unreadable(let slotID):
+                entries.append(.init(code: slotID, key: nil))
+            case .pending:
+                break
+            }
+        }
+        var seen = Set<SignOutObligation.Entry>()
+        let unique = entries.filter { seen.insert($0).inserted }
+        guard !unique.isEmpty else {
+            hideSessionAttempts = false
+            return true
+        }
+        let obligation = SignOutObligation(entries: unique)
+        do throws(PendingStoreError) {
+            try store.saveObligation(obligation)
+        } catch {
+            return false
+        }
+        owed = obligation
+        hideSessionAttempts = false
+        return true
+    }
+
     /// React to a change in who is signed in; `AttemptOwner` states the rule.
     public func sessionDidChange(_ change: SessionChange) {
         switch change {
@@ -614,27 +667,45 @@ public final class CheckoutController {
         case .signedOutByChoice:
             confirmedUserID = nil
             pendingAdoption = nil
-            runCleanup(CleanupObligation(scope: .allSession, cutoff: now()))
+            // The session asked first (`prepareSignOut`), so this is normally a repeat. If it cannot be made safe
+            // now, every session attempt is hidden until it can be.
+            if !prepareSignOut() { hideSessionAttempts = true }
+            runOwed()
             resetOpenScreen()
 
         case .resolved(let user):
             let previous = confirmedUserID
             confirmedUserID = user.id
-            runCleanup(CleanupObligation(scope: .foreign, userID: user.id, cutoff: now()))
-            adoptUnconfirmed(by: user.id)
+            settle(after: user)
             if let previous, previous != user.id {
                 resetOpenScreen()
             }
 
         case .signedIn(let user):
-            // A sign-in NEVER drops an attempt whose owner was not confirmed: it may be the same person's, with
-            // an outcome nobody has seen, and forgetting it would let the form mint a second key. The person
-            // who signs in adopts it. Only attempts of a DIFFERENT confirmed user are removed.
+            // A sign-in NEVER drops an attempt whose owner was not confirmed: it may be the same person's, with an
+            // outcome nobody has seen, and forgetting it would let the form mint a second key. The person who signs
+            // in adopts it, unless a sign-out owes its removal. Only another CONFIRMED user's attempts are removed.
             confirmedUserID = user.id
-            runCleanup(CleanupObligation(scope: .foreign, userID: user.id, cutoff: now()))
-            adoptUnconfirmed(by: user.id)
+            settle(after: user)
             resetOpenScreen()
         }
+    }
+
+    /// What follows a confirmed user, in this order: what a previous sign-out owed is read FIRST (an adoption before
+    /// it would relabel an attempt it names), then carried out, then other users' attempts go, then the
+    /// unconfirmed ones are adopted. If the obligation cannot be read, nothing here proceeds, and adoption waits.
+    private func settle(after user: SignedInUser) {
+        guard loadObligationOnce() == .ok else {
+            pendingAdoption = user.id
+            return
+        }
+        runOwed()
+        if let slots = try? store.all() {
+            for case .pending(let pending) in slots {
+                if case .session(let id?) = pending.owner, id != user.id { try? store.remove(pending.request.code) }
+            }
+        }
+        adoptUnconfirmed(by: user.id)
     }
 
     /// Empty everything that belongs to the person who was here, and show the open link again as it looks
@@ -654,84 +725,94 @@ public final class CheckoutController {
         present(code)
     }
 
-    /// Whether the cleanup a previous process owed has been read. A throw is "could not find out", and then no
-    /// slot is shown at all: guessing "nothing owed" could show a signed-out merchant's attempt.
-    private func loadObligationOnce() -> Bool {
-        if obligationLoaded { return true }
+    private enum ObligationRead { case ok, unavailable, undecodable }
+
+    /// Reads what a previous process owed. A throw is "could not find out", and then no slot is shown and nothing is
+    /// merged or saved: guessing "nothing owed" could show a signed-out person's attempt, or overwrite the record.
+    private func loadObligationOnce() -> ObligationRead {
+        if obligationLoaded { return .ok }
         do throws(PendingStoreError) {
-            if let owed = try store.loadObligation() { pendingCleanup = Self.merged(pendingCleanup, owed) }
+            owed = try store.loadObligation()
             obligationLoaded = true
-            return true
+            return .ok
         } catch {
-            return false
+            return error.kind == .undecodable ? .undecodable : .unavailable
         }
     }
 
-    /// A sign-out supersedes any narrower cleanup that is waiting; otherwise the newer one wins.
-    private static func merged(_ existing: CleanupObligation?, _ new: CleanupObligation) -> CleanupObligation {
-        guard let existing else { return new }
-        if existing.scope == .allSession && new.scope == .foreign { return existing }
-        return new
+    /// Is this attempt one a sign-out owes the removal of (or one hidden because a sign-out could not be prepared)?
+    private func isHidden(_ pending: PendingCheckout) -> Bool {
+        if owed?.contains(code: pending.request.code.value, key: pending.key) == true { return true }
+        return hideSessionAttempts && pending.owner.isSession
     }
 
-    /// Remove what `cleanup` names, or (with nil) what is still owed. The obligation is written to storage
-    /// BEFORE the removal is attempted and taken back when it is done, so a restart cannot forget it. A removal
-    /// that fails is remembered and hides what it could not remove (`present`) until a later attempt succeeds:
-    /// it is never swallowed.
-    private func runCleanup(_ cleanup: CleanupObligation?) {
-        let target: CleanupObligation
-        if let cleanup {
-            target = Self.merged(pendingCleanup, cleanup)
-            // Best effort here: if this cannot be written the removal is still attempted now, and an
-            // obligation in memory keeps hiding what fails.
-            try? store.saveObligation(target)
-            pendingCleanup = target
-        } else if let waiting = pendingCleanup {
-            target = waiting
-        } else {
-            return
-        }
-
-        var complete = true
+    /// Remove what a sign-out owes. A removal that fails leaves the obligation in place (it keeps hiding what it
+    /// names); it is never swallowed.
+    private func runOwed() {
+        guard let current = owed else { return }
         let slots: [PendingSlot]
         do throws(PendingStoreError) {
             slots = try store.all()
         } catch {
             return
         }
+        var complete = true
         for slot in slots {
             switch slot {
-            case .pending(let pending) where target.removes(pending.owner, createdAt: pending.createdAt):
+            case .pending(let pending) where current.contains(code: pending.request.code.value, key: pending.key):
                 do throws(PendingStoreError) {
                     try store.remove(pending.request.code)
                     inFlight.remove(pending.key)
                 } catch {
                     complete = false
                 }
-            case .unreadable(let slotID):
-                // Cannot tell whose it is. Sign-out clears it; other cleanups leave it for the block that
-                // offers the person a way to remove it.
-                if target.scope == .allSession {
-                    do throws(PendingStoreError) {
-                        try store.remove(slotID: slotID)
-                    } catch {
-                        complete = false
-                    }
+            case .unreadable(let slotID) where current.contains(code: slotID, key: nil):
+                do throws(PendingStoreError) {
+                    try store.remove(slotID: slotID)
+                } catch {
+                    complete = false
                 }
-            case .pending:
+            default:
                 break
             }
         }
         guard complete else { return }
-        pendingCleanup = nil
-        // If the marker cannot be taken back, the next process runs the same cleanup again: it is bounded by its
-        // cutoff, so it can only remove what it owed.
+        owed = nil
+        // If the marker cannot be taken back it names attempts that are gone (keys are never reused), so the next
+        // process finds nothing to remove and tries again.
         try? store.clearObligation()
     }
 
+    /// The safe exit when the record of what a sign-out owes cannot be read: forget EVERY payment saved on this
+    /// iPhone and the record itself, after the person confirmed ("If you already paid, check with the merchant
+    /// first"). If storage will not let go, nothing changes and the screen says so.
+    public func resetCheckoutData() {
+        guard case .storageBlocked(let code, let block) = screen, block == .obligationUnreadable || block == .resetFailed else { return }
+        do throws(PendingStoreError) {
+            for slot in try store.all() {
+                switch slot {
+                case .pending(let pending): try store.remove(pending.request.code)
+                case .unreadable(let slotID): try store.remove(slotID: slotID)
+                }
+            }
+            try store.clearObligation()
+        } catch {
+            screen = .storageBlocked(code, .resetFailed)
+            return
+        }
+        owed = nil
+        obligationLoaded = true
+        hideSessionAttempts = false
+        pendingAdoption = nil
+        inFlight = []
+        form.reset()
+        held = nil
+        present(code)
+    }
+
     /// The check, or a sign-in, confirmed whose session this is: attempts made before it finished get their
-    /// owner. An attempt that cannot be saved with its new owner is KEPT (never dropped, never swallowed) and
-    /// adoption is retried the next time a link is shown.
+    /// owner, except those a sign-out owes the removal of. An attempt that cannot be saved with its new owner is
+    /// KEPT (never dropped, never swallowed) and adoption is retried the next time a link is shown.
     private func adoptUnconfirmed(by userID: String) {
         pendingAdoption = nil
         let slots: [PendingSlot]
@@ -741,7 +822,7 @@ public final class CheckoutController {
             pendingAdoption = userID
             return
         }
-        for case .pending(var pending) in slots where pending.owner == .session(userID: nil) {
+        for case .pending(var pending) in slots where pending.owner == .session(userID: nil) && !isHidden(pending) {
             pending.owner = .session(userID: userID)
             do throws(PendingStoreError) {
                 try store.save(pending)

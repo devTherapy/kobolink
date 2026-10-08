@@ -225,22 +225,32 @@ checks 100+ formatting and 600+ parsing inputs against contracts' own answers
 
 **Ownership** (`AttemptOwner`, the one rule): an attempt made with no stored session is a payer's; one
 made with a session (signed in, `resolving` or `offline`) belongs to that session, with the user id filled in
-once `/me` confirms it. Explicit sign-out (confirmed first when a session attempt exists) removes every
-session attempt and empties the form fields; a confirmed different user removes the other CONFIRMED
-users' attempts and empties the form; the check, and a sign-in, adopt every unconfirmed attempt for the user
-they confirm (a sign-in never drops one: it may be the same person's, outcome unknown, and forgetting it
-would mint a second key; an adoption that cannot be saved keeps the attempt and is retried); an involuntary
-401 removes nothing. A removal that fails is never swallowed: the obligation is written to the Keychain
-BEFORE the removal is attempted and taken back when it is done, a new process reads it before any slot is
-shown (if it cannot be read, no link opens), and what could not be removed is hidden (`storageBlocked`) until a
-later attempt succeeds. The obligation carries a cutoff, so it can only remove attempts made before it arose.
+once `/me` confirms it. The check and a sign-in ADOPT every unconfirmed attempt for the user they confirm (a
+sign-in never drops one: it may be the same person's, outcome unknown, and forgetting it would mint a second
+key); only another CONFIRMED user's attempts are removed, and that is derived again from the session at every
+launch, so it needs no record. An involuntary 401 removes nothing.
+
+Sign-out is the one thing that owes the device a removal, and it is gated. Before the session changes anything,
+`SessionController.signOut` asks `CheckoutController.prepareSignOut`, which writes a `SignOutObligation` to the
+Keychain naming every session attempt (and unreadable slot) on the device by link code and idempotency key. If
+that cannot be written (or the device's attempts cannot be listed, or an earlier obligation cannot be read) the
+sign-out DOES NOT HAPPEN: the person stays signed in with the token kept, and the app says "Couldn't sign out
+safely". Naming attempts by key, not by a time, means a leftover obligation can never remove a later session's
+attempt, whatever the clock says. The sign-out then removes what it named and takes the record back; a
+removal that fails leaves the record, and what it names is hidden (`storageBlocked`) until it succeeds. A new
+process reads the record BEFORE anything else a session event does: an adoption or a merge that ran first would
+relabel or overwrite what it names. A record this build cannot read blocks every link, and the only way out
+that cannot risk a second key is "Reset Checkout Data" (confirmed: "If you already paid, check with the
+merchant first"), which forgets every payment saved on the device.
+
 A stored name or email is never shown on any screen: `AttemptScreen` has no field for them, "Start a New
 Payment" opens an empty form, and `CheckoutPrivacyTests` checks every presented state; they are only sent
-again, in a same-key "Try Again". Known limits: a payer's slot is per device, so two payers on one phone
-share it (they see the amount, merchant and reference); a different merchant who signs in after an expiry
-adopts an unconfirmed attempt that was not theirs (it is shown as above, and their sign-out removes it); every
-slot survives a reinstall; a reusable link cannot be paid twice until `verify` (I4) settles the first, except
-through "Start a New Payment".
+again, in a same-key "Try Again". The words are neutral about who started a payment ("A payment on this iPhone
+was started and not finished"): a different merchant who signs in after an expiry adopts an unconfirmed attempt
+that was not theirs. Known limits: a payer's slot is per device, so two payers on one phone share it (they see
+the amount, merchant and reference); every slot survives a reinstall; a reusable link cannot be paid twice until
+`verify` (I4) settles the first, except through "Start a New Payment"; if the obligation record cannot be
+taken back after a successful removal it names attempts that are gone, which keys make harmless.
 
 **Tests**: `swift test` in `KobolinkKit` (macOS, fast, 350+ tests) and the command under "Commands" (the
 Simulator, which also runs the hosted Keychain tests). Verification against a throwaway local stub API:

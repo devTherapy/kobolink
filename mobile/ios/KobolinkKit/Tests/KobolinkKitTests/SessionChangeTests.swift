@@ -95,6 +95,41 @@ struct SessionChangeTests {
         #expect(rig.changes.value.isEmpty)
     }
 
+    @Test("a sign-out the checkout cannot make safe does not happen: still signed in, token kept, nothing revoked, and it says so")
+    func signOutRefused() async throws {
+        let rig = Rig(token: Fixture.tokenA)
+        await rig.session.resolve()
+        rig.session.willSignOut = { false }
+        await rig.session.signOut()
+        #expect(rig.session.state == .signedIn(Fixture.user))
+        #expect(try rig.store.readToken() == Fixture.tokenA)
+        #expect(rig.session.signOutBlocked)
+        #expect(!rig.auth.calls.contains(.logout(Fixture.tokenA)))
+        #expect(rig.changes.value == [.resolved(Fixture.user)])
+        // Acknowledged, and allowed once it can be made safe.
+        rig.session.acknowledgeSignOutBlocked()
+        #expect(!rig.session.signOutBlocked)
+        rig.session.willSignOut = { true }
+        await rig.session.signOut()
+        #expect(rig.session.state == .signedOut(.userRequested))
+        #expect(!rig.session.signOutBlocked)
+        #expect(try rig.store.readToken() == nil)
+    }
+
+    @Test("the sign-out is asked about BEFORE the token is touched")
+    func askedFirst() async throws {
+        let rig = Rig(token: Fixture.tokenA)
+        await rig.session.resolve()
+        let seen = Captured<[String]>([])
+        let store = rig.store
+        rig.session.willSignOut = {
+            seen.value.append("token still stored: \((try? store.readToken()) != nil)")
+            return true
+        }
+        await rig.session.signOut()
+        #expect(seen.value == ["token still stored: true"])
+    }
+
     @Test("who a new attempt belongs to follows the session state")
     func attemptOwner() async throws {
         let rig = Rig(token: Fixture.tokenA)

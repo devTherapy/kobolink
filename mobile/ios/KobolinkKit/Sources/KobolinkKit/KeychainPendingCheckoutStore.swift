@@ -103,7 +103,7 @@ public struct KeychainPendingCheckoutStore: PendingCheckoutStore {
         ]
     }
 
-    public func loadObligation() throws(PendingStoreError) -> CleanupObligation? {
+    public func loadObligation() throws(PendingStoreError) -> SignOutObligation? {
         var query = obligationIdentity
         query[kSecReturnData] = kCFBooleanTrue
         query[kSecMatchLimit] = kSecMatchLimitOne
@@ -111,7 +111,7 @@ public struct KeychainPendingCheckoutStore: PendingCheckoutStore {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data, let obligation = try? JSONDecoder().decode(CleanupObligation.self, from: data) else {
+            guard let data = result as? Data, let obligation = try? JSONDecoder().decode(SignOutObligation.self, from: data) else {
                 // Something is there that cannot be read: owed, and not known what. The caller must not read it as "nothing".
                 throw PendingStoreError(operation: .obligation, kind: .undecodable, status: status)
             }
@@ -123,7 +123,7 @@ public struct KeychainPendingCheckoutStore: PendingCheckoutStore {
         }
     }
 
-    public func saveObligation(_ obligation: CleanupObligation) throws(PendingStoreError) {
+    public func saveObligation(_ obligation: SignOutObligation) throws(PendingStoreError) {
         let data: Data
         do { data = try JSONEncoder().encode(obligation) } catch { throw PendingStoreError(operation: .obligation, kind: .undecodable) }
         let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

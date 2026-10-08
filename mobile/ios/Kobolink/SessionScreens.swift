@@ -32,7 +32,15 @@ struct SessionScreen: View {
             Button("Sign Out", role: .destructive, action: signOut)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("A payment you started and haven't finished will be forgotten on this iPhone. If you already paid, check with the merchant first.")
+            Text(CheckoutCopy.signOutWarning)
+        }
+        .alert(
+            CheckoutCopy.signOutBlockedTitle,
+            isPresented: Binding(get: { session.signOutBlocked }, set: { if !$0 { session.acknowledgeSignOutBlocked() } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(CheckoutCopy.signOutBlocked)
         }
     }
 

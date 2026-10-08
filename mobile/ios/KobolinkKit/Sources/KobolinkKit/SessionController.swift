@@ -98,6 +98,15 @@ public final class SessionController: SigningIn {
     /// per-user state.
     @ObservationIgnored public var onChange: (@MainActor (SessionChange) -> Void)?
 
+    /// Asked BEFORE a chosen sign-out changes anything. `false` means per-user state could not be made safe to
+    /// forget (its clearing could be lost by a restart), so the person stays signed in and `signOutBlocked` says so.
+    @ObservationIgnored public var willSignOut: (@MainActor () -> Bool)?
+
+    /// A chosen sign-out was refused by `willSignOut`. The token is kept and nothing was revoked.
+    public private(set) var signOutBlocked = false
+
+    public func acknowledgeSignOutBlocked() { signOutBlocked = false }
+
     @ObservationIgnored private let auth: any AuthServing
     @ObservationIgnored private let store: any TokenStore
     @ObservationIgnored private let installMarker: any InstallMarker
@@ -259,6 +268,11 @@ public final class SessionController: SigningIn {
     /// Explicit sign-out. The token is removed and the state leaves `signedIn` before the network is
     /// touched; the revoke that follows is best effort and cannot keep the person signed in.
     public func signOut() async {
+        if let willSignOut, !willSignOut() {
+            signOutBlocked = true
+            return
+        }
+        signOutBlocked = false
         epoch += 1
         let token = try? store.readToken()
         do throws(TokenStoreError) {

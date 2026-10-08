@@ -266,17 +266,26 @@ struct StorageBlockedView: View {
             symbol: "lock.slash", symbolStyle: Color.warningText, notice: CheckoutCopy.storageBlocked(block),
             actions: actions
         )
-        .alert(CheckoutCopy.startOverTitle(), isPresented: $confirmingClear) {
+        .alert(isReset ? CheckoutCopy.resetTitle : CheckoutCopy.startOverTitle(), isPresented: $confirmingClear) {
             Button("Cancel", role: .cancel) {}
-            Button("Start a New Payment", role: .destructive) { checkout.startOver() }
+            if isReset {
+                Button("Reset Checkout Data", role: .destructive) { checkout.resetCheckoutData() }
+            } else {
+                Button("Start a New Payment", role: .destructive) { checkout.startOver() }
+            }
         } message: {
-            Text("This forgets the unreadable payment saved on this iPhone. If you already paid, check with the merchant first.")
+            Text(isReset
+                ? CheckoutCopy.resetMessage
+                : "This forgets the unreadable payment saved on this iPhone. If you already paid, check with the merchant first.")
         }
     }
+
+    private var isReset: Bool { block == .obligationUnreadable || block == .resetFailed }
 
     private var actions: [NoticeAction] {
         var list: [NoticeAction] = [.init("Try Again", .prominent, checkout.reload)]
         if block == .undecodable || block == .undecodableClearFailed { list.append(.init("Start a New Payment", .destructive) { confirmingClear = true }) }
+        if isReset { list.append(.init("Reset Checkout Data", .destructive) { confirmingClear = true }) }
         list.append(.init("Done", .plain, onDone))
         return list
     }

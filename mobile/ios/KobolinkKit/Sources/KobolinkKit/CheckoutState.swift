@@ -45,6 +45,11 @@ public enum StorageBlock: Equatable, Sendable {
     case undecodable
     /// "Start a New Payment" was confirmed on an unreadable record and storage would not remove it: nothing changed.
     case undecodableClearFailed
+    /// The record of what a sign-out owes could not be read (it is there, and this build cannot make sense of it).
+    /// Nothing may be shown until it is known, so the only way out is to reset the checkout data on this device.
+    case obligationUnreadable
+    /// "Reset checkout data" was confirmed and storage would not let go: nothing changed.
+    case resetFailed
     /// A record belonging to an earlier session could not be removed, so it is not shown.
     case cannotClear
 }

@@ -105,6 +105,12 @@ public enum CheckoutCopy {
         case .cannotClear:
             body = "A payment saved on this iPhone by an earlier sign-in couldn't be removed, so it isn't shown here."
             nextStep = "Try again in a moment. Check with the merchant before paying again."
+        case .obligationUnreadable:
+            body = "Kobolink couldn't read the record of which saved payments to forget on this iPhone, so it can't tell which ones are safe to show."
+            nextStep = "Check with the merchant before paying again. Resetting checkout data forgets every payment saved on this iPhone."
+        case .resetFailed:
+            body = "This iPhone wouldn't let Kobolink finish forgetting the saved checkout data."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
         }
         return Notice(
             heading: "Can't open this payment yet", body: body,
@@ -124,7 +130,7 @@ public enum CheckoutCopy {
     public static func unsettledBody(_ reason: Unsettled) -> String {
         switch reason {
         case .interrupted:
-            return "This payment was started earlier and Kobolink never saw how it ended."
+            return "A payment on this iPhone was started earlier and Kobolink never saw how it ended."
         case .noConnection:
             return "Your iPhone lost its connection before Kobolink answered."
         case .serverProblem:
@@ -159,8 +165,22 @@ public enum CheckoutCopy {
 
     public static func startOverTitle() -> String { "Start a new payment?" }
 
+    /// Said before signing out when a payment was started on this iPhone and not finished. Neutral about WHO started
+    /// it: a different person may have adopted an attempt that was made before their session was known.
+    public static let signOutWarning =
+        "A payment on this iPhone was started and not finished. Signing out forgets it here. If you already paid, check with the merchant first."
+
+    /// The sign-out did not happen: what it must clear could not be written down first, so the person is still signed in.
+    public static let signOutBlockedTitle = "Couldn't sign out safely"
+    public static let signOutBlocked =
+        "Kobolink couldn't prepare this iPhone to forget the payments saved here, so you're still signed in. Try again in a moment."
+
+    public static let resetTitle = "Reset checkout data?"
+    public static let resetMessage =
+        "This forgets every payment saved on this iPhone, and anything a sign-out still owed. If you already paid, check with the merchant first."
+
     public static func startOverMessage(reference: String?, merchant: String) -> String {
-        let what = reference.map { "payment \($0)" } ?? "the payment you started"
+        let what = reference.map { "payment \($0)" } ?? "the unfinished payment"
         return "This forgets \(what) on this iPhone and starts again. If you already paid, check with \(merchant) first."
     }
 

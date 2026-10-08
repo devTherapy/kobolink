@@ -166,6 +166,17 @@ struct CheckoutRig {
     let controller: CheckoutController
     /// What `ownerNow` answers; a test changes it to model the session moving on.
     let owner: OwnerBox
+    /// The wall clock the controller sees; a test moves it, backwards too.
+    let clock = ClockBox()
+
+    final class ClockBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seconds = 1_790_000_000
+        var value: Date {
+            get { lock.lock(); defer { lock.unlock() }; return Date(timeIntervalSince1970: TimeInterval(seconds)) }
+            set { lock.lock(); defer { lock.unlock() }; seconds = Int(newValue.timeIntervalSince1970) }
+        }
+    }
 
     final class OwnerBox: @unchecked Sendable {
         var value: AttemptOwner = .payer
@@ -177,12 +188,13 @@ struct CheckoutRig {
         box.value = owner
         self.owner = box
         let keys = self.keys
+        let clock = self.clock
         controller = CheckoutController(
             service: service,
             store: store,
             ownerNow: { box.value },
             makeKey: { keys.make() },
-            now: { Date(timeIntervalSince1970: 1_790_000_000) }
+            now: { clock.value }
         )
     }
 
