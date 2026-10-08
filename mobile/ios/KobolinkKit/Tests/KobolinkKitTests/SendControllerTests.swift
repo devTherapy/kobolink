@@ -248,8 +248,8 @@ struct SendUnknownOutcomeTests {
         rig.startPayment()
         // `sending` is on screen; a success lands, then a stale unsettled result for the same attempt arrives.
         guard let attempt = rig.attemptOnScreen else { Issue.record("not sending"); return }
-        rig.send.apply(.success(WK.receipt()), attempt: attempt, firstEverSend: true, sentIn: 0)
-        rig.send.apply(.failure(WK.offline), attempt: attempt, firstEverSend: false, sentIn: 0)
+        rig.send.apply(.success(WK.receipt()), attempt: attempt, firstEverSend: true)
+        rig.send.apply(.failure(WK.offline), attempt: attempt, firstEverSend: false)
         #expect(rig.isSent)
     }
 }

@@ -215,6 +215,23 @@ struct WalletSessionTests {
         #expect(rig.store.snapshot.isEmpty)
     }
 
+    @Test("user A's request in the air, user B signs in and out of the picture, A is back: the answer lands for A, not a spinner")
+    func backAfterSomeoneElse() async {
+        let rig = WalletRig()
+        let gate = Gate()
+        rig.service.queueTransfer(.success(WK.receipt()), gate: gate)
+        rig.startPayment()
+        #expect(await waitUntil { rig.service.sends.count == 1 })
+        rig.wallet.sessionDidChange(.ended)
+        rig.wallet.sessionDidChange(.signedIn(WK.userTwo))
+        #expect(rig.send.screen == .idle)
+        rig.wallet.sessionDidChange(.signedIn(WK.userOne))
+        guard case .sending = rig.send.screen else { Issue.record("\(rig.send.screen)"); return }
+        gate.open()
+        #expect(await waitUntil { rig.isSent })
+        #expect(rig.store.snapshot.isEmpty)
+    }
+
     // MARK: An involuntary end
 
     @Test("an involuntary end forgets nothing: the payment stays, and the same user signing in gets it back")

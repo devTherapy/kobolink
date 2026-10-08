@@ -20,10 +20,12 @@ import Observation
 /// - No silent retry: one `transfer` call per send, and `KobolinkAPIClient` never resends a POST.
 ///
 /// ## Latest wins
-/// `epoch` is bumped whenever the person who was here is forgotten (a sign-out, a different user). A reply carries
-/// the epoch it was sent in; one from before reaches neither the screen nor the home (a previous user's balance is
-/// never written back). Its effect on STORAGE is by identity instead: it only updates or removes the slot that
-/// still holds its own key, so a late answer cannot bring back an attempt that sign-out removed.
+/// A reply is applied to the SCREEN and the HOME only while the screen still shows its own attempt (`apply`). A
+/// sign-out or a different user empties the screen (`forgetMemory`), so a late reply reaches neither it nor the home
+/// (a previous user's balance is never written back). Its effect on STORAGE is by identity: it only updates or
+/// removes the slot that still holds its own key, so a late answer cannot bring back an attempt that sign-out
+/// removed. The same person coming back after an involuntary end finds the attempt on screen again, and the answer
+/// lands instead of leaving a spinner.
 ///
 /// ## Sign-out
 /// See `prepareSignOut`. A sign-out is the one thing that removes an unresolved payment from the device, it is gated
@@ -50,7 +52,6 @@ public final class SendController {
     @ObservationIgnored public var onInsufficientFunds: (@MainActor () -> Void)?
 
     @ObservationIgnored private var boundUserID: String?
-    @ObservationIgnored private var epoch = 0
     /// Keys whose request is in flight now.
     @ObservationIgnored private var inFlight: Set<String> = []
     /// What a sign-out still owes the device. Written BEFORE the sign-out, read again by a new process BEFORE anything
@@ -212,7 +213,6 @@ public final class SendController {
     }
 
     private func send(_ attempt: TransferAttempt, firstEverSend: Bool) {
-        let sentIn = epoch
         inFlight.insert(attempt.key)
         let service = self.service
         // Unstructured on purpose: leaving the screen must not cancel a payment request half way, because then the
@@ -224,22 +224,21 @@ public final class SendController {
             } catch {
                 result = .failure(error)
             }
-            self?.apply(result, attempt: attempt, firstEverSend: firstEverSend, sentIn: sentIn)
+            self?.apply(result, attempt: attempt, firstEverSend: firstEverSend)
         }
     }
 
-    func apply(_ result: Result<TransferReceipt, APIError>, attempt: TransferAttempt, firstEverSend: Bool, sentIn: Int) {
+    func apply(_ result: Result<TransferReceipt, APIError>, attempt: TransferAttempt, firstEverSend: Bool) {
         inFlight.remove(attempt.key)
         let verdict = TransferVerdict.of(result, instruction: attempt.instruction, firstEverSend: firstEverSend)
-        // Nobody was forgotten since this left: the person who sent it is still the person here.
-        let sameScope = sentIn == epoch
-        // Does the screen still show THIS payment?
+        // Does the screen still show THIS payment? After a sign-out or a different user the screen was emptied and
+        // shows nothing of it, so the answer reaches neither the screen nor the home. When the same person is
+        // back (an involuntary end, then a sign-in) the screen shows it again, and the answer lands.
         let showing = screen.unresolvedAttempt?.key == attempt.key
 
         switch verdict {
         case .sent(let receipt):
             removeSlot(for: attempt)
-            guard sameScope else { return }
             if unresolved?.key == attempt.key { unresolved = nil }
             guard showing else { return }
             screen = .sent(attempt, receipt, replayed: !firstEverSend)
@@ -247,7 +246,6 @@ public final class SendController {
 
         case .settled(let failure):
             removeSlot(for: attempt)
-            guard sameScope else { return }
             if unresolved?.key == attempt.key { unresolved = nil }
             guard showing else { return }
             if case .invalidDetails(_, let fields) = failure { form.errors = fields }
@@ -257,7 +255,7 @@ public final class SendController {
         case .unsettled(let failure):
             // The attempt and its key stay, whoever is looking. A late "could not confirm" never takes back an
             // answer that has already arrived.
-            guard sameScope, showing else { return }
+            guard showing else { return }
             screen = .failed(attempt, failure)
         }
     }
@@ -366,7 +364,6 @@ public final class SendController {
 
     /// Everything of the person who was here, gone from memory. Storage is a separate matter.
     private func forgetMemory() {
-        epoch += 1
         form.reset()
         screen = .idle
         unresolved = nil
