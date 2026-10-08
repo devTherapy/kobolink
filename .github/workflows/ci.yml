@@ -97,7 +97,8 @@ jobs:
     name: e2e
     runs-on: ubuntu-latest
     # A healthy run is about 3 minutes (browser install ~1, suite ~1). 30 let a
-    # hung install burn the whole budget twice; 15 still leaves headroom.
+    # hung install burn the whole budget twice; 15 still leaves headroom. The
+    # install steps' own timeouts cap their worst case at about 10 minutes.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -106,26 +107,79 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Install Playwright browsers (only once a workspace depends on it)
-        # Backstop for the loop below: two 4-minute attempts fit inside it.
-        timeout-minutes: 10
+      # The browser install used to be one `playwright install --with-deps`.
+      # Run logs (37659959816, 37665634080, 37708095347) put every stall in its
+      # apt half, downloading .debs from azure.archive.ubuntu.com, never in
+      # the ~190 MB cdn.playwright.dev download (4-7 s each time). So the two
+      # halves are separate steps, each with its own timeout and retry.
+      - name: Resolve Playwright version (empty until a workspace depends on it)
+        id: pw
         run: |
           if [ -d node_modules/@playwright/test ]; then
-            # The install is apt plus a ~190 MB download from cdn.playwright.dev
-            # and has hung with no output. `timeout` turns a hang into a failed
-            # attempt; one retry, then the step fails loudly (no third try, no
-            # `continue-on-error`).
-            for attempt in 1 2; do
-              if PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= timeout 240 npx playwright install --with-deps chromium; then
-                exit 0
-              fi
-              echo "::warning::playwright install attempt $attempt failed or timed out"
-            done
-            echo "::error::playwright install failed twice"
-            exit 1
+            echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
           else
             echo "no @playwright/test in the tree yet; skipping browser install"
           fi
+      # Keyed on the Playwright version: a new version means a new Chromium
+      # revision, anything else reuses the directory. Only the browser is
+      # cached. System packages live outside $HOME and are reinstalled.
+      - name: Cache Playwright browsers
+        if: steps.pw.outputs.version != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Install Chromium system dependencies
+        if: steps.pw.outputs.version != ''
+        # Backstop for the loop below: two 150 s attempts plus recovery.
+        timeout-minutes: 7
+        run: |
+          # Applies to every apt invocation, including the ones Playwright
+          # spawns. The default 120 s network timeout is what turned a slow
+          # azure.archive.ubuntu.com into a multi-minute stall; at 20 s apt
+          # fails over to archive.ubuntu.com (what the logs show it doing on
+          # the runs that eventually passed). The lock timeout makes a late
+          # straggler a wait instead of an instant exit 100.
+          sudo tee /etc/apt/apt.conf.d/99ci-hardening >/dev/null <<'APT'
+          Acquire::Retries "3";
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          Dpkg::Lock::Timeout "120";
+          APT
+          for attempt in 1 2; do
+            if sudo timeout --kill-after=15 150 env "PATH=$PATH" node_modules/.bin/playwright install-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::install-deps attempt $attempt failed or timed out"
+            # `timeout` kills the wrapper, not necessarily the apt-get it
+            # spawned: in run 37708095347 the orphan kept the dpkg lock and
+            # the retry died instantly with exit 100. Never retry on top of a
+            # half-killed apt: kill it, then finish any interrupted unpack.
+            sudo pkill -KILL -x apt-get || true
+            sudo pkill -KILL -x apt || true
+            sudo pkill -KILL -x dpkg || true
+            sleep 2
+            sudo dpkg --configure -a
+          done
+          echo "::error::playwright install-deps failed twice"
+          exit 1
+      - name: Download Chromium
+        if: steps.pw.outputs.version != ''
+        timeout-minutes: 6
+        run: |
+          # A cache hit makes this a quick no-op that still verifies the
+          # directory. The workflow-level PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          # is cleared for this step only.
+          export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=
+          for attempt in 1 2 3; do
+            if timeout --kill-after=10 90 node_modules/.bin/playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::chromium download attempt $attempt failed or timed out"
+            sleep $((attempt * 5))
+          done
+          echo "::error::chromium download failed three times"
+          exit 1
       - run: npm run test:e2e
       # `always()`, not `failure()`: a cancelled run (the hang case) still gets
       # its logs, and the stack logs (migrate, build-api, build-web, api, web)
