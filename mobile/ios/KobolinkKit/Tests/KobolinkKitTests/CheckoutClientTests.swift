@@ -13,6 +13,18 @@ private enum Wire {
         "status":"pending","createdAt":"2026-10-08T10:15:30.000Z"}
         """
 
+    /// `verify`'s 200: the wire `Payment`, which carries the payer's name and a masked email (the app drops both).
+    static func payment(
+        status: String = "success", moneyMoved: Bool = true, reason: String = "null",
+        reference: String = "kbl_aBcDeFgHjK", code: String = "aBcDeFgH", amount: String = "1850000"
+    ) -> String {
+        """
+        {"payment":{"reference":"\(reference)","code":"\(code)","amountKobo":\(amount),"currency":"NGN","status":"\(status)",\
+        "payerName":"Ngozi Okafor","payerEmail":"n***@example.test","createdAt":"2026-10-08T10:15:30.000Z",\
+        "completedAt":\(status == "success" ? "\"2026-10-08T10:15:31.000Z\"" : "null"),"failureReason":\(reason),"moneyMoved":\(moneyMoved)}}
+        """
+    }
+
     static func link(
         state: String = "payable", amount: String = "1850000", description: String = "\"Size 12\"", expiresAt: String = "null"
     ) -> String {
@@ -57,6 +69,148 @@ private struct Rig {
         } catch {
             return .failure(error)
         }
+    }
+
+    func verify(_ reference: String = CK.reference) async -> Result<VerifiedPayment, APIError> {
+        do throws(APIError) {
+            return .success(try await client.verifyCheckout(reference: reference, idempotencyKey: key))
+        } catch {
+            return .failure(error)
+        }
+    }
+}
+
+@Suite("Checkout client: verify on the wire")
+struct VerifyWireTests {
+    @Test("POSTs only the reference as JSON to /api/checkout/verify with the Idempotency-Key header")
+    func request() async throws {
+        let rig = Rig(.json(Wire.payment()))
+        _ = await rig.verify()
+        let sent = try #require(rig.sent.first)
+        #expect(sent.request.method == .post)
+        #expect(sent.request.path == "/api/checkout/verify")
+        #expect(sent.operationID == "verifyCheckout")
+        #expect(sent.request.headerFields[.init("Idempotency-Key")!] == key)
+        #expect(sent.request.headerFields[.contentType]?.hasPrefix("application/json") == true)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(sent.bodyText.utf8)) as? [String: Any])
+        #expect(json as NSDictionary == ["reference": "kbl_aBcDeFgHjK"] as NSDictionary)
+    }
+
+    @Test("verifyCheckout is a public operation: no Authorization header and no cookie, even with a merchant's token on the phone")
+    func noMerchantCredential() async throws {
+        let rig = Rig(.json(Wire.payment()), token: Fixture.tokenA)
+        _ = await rig.verify()
+        let sent = try #require(rig.sent.first)
+        #expect(sent.operationID == "verifyCheckout")
+        #expect(sent.request.headerFields[.authorization] == nil)
+        #expect(sent.request.headerFields[.cookie] == nil)
+        #expect(!sent.bodyText.contains(Fixture.tokenA.reveal()))
+        // ... and not on any other reply either: a 401 from a proxy does not make it a secured call.
+        let refused = Rig(.json(Payloads.apiError("unauthenticated", "Sign in."), status: 401), token: Fixture.tokenA)
+        _ = await refused.verify()
+        #expect(refused.sent.first?.request.headerFields[.authorization] == nil)
+    }
+
+    @Test("a 401 to verify is NOT reported as the merchant's session ending")
+    func unauthorisedIsNotASessionEnd() async {
+        let store = InMemoryTokenStore(token: Fixture.tokenA)
+        let rejected = Captured<Int>(0)
+        let relay = SessionRejectionRelay()
+        relay.handler = { _ in rejected.value += 1 }
+        let client = KobolinkAPIClient(
+            configuration: APIConfiguration(baseURL: URL(string: "https://pay.example.test")!),
+            transport: StubTransport.json(Payloads.apiError("unauthenticated", "Sign in."), status: 401),
+            middlewares: [AuthMiddleware(baseURL: URL(string: "https://pay.example.test")!, tokenStore: store, relay: relay)]
+        )
+        _ = try? await client.verifyCheckout(reference: CK.reference, idempotencyKey: key)
+        #expect(rejected.value == 0)
+    }
+
+    @Test("200 success is a paid payment: integer kobo, the reference, money moved; and no payer name or email is kept")
+    func success() async {
+        let result = await Rig(.json(Wire.payment())).verify()
+        guard case .success(let payment) = result else { Issue.record("\(result)"); return }
+        #expect(payment == VerifiedPayment(reference: CK.reference, code: CK.codeA, amountKobo: 1_850_000, status: .success, moneyMoved: true))
+        let described = String(describing: payment) + String(reflecting: payment)
+        #expect(!described.contains("Ngozi") && !described.contains("Okafor") && !described.contains("example.test"))
+    }
+
+    @Test("200 failed carries the reason and money not moved; a blank reason is none")
+    func failed() async {
+        let declined = await Rig(.json(Wire.payment(status: "failed", moneyMoved: false, reason: "\"Card declined by the simulated gateway.\""))).verify()
+        #expect(declined == .success(CK.declined))
+        let blank = await Rig(.json(Wire.payment(status: "failed", moneyMoved: false, reason: "\"  \""))).verify()
+        #expect(blank == .success(CK.payment(.failed)))
+        let none = await Rig(.json(Wire.payment(status: "failed", moneyMoved: false))).verify()
+        #expect(none == .success(CK.payment(.failed)))
+    }
+
+    @Test("200 pending is pending, with money not moved")
+    func pending() async {
+        #expect(await Rig(.json(Wire.payment(status: "pending", moneyMoved: false))).verify() == .success(CK.stillPending))
+    }
+
+    @Test("a reply that breaks the contract's invariant is unreadable, never a payment: money moved must equal status success")
+    func invariant() async {
+        for body in [
+            Wire.payment(status: "success", moneyMoved: false),
+            Wire.payment(status: "failed", moneyMoved: true, reason: "\"x\""),
+            Wire.payment(status: "pending", moneyMoved: true),
+        ] {
+            #expect(await Rig(.json(body)).verify() == .failure(.undecodableResponse), "\(body)")
+        }
+    }
+
+    @Test("a reference or code that is not one, a float amount, a status this build does not know: all unreadable")
+    func malformed() async {
+        for body in [
+            Wire.payment(reference: "kbl_short"),
+            Wire.payment(reference: "kbl_aBcDeFgH0K"),
+            Wire.payment(code: "short"),
+            Wire.payment(amount: "1850.5"),
+            Wire.payment(status: "refunded"),
+            "{}", "{\"payment\":null}", "not json",
+        ] {
+            #expect(await Rig(.json(body)).verify() == .failure(.undecodableResponse), "\(body)")
+        }
+    }
+
+    @Test("a 2xx other than 200 is not a payment, whatever its body")
+    func other2xx() async {
+        #expect(await Rig(.json(Wire.payment(), status: 201)).verify() == .failure(.undecodableResponse))
+        #expect(await Rig(.json(Wire.payment(), status: 202)).verify() == .failure(.undecodableResponse))
+    }
+
+    @Test("a redirect is an unexpected reply, and nothing is followed")
+    func redirect() async {
+        #expect(await Rig(.json(Payloads.apiError("not_found", "x", extra: ",\"moneyMoved\":false"), status: 302)).verify() == .failure(.unexpectedResponse(status: 302)))
+    }
+
+    @Test("an error page is an unexpected reply, a dropped connection is unreachable, and exactly ONE request is made")
+    func transportFailures() async {
+        let page = StubTransport(reply: .respond(status: 502, contentType: "text/html", body: "<html>Bad gateway</html>"))
+        #expect(await Rig(page).verify() == .failure(.unexpectedResponse(status: 502)))
+        for code in [URLError.Code.networkConnectionLost, .timedOut, .notConnectedToInternet] {
+            let rig = Rig(StubTransport(reply: .fail(URLError(code))))
+            #expect(await rig.verify() == .failure(.unreachable(code)))
+            #expect(rig.sent.count == 1)
+        }
+    }
+
+    @Test("a parsed not_found carries moneyMoved false; a 429 carries Retry-After; link_not_payable carries its state")
+    func refusals() async {
+        let notFound = Payloads.apiError("not_found", "No checkout with that reference.", extra: ",\"moneyMoved\":false")
+        guard case .failure(.server(let missing)) = await Rig(.json(notFound, status: 404)).verify() else { Issue.record("404"); return }
+        #expect(missing.code == .not_found && missing.status == 404 && missing.moneyMoved == false)
+
+        var limited = StubTransport.json(Payloads.apiError("rate_limited", "Slow down."), status: 429)
+        limited.responseHeaders = [.retryAfter: "30"]
+        guard case .failure(.server(let slow)) = await Rig(limited).verify() else { Issue.record("429"); return }
+        #expect(slow.retryAfterSeconds == 30)
+
+        let notPayable = Payloads.apiError("link_not_payable", "No.", extra: ",\"moneyMoved\":false,\"state\":\"already-paid\"")
+        guard case .failure(.server(let paid)) = await Rig(.json(notPayable, status: 409)).verify() else { Issue.record("409"); return }
+        #expect(paid.linkState == .already_hyphen_paid)
     }
 }
 

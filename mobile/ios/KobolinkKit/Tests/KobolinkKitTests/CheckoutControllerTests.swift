@@ -172,10 +172,10 @@ struct CheckoutPayTests {
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.attemptScreen == AttemptScreen(
             code: CK.codeA, merchantName: "Adebayo Stores", title: "Ankara Two-Piece Set",
-            amountKobo: 1_850_000, reference: CK.reference, phase: .started))
+            amountKobo: 1_850_000, reference: CK.reference, phase: .startedUnverified))
     }
 
     @Test("a reply about another payment is not 'Payment started'")
@@ -223,7 +223,7 @@ struct CheckoutKeyTests {
         let rig = await unsettledRig()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         let sends = rig.service.sends
         #expect(sends.count == 2)
         #expect(sends[0] == sends[1])
@@ -273,7 +273,7 @@ struct CheckoutKeyTests {
         #expect(again.service.lookups.isEmpty)
         again.service.queueInitialize(.success(CK.started()))
         again.controller.retry()
-        #expect(await waitUntil { again.attemptScreen?.phase == .started })
+        #expect(await waitUntil { again.attemptScreen?.phase == .startedUnverified })
         #expect(again.service.sends.first == rig.service.sends.first)
         #expect(again.keys.made == 0)
     }
@@ -287,7 +287,7 @@ struct CheckoutKeyTests {
         #expect(rig.service.lookups == [CK.codeA])
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.keys.made == 1)
     }
 
@@ -322,7 +322,7 @@ struct CheckoutKeyTests {
             // ... and the next retry still reuses the key.
             rig.service.queueInitialize(.success(CK.started()))
             rig.controller.retry()
-            #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+            #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
             #expect(Set(rig.service.sends.map(\.key)).count == 1, "\(refusal)")
             #expect(rig.keys.made == 1)
         }
@@ -396,7 +396,7 @@ struct CheckoutClearingTests {
         #expect(await waitUntil { rig.linkScreen?.pay == .priceChanged(newAmountKobo: 2_000_000) })
         rig.service.queueInitialize(.success(CK.started(amountKobo: 2_000_000)))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         let sends = rig.service.sends
         #expect(sends.count == 2)
         #expect(sends[0].key != sends[1].key)
@@ -433,7 +433,7 @@ struct CheckoutClearingTests {
         // The corrected form is a new attempt with a new key.
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(Set(rig.service.sends.map(\.key)).count == 2)
     }
 
@@ -521,39 +521,45 @@ struct CheckoutPersistenceTests {
         rig.store.heal()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
     }
 
-    @Test("the reference is stored with the attempt, and Back then re-tap shows the same 'Payment started'")
+    @Test("the reference is stored with the attempt, and Back then re-tap shows the same started payment (and asks verify again)")
     func startedSurvivesBack() async {
         let rig = CheckoutRig()
         await rig.openPayable()
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.store.snapshot.first?.reference == CK.reference)
         let before = rig.attemptScreen
         rig.controller.close()
         #expect(rig.controller.screen == .idle)
         rig.controller.open(CK.codeA)
-        #expect(rig.attemptScreen == before)
+        // Same payment, same reference and amount; it is being confirmed again, not started again.
+        #expect(rig.attemptScreen?.reference == before?.reference)
+        #expect(rig.attemptScreen?.amountKobo == before?.amountKobo)
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
+        #expect(rig.service.verifies.count == 2)
+        #expect(rig.service.sends.count == 1)
         #expect(rig.service.lookups.count == 1)
     }
 
-    @Test("a cold start finds 'Payment started' with the same reference, before any session has resolved")
+    @Test("a cold start finds the started payment with the same reference, before any session has resolved")
     func coldStartStarted() async {
         let rig = CheckoutRig(owner: .session(userID: nil))
         await rig.openPayable()
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
 
         // A new process: nobody is signed in or resolving as far as the checkout has been told.
         let cold = rig.relaunched()
         cold.controller.open(CK.codeA)
-        #expect(cold.attemptScreen?.phase == .started)
+        // Opening a started payment asks `verify` (nothing is scripted, so it cannot be confirmed): the reference is there at once.
+        #expect(cold.attemptScreen?.phase == .verifying(stillProcessing: false))
         #expect(cold.attemptScreen?.reference == CK.reference)
         #expect(cold.service.lookups.isEmpty)
     }
@@ -567,7 +573,7 @@ struct CheckoutPersistenceTests {
         rig.service.onSend = { _ in store.fail(.write) }
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.store.snapshot.first?.reference == nil)
         // Reopening cannot know the reference, so it is an interrupted attempt under the SAME key, and a retry gets it back.
         rig.controller.close()
@@ -576,7 +582,7 @@ struct CheckoutPersistenceTests {
         rig.store.heal()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.keys.made == 1)
         #expect(Set(rig.service.sends.map(\.key)).count == 1)
     }
@@ -637,7 +643,7 @@ struct CheckoutStartOverTests {
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        _ = await waitUntil { rig.attemptScreen?.phase == .started }
+        _ = await waitUntil { rig.attemptScreen?.phase == .startedUnverified }
         return rig
     }
 
@@ -692,7 +698,7 @@ struct CheckoutStartOverTests {
         rig.controller.startOver()
         #expect(rig.store.snapshot.count == 1)
         gate.open()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
     }
 
     @Test("the confirm text names the reference and tells the person to check with the merchant first")
@@ -737,12 +743,14 @@ struct CheckoutPrivacyTests {
         assertNoPayerDetails(rig, "interrupted")
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         assertNoPayerDetails(rig, "started")
         // A relaunch, and every way to a new form.
         let cold = rig.relaunched()
         cold.controller.open(CK.codeA)
         assertNoPayerDetails(cold, "cold start")
+        // Start over is not offered (or accepted) while the open payment is being confirmed.
+        #expect(await waitUntil { cold.attemptScreen?.phase == .startedUnverified })
         cold.service.queueLookup(.success(CK.lookup()))
         cold.controller.startOver()
         #expect(await waitUntil { cold.linkScreen != nil })
@@ -756,7 +764,7 @@ struct CheckoutPrivacyTests {
 
     @Test("the types a screen is made of have no place for a name or an email")
     func screenTypesHaveNoPayerFields() {
-        let mirror = Mirror(reflecting: AttemptScreen(code: CK.codeA, merchantName: "m", title: "t", amountKobo: 1, reference: nil, phase: .started))
+        let mirror = Mirror(reflecting: AttemptScreen(code: CK.codeA, merchantName: "m", title: "t", amountKobo: 1, reference: nil, phase: .sending))
         let names = Set(mirror.children.compactMap(\.label))
         #expect(names == ["code", "merchantName", "title", "amountKobo", "reference", "phase", "startOverFailed"])
     }
@@ -801,10 +809,10 @@ struct CheckoutBlockedStorageTests {
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         let stored = try #require(rig.store.snapshot.first)
         rig.controller.applyOutcome(.failure(CK.offline), context: .init(pending: stored, firstEverSend: false))
-        #expect(rig.attemptScreen?.phase == .started)
+        #expect(rig.attemptScreen?.phase == .startedUnverified)
         #expect(rig.attemptScreen?.reference == CK.reference)
     }
 
@@ -823,7 +831,7 @@ struct CheckoutBlockedStorageTests {
         rig.controller.retry()
         #expect(rig.service.sends.count == 1)
         gate.open()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.service.sends.count == 1)
     }
 }

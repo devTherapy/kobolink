@@ -13,4 +13,6 @@ extension Color {
     static let errorText = Color("ErrorText")
     /// A state to notice (a link switched off, a price that changed, a payment of unknown outcome).
     static let warningText = Color("WarningText")
+    /// A payment that went through. Green is a payment state and this is its only use: the brand accent is blue.
+    static let successText = Color("SuccessText")
 }

@@ -16,8 +16,11 @@ public enum CheckoutScreen: Equatable, Sendable {
     case storageBlocked(LinkCode, StorageBlock)
     /// The link, and whether it can be paid.
     case link(LinkScreen)
-    /// A payment attempt that is remembered for this link: started, or of unknown outcome.
+    /// A payment attempt that is remembered for this link and has no final answer yet: being sent or confirmed,
+    /// or of unknown outcome.
     case attempt(AttemptScreen)
+    /// How a payment ended, as the server decided it: paid, failed, or a link that could not take it.
+    case result(ResultScreen)
 
     public var code: LinkCode? {
         switch self {
@@ -25,6 +28,7 @@ public enum CheckoutScreen: Equatable, Sendable {
         case .loading(let code), .notFound(let code), .loadFailed(let code, _), .storageBlocked(let code, _): code
         case .link(let screen): screen.link.code
         case .attempt(let screen): screen.code
+        case .result(let screen): screen.code
         }
     }
 }
@@ -119,12 +123,61 @@ public struct AttemptScreen: Equatable, Sendable {
 }
 
 public enum AttemptPhase: Equatable, Sendable {
-    /// `initialize` answered with a reference.
-    case started
-    /// The same request is being sent again under the same key.
+    /// The request is being sent (the first send, or the same request again under the same key).
     case sending
-    /// The outcome is not known. "Try again" resends the SAME request under the SAME key.
+    /// The outcome of the SEND is not known, so there is no reference. "Try again" resends the SAME request
+    /// under the SAME key.
     case unsettled(Unsettled)
+    /// `initialize` answered with a reference and `verify` is being asked, or is about to be asked again.
+    /// `stillProcessing` is true after a `verify` answer that said the payment is not decided yet.
+    case verifying(stillProcessing: Bool)
+    /// There is a reference and `verify` has not given an answer that decides it. "Check Again" asks again; it
+    /// cannot start a second payment, because a reference is decided once.
+    case unconfirmed(Unconfirmed)
+}
+
+/// Why a started payment has no decided outcome yet. None of these says money did or did not move, except
+/// `stillProcessing`, which is the server saying the payment is not decided (and so no money has moved yet).
+public enum Unconfirmed: Equatable, Sendable {
+    /// The server answered `pending`, and the bounded automatic checks are used up.
+    case stillProcessing
+    /// No usable answer: offline, a timeout, a dropped connection, a TLS failure.
+    case noConnection
+    /// A 5xx or an error page.
+    case serverProblem
+    /// A 429.
+    case rateLimited(retryAfterSeconds: Int?)
+    /// An answer this version of the app cannot read, a redirect, a 401, or a reply about some other payment.
+    case unreadable
+    /// The server refused in a way that decides nothing about this payment (a refusal that applies to the
+    /// request, not to the checkout: a validation error, a replay mismatch).
+    case refused(message: String)
+}
+
+/// How a payment ended, and what to say about it. Shown from the attempt's slot, so it reads the same after
+/// Back, a relaunch and with no connection. It carries no name or email: there is nowhere to put them.
+public struct ResultScreen: Equatable, Sendable {
+    public var code: LinkCode
+    public var merchantName: String
+    public var title: String
+    public var amountKobo: Int
+    public var reference: String
+    public var result: PaymentResult
+    /// "Try Again" was pressed and storage would not let go of the finished payment: nothing changed.
+    public var actionFailed: Bool
+
+    public init(
+        code: LinkCode, merchantName: String, title: String, amountKobo: Int, reference: String,
+        result: PaymentResult, actionFailed: Bool = false
+    ) {
+        self.code = code
+        self.merchantName = merchantName
+        self.title = title
+        self.amountKobo = amountKobo
+        self.reference = reference
+        self.result = result
+        self.actionFailed = actionFailed
+    }
 }
 
 /// Why an attempt's outcome is unknown. None of these is proof the request did nothing.

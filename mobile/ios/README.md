@@ -181,7 +181,7 @@ KobolinkKit/Sources/KobolinkKit/
   CheckoutCopy.swift          every sentence; the non-payable deck is the web's, word for word
   PendingCheckout.swift       the persisted attempt, AttemptOwner, the store protocol and the in-memory store
   KeychainPendingCheckoutStore.swift   the real store
-Kobolink/CheckoutView.swift, CheckoutNotices.swift, Palette.swift   the screens
+Kobolink/CheckoutView.swift, CheckoutNotices.swift, AttemptView.swift, ResultView.swift, Palette.swift   the screens
 ```
 
 `RootView` follows the navigation stack's one link: when it arrives the checkout `open`s it, when Back or
@@ -203,13 +203,14 @@ checks 100+ formatting and 600+ parsing inputs against contracts' own answers
   to include) BEFORE the request leaves. If it cannot be written, nothing is sent and the screen says no
   money was taken (true: there is no earlier attempt).
 - One slot per link code per DEVICE, read by `open` before any session has resolved. Done, Back, a
-  relaunch and a process kill all show "Payment started" (same reference) or the interrupted attempt, and
+  relaunch and a process kill all show the started payment (same reference, being confirmed: "Verify and
+  results" below) or the interrupted attempt, and
   "Try Again" resends the SAME request under the SAME key. While an attempt exists the form is not shown,
   so its request cannot be edited under the old key. A new key is made only from the form, which is shown
   only when there is no slot: after a settled refusal (the link is then read afresh, so a changed price is
   seen first) or the person's confirmed "Start a New Payment" ("If you already paid, check with the
   merchant first"; a failed clear changes nothing and says so).
-- What settles an attempt (`SendVerdict`): a 201 (kept: `verify`, I4, settles it); `not_found`,
+- What settles an attempt (`SendVerdict`): a 201 (kept: `verify` settles it, I4); `not_found`,
   `link_not_payable`, `amount_mismatch` WITH `moneyMoved: false` and their own status (the only results
   `PaymentsService.decideInitialize` computes inside the idempotency layer, so they are the answer for that
   key whether first send or replay, and would be replayed forever); `validation_failed` on the very first
@@ -249,10 +250,48 @@ again, in a same-key "Try Again". The words are neutral about who started a paym
 was started and not finished"): a different merchant who signs in after an expiry adopts an unconfirmed attempt
 that was not theirs. Known limits: a payer's slot is per device, so two payers on one phone share it (they see
 the amount, merchant and reference); every slot survives a reinstall; a reusable link cannot be paid twice until
-`verify` (I4) settles the first, except through "Start a New Payment"; if the obligation record cannot be
-taken back after a successful removal it names attempts that are gone, which keys make harmless.
+`verify` has settled the first and the result has been seen, except through "Start a New Payment"; if the
+obligation record cannot be taken back after a successful removal it names attempts that are gone, which keys
+make harmless.
 
-**Tests**: `swift test` in `KobolinkKit` (macOS, fast, 350+ tests) and the command under "Commands" (the
+### Verify and results (I4)
+
+`initialize` gives a reference; `POST /api/checkout/verify` DECIDES the checkout (it is the call that posts to the
+ledger) and the app asks it right after `initialize` answers, whether or not the screen is still open, and again
+every time the link is opened with a started payment on it. A reference is decided once, under any key
+(`apps/api/test/checkout-verify.integration.test.ts`), so asking again can never post twice; each ask therefore
+carries a FRESH key (`makeVerifyKey`) and the key a payment was initialized under is never minted again.
+
+- **What decides** (`VerifyVerdict`, the one place): a `200` payment about THIS reference, link and amount that is
+  `success` with `moneyMoved: true`, or `failed` with `moneyMoved: false` (a reply that breaks that invariant is
+  unreadable, never a payment); or a `404 not_found` / `409 link_not_payable` that says `moneyMoved: false`.
+  Link states found at verify arrive as `failed` with the server's sentence in `failureReason` (`Link has expired`,
+  `Link is disabled`, `Link is already paid`); only those exact sentences are mapped to the link screens, anything
+  else is shown as the server's own words. Everything else (offline, 5xx, 429, a redirect, a 401, an unreadable
+  body, a validation error, a reply about another payment) decides NOTHING: the slot stays, the screen says
+  "We couldn't confirm your payment / We can't tell whether money moved" with Check Again, and "no money moved"
+  is never said. This is stricter than the web, which treats any error that says `moneyMoved: false` as a failure.
+- **Pending** (allowed by the contract, never sent by today's server) is re-asked after 2, 4 and 8 seconds and then
+  waits for the person ("Your payment is still processing", Check Again, another bounded round). Three automatic
+  checks, then a person; leaving the screen cancels the wait.
+- **The slot** is marked `settled` (written to the Keychain before the screen changes) when verify decides, and
+  REMOVED only when the result has been seen: Back, Done, opening another link, or Try Again. A kill between the
+  answer and the screen, or Back during the ask, still finds the result; a removal that fails only means it is shown
+  once more. A result is shown from the Keychain with no network call. Try Again (a payment that moved no money:
+  declined, link unavailable, no such checkout) removes the slot, reads the link afresh and opens an EMPTY form under
+  a NEW key; a paid payment cannot be started over.
+- **Screens**: `ResultView` (paid, failed, expired, disabled, already paid, no such payment) and `AttemptView`
+  (sending, unknown send, confirming, still processing, could not confirm). Words: the link states are the web's
+  `NON_PAYABLE_COPY`, paid/failed are the web's `PayForm`. Green is `SuccessText`, used for the paid check only.
+  Every result has a symbol and words, is announced (`AccessibilityNotification.Announcement`), and moves VoiceOver
+  focus to its heading; the reference can be copied. No receipt or PDF.
+- **Privacy**: the wire `Payment` carries the payer's name and masked email; `VerifiedPayment` and `ResultScreen`
+  have no field for them. Verify is a public operation: no token, checked by `AuthMiddlewareAllowListTests` and
+  `VerifyWireTests`.
+- **Not done**: a result is forgotten once dismissed (no history); VoiceOver speech was not exercised, only that the
+  announcements are posted.
+
+**Tests**: `swift test` in `KobolinkKit` (macOS, fast, 450+ tests) and the command under "Commands" (the
 Simulator, which also runs the hosted Keychain tests). Verification against a throwaway local stub API:
 point `KOBOLINK_API_BASE_URL` at it in `Config/Local.xcconfig`, then
 `xcrun simctl openurl booted 'kobolink://l/aBcDeFgH'`.
