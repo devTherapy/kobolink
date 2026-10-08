@@ -1,40 +1,27 @@
 import KobolinkKit
 import SwiftUI
 
-/// Where a deep link lands. The real checkout is feature I3; until then this
-/// shows which link was opened, and a clear state when the link is not one.
+/// Where a deep link lands: the checkout for a link, or a plain statement for a URL that is not one.
 struct LinkLandingView: View {
     let destination: LinkDestination
+    let home: RootView.Home
+    let onDone: () -> Void
 
     var body: some View {
-        Group {
-            switch destination {
-            case .link(let code):
-                LinkOpenedView(code: code)
-            case .invalid(let received):
-                InvalidLinkView(received: received)
+        switch destination {
+        case .link(let code):
+            switch home {
+            case .ready(_, _, _, let checkout):
+                CheckoutView(code: code, checkout: checkout, onDone: onDone)
+            case .misconfigured(let problem):
+                MisconfiguredView(problem: problem)
+                    .navigationTitle("Payment link")
+                    .navigationBarTitleDisplayMode(.inline)
             }
-        }
-        .navigationTitle("Payment link")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct LinkOpenedView: View {
-    let code: LinkCode
-
-    var body: some View {
-        List {
-            Section {
-                LabeledContent("Link code") {
-                    Text(code.value)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                        .speechSpellsOutCharacters()
-                }
-            } footer: {
-                Text("This link opened in Kobolink. Paying from the app is coming in a later update.")
-            }
+        case .invalid(let received):
+            InvalidLinkView(received: received)
+                .navigationTitle("Payment link")
+                .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
@@ -58,14 +45,8 @@ private struct InvalidLinkView: View {
     }
 }
 
-#Preview("Link") {
-    NavigationStack {
-        LinkLandingView(destination: .link(LinkCode("aBcDeFgH")!))
-    }
-}
-
 #Preview("Invalid") {
     NavigationStack {
-        LinkLandingView(destination: .invalid("kobolink://l/not-a-code"))
+        LinkLandingView(destination: .invalid("kobolink://l/not-a-code"), home: .misconfigured(.missing), onDone: {})
     }
 }

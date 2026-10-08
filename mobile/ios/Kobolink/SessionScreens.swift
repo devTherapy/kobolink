@@ -7,6 +7,8 @@ struct SessionScreen: View {
     let session: SessionController
     let host: String
     let checker: ConnectionChecker
+    let checkout: CheckoutController
+    @State private var confirmingSignOut = false
 
     var body: some View {
         Group {
@@ -17,15 +19,35 @@ struct SessionScreen: View {
                 LoginView(session: session, reason: reason)
             case .signedIn(let user):
                 // Keyed by the user, so a different person signing in never inherits this view's state.
-                HomeView(user: user, host: host, checker: checker, signOut: signOut)
+                HomeView(user: user, host: host, checker: checker, signOut: requestSignOut)
                     .id(user.id)
             case .offline(let message):
-                OfflineView(message: message, retry: retry, signOut: signOut)
+                OfflineView(message: message, retry: retry, signOut: requestSignOut)
             case .storageUnavailable:
                 StorageUnavailableView(retry: retry)
             }
         }
         .task { await session.resolve() }
+        .confirmationDialog("Sign out of Kobolink?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive, action: signOut)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(CheckoutCopy.signOutWarning)
+        }
+        .alert(
+            CheckoutCopy.signOutBlockedTitle,
+            isPresented: Binding(get: { session.signOutBlocked }, set: { if !$0 { session.acknowledgeSignOutBlocked() } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(CheckoutCopy.signOutBlocked)
+        }
+    }
+
+    /// Signing out forgets the payments this person started and has not finished, on this iPhone. Say so
+    /// first, rather than discarding one without a word.
+    private func requestSignOut() {
+        if checkout.hasSessionAttempts { confirmingSignOut = true } else { signOut() }
     }
 
     private func retry() {

@@ -46,7 +46,12 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
             ],
             // Written by Tools/generate-link-parser-cases.mjs from contracts' parseLinkCode.
-            resources: [.copy("Resources/link-parser-oracle.json")]
+            resources: [
+                .copy("Resources/link-parser-oracle.json"),
+                // Written by Tools/generate-money-cases.mjs and Tools/generate-payer-cases.mjs from contracts' own functions.
+                .copy("Resources/money-oracle.json"),
+                .copy("Resources/payer-oracle.json"),
+            ]
         ),
     ]
 )

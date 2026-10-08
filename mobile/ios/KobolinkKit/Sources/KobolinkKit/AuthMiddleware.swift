@@ -39,10 +39,16 @@ public final class SessionRejectionRelay: @unchecked Sendable {
 ///   built is used from the next call, and one cleared is not sent again.
 /// - It is attached only when the request goes to the configured API origin (scheme, host and port).
 ///   The client is shared; without this, a future call to another host would carry the session.
-/// - `login` and `registerUser` get no header: the person is presenting credentials, and an old,
-///   possibly dead, token must not ride along (and a 401 there means "wrong password", not "session ended").
-///   The public calls (`resolvePublicLink`, `getHealth`) get none either: a payer opening a link is
-///   not the merchant who happens to be signed in on the same phone.
+/// - ONLY the operations in `securedOperations` get a header. That is an allow-list, and everything
+///   else gets none: `login` and `registerUser` (the person is presenting credentials, and an old,
+///   possibly dead, token must not ride along; a 401 there means "wrong password", not "session ended"),
+///   and every public operation (`resolvePublicLink`, `initializeCheckout`, `verifyCheckout`,
+///   `getHealth`): a payer is not the merchant who happens to be signed in on the same phone, and a
+///   merchant's bearer token must never ride on a payer's payment. A deny-list failed open: a new public
+///   operation that nobody remembered to add to it carried the token. With an allow-list a new operation
+///   carries nothing until it is listed, and `AuthMiddlewareAllowListTests` compares the list with the
+///   `security` of every operation in `apps/api/openapi.json`, so a secured operation that is missing
+///   fails a test instead of failing in front of a merchant.
 /// - A store that cannot be read sends the request without a header. The server's 401 then reads as
 ///   a signed-out call; nothing throws on a networking thread.
 /// - A 401 to a request that carried a token calls `onRejected` with THAT token. The session layer
@@ -63,10 +69,15 @@ public struct AuthMiddleware: ClientMiddleware {
         }
     }
 
-    /// Operations that get no `Authorization` header: the person is presenting credentials instead of a
-    /// session (`login`, `registerUser`), or the call is public (a payer looks up a link, the health
-    /// check) and a merchant's token has no business on it. A new public operation belongs here.
-    static let withoutSession: Set<String> = ["login", "registerUser", "getHealth", "resolvePublicLink"]
+    /// The operations that carry the session token: exactly those the OpenAPI document gives a
+    /// `security` requirement (`sessionCookie` or `bearerAuth`). Anything not listed, including every
+    /// operation added to the API later, is sent without a credential.
+    static let securedOperations: Set<String> = [
+        "logout", "getMe",
+        "createLink", "listLinks", "getLink", "updateLinkStatus", "listLinkPayments",
+        "getDashboardStats", "streamDashboard",
+        "getWallet", "listWalletTransactions", "transferMoney", "topUpWallet",
+    ]
 
     private let tokens: any TokenStore
     private let origin: Origin?
@@ -100,7 +111,7 @@ public struct AuthMiddleware: ClientMiddleware {
         operationID: String,
         next: @Sendable (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
     ) async throws -> (HTTPResponse, HTTPBody?) {
-        guard !Self.withoutSession.contains(operationID),
+        guard Self.securedOperations.contains(operationID),
             let origin, Origin(baseURL) == origin,
             let token = Self.explicitToken ?? (try? tokens.readToken())
         else {
