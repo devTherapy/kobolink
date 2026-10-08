@@ -32,9 +32,23 @@ struct KobolinkApp: App {
                 store: KeychainPendingCheckoutStore(),
                 ownerNow: { session.attemptOwner }
             )
-            session.onChange = { checkout.sessionDidChange($0) }
-            session.willSignOut = { checkout.prepareSignOut() }
-            home = .ready(host: configuration.host, checker: ConnectionChecker(api: client), session: session, checkout: checkout)
+            // The wallet: balance, activity and sending money, for the signed-in user. A transfer is remembered in the
+            // Keychain, in the user's own slot, BEFORE its request leaves; the session tells the wallet when a person
+            // signs out or a different one signs in, exactly as it tells the checkout.
+            let wallet = WalletController(
+                service: client,
+                store: KeychainPendingTransferStore(),
+                camera: SystemCameraAccess()
+            )
+            session.onChange = {
+                checkout.sessionDidChange($0)
+                wallet.sessionDidChange($0)
+            }
+            // A sign-out is refused unless BOTH can write down what it owes the device first.
+            session.willSignOut = { SignOutGate.prepare(wallet: wallet, checkout: checkout) }
+            home = .ready(
+                host: configuration.host, checker: ConnectionChecker(api: client), session: session, checkout: checkout,
+                wallet: wallet)
         } catch {
             home = .misconfigured(error)
         }

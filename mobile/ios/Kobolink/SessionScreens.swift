@@ -8,7 +8,9 @@ struct SessionScreen: View {
     let host: String
     let checker: ConnectionChecker
     let checkout: CheckoutController
+    let wallet: WalletController
     @State private var confirmingSignOut = false
+    @State private var signOutWarning = CheckoutCopy.signOutWarning
 
     var body: some View {
         Group {
@@ -19,7 +21,7 @@ struct SessionScreen: View {
                 LoginView(session: session, reason: reason)
             case .signedIn(let user):
                 // Keyed by the user, so a different person signing in never inherits this view's state.
-                HomeView(user: user, host: host, checker: checker, signOut: requestSignOut)
+                SignedInView(user: user, host: host, checker: checker, wallet: wallet, signOut: requestSignOut)
                     .id(user.id)
             case .offline(let message):
                 OfflineView(message: message, retry: retry, signOut: requestSignOut)
@@ -32,7 +34,7 @@ struct SessionScreen: View {
             Button("Sign Out", role: .destructive, action: signOut)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(CheckoutCopy.signOutWarning)
+            Text(signOutWarning)
         }
         .alert(
             CheckoutCopy.signOutBlockedTitle,
@@ -44,10 +46,16 @@ struct SessionScreen: View {
         }
     }
 
-    /// Signing out forgets the payments this person started and has not finished, on this iPhone. Say so
-    /// first, rather than discarding one without a word.
+    /// Signing out forgets the payments this person started and has not finished, on this iPhone: a checkout, a
+    /// wallet transfer, or both. Say so first, rather than discarding one without a word.
     private func requestSignOut() {
-        if checkout.hasSessionAttempts { confirmingSignOut = true } else { signOut() }
+        let unfinished = SignOutGate.hasUnfinishedPayments(wallet: wallet, checkout: checkout)
+        guard unfinished.checkout || unfinished.wallet else {
+            signOut()
+            return
+        }
+        signOutWarning = WalletCopy.signOutWarning(checkout: unfinished.checkout, wallet: unfinished.wallet)
+        confirmingSignOut = true
     }
 
     private func retry() {
@@ -67,7 +75,26 @@ private struct ResolvingView: View {
     }
 }
 
-/// Signed in, until the real merchant home arrives with the dashboard.
+/// Signed in: the wallet, and the account. Tabs are sections, not actions; a payment link opened from outside
+/// is pushed over this, so it never stands between a payer and a link.
+struct SignedInView: View {
+    let user: SignedInUser
+    let host: String
+    let checker: ConnectionChecker
+    let wallet: WalletController
+    let signOut: () -> Void
+
+    var body: some View {
+        TabView {
+            WalletHomeView(wallet: wallet)
+                .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
+            HomeView(user: user, host: host, checker: checker, signOut: signOut)
+                .tabItem { Label("Account", systemImage: "person.crop.circle") }
+        }
+    }
+}
+
+/// The account: who is signed in, the server, and Sign Out. The merchant's links and payments join it later.
 struct HomeView: View {
     let user: SignedInUser
     let host: String
@@ -98,7 +125,7 @@ struct HomeView: View {
                 Button("Sign Out", role: .destructive, action: signOut)
             }
         }
-        .navigationTitle("Kobolink")
+        .navigationTitle("Account")
     }
 }
 

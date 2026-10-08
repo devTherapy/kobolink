@@ -19,7 +19,9 @@ struct RootView: View {
     let home: Home
 
     enum Home {
-        case ready(host: String, checker: ConnectionChecker, session: SessionController, checkout: CheckoutController)
+        case ready(
+            host: String, checker: ConnectionChecker, session: SessionController, checkout: CheckoutController,
+            wallet: WalletController)
         case misconfigured(APIConfiguration.Problem)
     }
 
@@ -53,8 +55,10 @@ struct RootView: View {
     /// The checkout follows the stack's one link: open it when it arrives (cold start, warm start, a second
     /// link replacing the first), close it when Back or Done takes it away, so a form never outlives its screen.
     private func followPath() {
-        guard case .ready(_, _, _, let checkout) = home else { return }
+        guard case .ready(_, _, _, let checkout, let wallet) = home else { return }
         if let code = navigator.path.first?.code {
+            // A link wins the screen: a sheet left up would sit on top of it.
+            wallet.isSendPresented = false
             checkout.open(code)
         } else {
             checkout.close()
@@ -63,8 +67,8 @@ struct RootView: View {
 
     @ViewBuilder private var homeScreen: some View {
         switch home {
-        case .ready(let host, let checker, let session, let checkout):
-            SessionScreen(session: session, host: host, checker: checker, checkout: checkout)
+        case .ready(let host, let checker, let session, let checkout, let wallet):
+            SessionScreen(session: session, host: host, checker: checker, checkout: checkout, wallet: wallet)
         case .misconfigured(let problem):
             MisconfiguredView(problem: problem)
         }

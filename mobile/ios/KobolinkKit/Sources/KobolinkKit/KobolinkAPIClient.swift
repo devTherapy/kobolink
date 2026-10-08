@@ -14,7 +14,7 @@ public typealias PublicLinkResponse = Components.Schemas.PublicLinkResponse
 /// the generated operation, return on its success case, throw
 /// `APIError(status:error:)` on `.default`.
 public struct KobolinkAPIClient: Sendable, AuthServing, CheckoutServing {
-    private let client: Client
+    let client: Client
 
     /// `transport` is injectable so tests run the real generated
     /// serialisation and decoding against canned HTTP responses.
@@ -183,7 +183,7 @@ public struct KobolinkAPIClient: Sendable, AuthServing, CheckoutServing {
     ///
     /// The returned `ResponseNotes` holds what the response carried that the models do not (the
     /// `Retry-After` of a 429); it is bound to this call alone.
-    private func perform<T: Sendable>(
+    func perform<T: Sendable>(
         _ call: () async throws -> T
     ) async throws(APIError) -> (T, ResponseNotes) {
         let notes = ResponseNotes()
@@ -199,7 +199,7 @@ public struct KobolinkAPIClient: Sendable, AuthServing, CheckoutServing {
 extension APIError {
     /// A `.default` response from the generated client: an error status
     /// and, when the body decoded, the contracts' `ApiError`.
-    fileprivate init(status: Int, error: Components.Schemas.ApiError?, notes: ResponseNotes) {
+    init(status: Int, error: Components.Schemas.ApiError?, notes: ResponseNotes) {
         // `default` also catches statuses the document does not list, including a stray 2xx or 3xx. An
         // `ApiError`-shaped body does not make those a refusal: the server did not refuse anything.
         guard status >= 400 else {
