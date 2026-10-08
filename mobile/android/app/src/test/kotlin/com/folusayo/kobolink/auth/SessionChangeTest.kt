@@ -114,6 +114,24 @@ class SessionChangeTest {
         assertEquals(SessionState.SignedOut(), controller.state.value)
     }
 
+    @Test
+    fun `(red) while the revoke is in the air the person is already signed out, so a late payment is a payer's and not in the obligation`() = runTest {
+        val api = FakeAuthApi(meResponse = meSuccess())
+        val (controller, _) = controllerWith(api, signedInStore())
+        controller.resolve()
+        var stateDuring: SessionState? = null
+        var ownerDuring: AttemptOwner? = null
+        api.onLogout = {
+            stateDuring = controller.state.value
+            ownerDuring = controller.attemptOwner
+        }
+
+        controller.logout()
+
+        assertEquals(SessionState.SignedOut(), stateDuring)
+        assertEquals(AttemptOwner.Payer, ownerDuring)
+    }
+
     // ---- the gate ---------------------------------------------------------------------------------------------
 
     @Test
