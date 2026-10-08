@@ -76,6 +76,23 @@ struct KeychainPendingCheckoutStoreTests {
         #expect(try store.load(codeB)?.key == keyTwo)
     }
 
+    @Test("how verify decided a payment is written to the Keychain with it, read back by a new store, and gone with the slot")
+    func settledMark() throws {
+        let (store, service) = makeStore()
+        defer { cleanUp(store) }
+        var decided = pending(reference: "kbl_aBcDeFgHjK")
+        decided.settled = .declined(reason: "Card declined by the simulated gateway.")
+        try store.save(decided)
+        let again = KeychainPendingCheckoutStore(service: service)
+        #expect(try again.load(codeA)?.settled == .declined(reason: "Card declined by the simulated gateway."))
+        // Saving the attempt again without a mark is how a mark would be taken back: there is none stored.
+        try store.save(pending(reference: "kbl_aBcDeFgHjK"))
+        #expect(try again.load(codeA)?.settled == nil)
+        try store.save(decided)
+        try store.remove(codeA)
+        #expect(try again.load(codeA) == nil)
+    }
+
     @Test("the attempt survives a relaunch: a new store over the same service reads it")
     func survivesRelaunch() throws {
         let (store, service) = makeStore()

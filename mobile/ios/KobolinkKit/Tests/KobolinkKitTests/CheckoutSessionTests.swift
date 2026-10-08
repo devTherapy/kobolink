@@ -53,7 +53,7 @@ struct CheckoutSessionStateTests {
         rig.fillForm(name: "Someone Else", email: "else@example.test")
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(Set(rig.service.sends.map(\.key)).count == 2)
         #expect(rig.service.sends[1].request.payerName == "Someone Else")
     }
@@ -175,7 +175,7 @@ struct CheckoutSessionStateTests {
         #expect(rig.linkScreen == nil)
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.keys.made == 1)
         #expect(Set(rig.service.sends.map(\.key)).count == 1)
         #expect(rig.service.sends.count == 2 && rig.service.sends[0].request == rig.service.sends[1].request)
@@ -188,7 +188,7 @@ struct CheckoutSessionStateTests {
         rig.fillForm()
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.pay()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         rig.controller.sessionDidChange(.ended)
         rig.controller.sessionDidChange(.signedIn(CK.userOne))
         #expect(rig.attemptScreen?.reference == CK.reference)
@@ -225,7 +225,7 @@ struct CheckoutSessionStateTests {
         #expect(await waitUntil { rig.attemptScreen?.phase == .unsettled(.interrupted) })
         rig.service.queueInitialize(.success(CK.started()))
         rig.controller.retry()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
         #expect(rig.keys.made == 1)
     }
 
@@ -459,7 +459,7 @@ struct CheckoutLatestWinsTests {
         rig.controller.retry()
         #expect(rig.service.sends.count == 1)
         gate.open()
-        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(await waitUntil { rig.attemptScreen?.phase == .startedUnverified })
     }
 
     @Test("Back never lands on a stale form: the fields are empty when the link is opened again")

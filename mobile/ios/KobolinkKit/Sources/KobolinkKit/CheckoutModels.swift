@@ -74,7 +74,7 @@ public struct InitializeRequest: Equatable, Hashable, Codable, Sendable {
 }
 
 /// `201` from `initialize`: a pending checkout. The contract returns a `reference` and nothing to
-/// redirect to; `verify` is what decides the outcome (feature I4). Nothing has moved yet.
+/// redirect to; `verify` (`VerifiedPayment`) is what decides the outcome. Nothing has moved yet.
 public struct StartedCheckout: Equatable, Sendable {
     public let reference: String
     public let code: LinkCode
@@ -147,9 +147,67 @@ extension StartedCheckout {
     }
 }
 
-/// The two calls the checkout makes. `KobolinkAPIClient` is the real one; tests supply a script.
+/// `200` from `verify`: what the server decided about one checkout. Mapped once from the generated `Payment`.
 ///
-/// Neither call carries a session token (`AuthMiddleware` sends one only to secured operations): a
+/// The wire `Payment` also carries the payer's name and (masked) email. They are deliberately NOT here: nothing
+/// that reaches a screen can show them, because there is nowhere to put them (`CheckoutPrivacyTests`).
+///
+/// `moneyMoved` is the server's own statement and is what every result screen says about the money. The
+/// contract's invariant (`PaymentSchema`): it is true if and only if `status` is `success`. A reply that breaks
+/// it is not mapped (it is an unreadable reply), so a screen can never be handed "failed, and money moved".
+public struct VerifiedPayment: Equatable, Sendable {
+    public enum Status: Equatable, Sendable {
+        /// Still being processed. The contract allows it; today's server decides in one call and never sends it.
+        case pending
+        case success
+        case failed
+    }
+
+    public let reference: String
+    public let code: LinkCode
+    public let amountKobo: Int
+    public let status: Status
+    public let moneyMoved: Bool
+    /// Why it failed, in the server's words (`Link has expired`, `Card declined by the simulated gateway.`).
+    /// `nil` when none was given (a blank one is dropped).
+    public let failureReason: String?
+
+    public init(
+        reference: String, code: LinkCode, amountKobo: Int, status: Status, moneyMoved: Bool, failureReason: String? = nil
+    ) {
+        self.reference = reference
+        self.code = code
+        self.amountKobo = amountKobo
+        self.status = status
+        self.moneyMoved = moneyMoved
+        self.failureReason = failureReason
+    }
+}
+
+extension VerifiedPayment {
+    /// `nil` for a reply the contract does not allow: a reference or code that is not one, or a `moneyMoved`
+    /// that disagrees with `status`. (A currency other than naira already fails to decode: it is a one-case enum.)
+    init?(_ payment: Components.Schemas.VerifyCheckoutResponse.paymentPayload) {
+        guard StartedCheckout.isValidReference(payment.reference),
+            let code = LinkCode(payment.code), payment.code == code.value
+        else { return nil }
+        let status: Status
+        switch payment.status {
+        case .pending: status = .pending
+        case .success: status = .success
+        case .failed: status = .failed
+        }
+        guard payment.moneyMoved == (status == .success) else { return nil }
+        let reason = payment.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(
+            reference: payment.reference, code: code, amountKobo: payment.amountKobo, status: status,
+            moneyMoved: payment.moneyMoved, failureReason: (reason?.isEmpty ?? true) ? nil : reason)
+    }
+}
+
+/// The three calls the checkout makes. `KobolinkAPIClient` is the real one; tests supply a script.
+///
+/// None of them carries a session token (`AuthMiddleware` sends one only to secured operations): a
 /// payer is not the merchant who happens to be signed in on the same phone.
 public protocol CheckoutServing: Sendable {
     /// `GET /api/links/{code}/public`.
@@ -159,4 +217,9 @@ public protocol CheckoutServing: Sendable {
     /// life of one attempt: a replay of the same key and body returns the stored answer, never a
     /// second checkout, and the same key with a different body is `idempotency_mismatch`.
     func initializeCheckout(_ request: InitializeRequest, idempotencyKey: String) async throws(APIError) -> StartedCheckout
+
+    /// `POST /api/checkout/verify`: DECIDES the checkout (the only call that posts to the ledger) and reports the
+    /// decision. A reference is decided once: asking again, under any key, returns the same payment and never a
+    /// second posting (`apps/api/test/checkout-verify.integration.test.ts`), so this is safe to repeat.
+    func verifyCheckout(reference: String, idempotencyKey: String) async throws(APIError) -> VerifiedPayment
 }

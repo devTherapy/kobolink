@@ -119,12 +119,6 @@ public enum CheckoutCopy {
 
     // MARK: A remembered attempt
 
-    /// "Payment started": the M3-to-M4 hand-off. `initialize` answered with a reference; `verify` (feature I4)
-    /// is what decides the outcome, and until it exists the app says so plainly.
-    public static let startedHeading = "Payment started"
-    public static let startedMoneyLine = "No money has moved yet. This version of the app can't confirm the payment."
-    public static let startedNextStep = "You can close this screen. Your reference is saved on this iPhone."
-
     public static let unsettledHeading = "We couldn't confirm your payment"
 
     public static func unsettledBody(_ reason: Unsettled) -> String {
@@ -154,6 +148,86 @@ public enum CheckoutCopy {
 
     public static let sendingHeading = "Starting your payment"
     public static let sendingNextStep = "Keep this screen open. This is the same request as before, so it can't start a second payment."
+
+    // MARK: A started payment: being confirmed, and how it ended
+
+    // `initialize` gave a reference; `verify` decides. These are the words while that is being asked, and when it
+    // could not be decided. The rule is the same as everywhere here: the money line is only a fact the server
+    // stated (`moneyMoved`) or an admission that we can't tell; it is never a guess.
+
+    public static let verifyingHeading = "Confirming your payment"
+    public static let verifyingMoneyLine = "Waiting for Kobolink to confirm."
+    public static let verifyingNextStep = "Keep this screen open. Checking can't start a second payment."
+
+    public static let processingHeading = "Still processing your payment"
+    /// Said only after the server answered `pending`, which by contract means `moneyMoved: false`.
+    public static let processingMoneyLine = "Kobolink says no money has moved yet."
+    public static let processingNextStep = "Checking again shortly. Keep this screen open."
+
+    public static func unconfirmedHeading(_ reason: Unconfirmed) -> String {
+        reason == .stillProcessing ? "Your payment is still processing" : "We couldn't confirm your payment"
+    }
+
+    public static func unconfirmedBody(_ reason: Unconfirmed) -> String {
+        switch reason {
+        case .stillProcessing:
+            return "Kobolink hasn't finished processing it yet."
+        case .noConnection:
+            return "Your iPhone couldn't reach Kobolink to confirm it."
+        case .serverProblem:
+            return "Kobolink had a problem on its side while confirming it."
+        case .rateLimited(let seconds):
+            return "Kobolink is getting too many requests from this iPhone. " + RetryDelay.sentence(seconds: seconds)
+        case .unreadable:
+            return "Kobolink answered with something this version of the app can't read."
+        case .refused(let message):
+            return "Kobolink answered: \(message)"
+        }
+    }
+
+    public static func unconfirmedMoneyLine(_ reason: Unconfirmed) -> String {
+        reason == .stillProcessing ? processingMoneyLine : "We can't tell whether money moved."
+    }
+
+    public static func unconfirmedNextStep(_ reason: Unconfirmed, merchant: String) -> String {
+        let ask = "Check Again asks Kobolink for the result. It can't start a second payment."
+        return reason == .stillProcessing
+            ? "\(ask) If it stays like this, contact \(merchant) and quote your reference."
+            : "\(ask) Check with \(merchant) before paying again."
+    }
+
+    /// How a payment ended. Every case names what happened, says whether money moved, and gives the next step.
+    /// The link states are the web's `NON_PAYABLE_COPY`, word for word; paid and failed are the web's `PayForm`.
+    public static func result(_ screen: ResultScreen) -> Notice {
+        let merchant = screen.merchantName
+        let link = CheckoutLink(code: screen.code, merchantName: merchant, title: screen.title)
+        switch screen.result {
+        case .paid:
+            return Notice(
+                heading: "Payment successful", body: nil,
+                moneyLine: "Money moved. Your payment was successful.",
+                nextStep: "You can close this screen. Quote the reference if you need to ask \(merchant) about this payment.")
+        case .declined(let reason):
+            return Notice(
+                heading: "Payment failed", body: reason ?? "The payment could not be completed.",
+                moneyLine: "No money moved.",
+                nextStep: "You can try again. If it keeps failing, contact \(merchant).")
+        case .linkExpired:
+            return notice(for: .expired, link: link)
+        case .linkDisabled:
+            return notice(for: .disabled, link: link)
+        case .linkAlreadyPaid:
+            return notice(for: .alreadyPaid, link: link)
+        case .checkoutNotFound:
+            return Notice(
+                heading: "We couldn't find this payment", body: "Kobolink has no record of it.",
+                moneyLine: noMoneyMoved,
+                nextStep: "You can start a new payment. If you were expecting this one to go through, contact \(merchant) and quote your reference.")
+        }
+    }
+
+    public static let copyReference = "Copy Reference"
+    public static let referenceCopied = "Reference copied"
 
     /// The attempt could not be recorded, so nothing was sent.
     public static let notRecorded =

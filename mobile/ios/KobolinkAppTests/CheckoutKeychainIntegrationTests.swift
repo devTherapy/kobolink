@@ -45,6 +45,25 @@ private final class ScriptedService: CheckoutServing, @unchecked Sendable {
         if record(idempotencyKey) { throw .unreachable(.networkConnectionLost) }
         return StartedCheckout(reference: "kbl_aBcDeFgHjK", code: request.code, amountKobo: request.amountKobo, createdAt: Date())
     }
+
+    private var verifyAnswers: [Result<VerifiedPayment, APIError>] = []
+
+    /// The next `verify` answers, in order; with none left the call fails as "no connection".
+    func scriptVerify(_ answers: [Result<VerifiedPayment, APIError>]) {
+        lock.lock()
+        verifyAnswers = answers
+        lock.unlock()
+    }
+
+    func verifyCheckout(reference: String, idempotencyKey: String) async throws(APIError) -> VerifiedPayment {
+        let next: Result<VerifiedPayment, APIError>? = {
+            lock.lock()
+            defer { lock.unlock() }
+            return verifyAnswers.isEmpty ? nil : verifyAnswers.removeFirst()
+        }()
+        guard let next else { throw .unreachable(.notConnectedToInternet) }
+        return try next.get()
+    }
 }
 
 /// The checkout controller over the real Keychain, inside the app's own process.
@@ -94,14 +113,30 @@ struct CheckoutKeychainIntegrationTests {
         second.open(codeA)
         #expect(attempt(second)?.phase == .unsettled(.interrupted))
         second.retry()
-        #expect(await waitUntil { attempt(second)?.phase == .started })
+        #expect(await waitUntil { attempt(second)?.phase == .unconfirmed(.noConnection) })
         #expect(backend.sentKeys == [key, key])
+        #expect(try store.load(codeA)?.reference == "kbl_aBcDeFgHjK")
 
-        // Process three: the started payment comes back with its reference.
+        // Process three: the started payment is asked about as soon as it opens, and the answer is written to the Keychain.
+        backend.scriptVerify([.success(VerifiedPayment(reference: "kbl_aBcDeFgHjK", code: codeA, amountKobo: 1_850_000, status: .success, moneyMoved: true))])
         let third = controller(service: service, backend: backend)
         third.open(codeA)
-        #expect(attempt(third)?.phase == .started)
         #expect(attempt(third)?.reference == "kbl_aBcDeFgHjK")
+        #expect(await waitUntil { if case .result = third.screen { true } else { false } })
+        #expect(try store.load(codeA)?.settled == .paid)
+        #expect(backend.sentKeys == [key, key])
+
+        // Process four: the result comes back from the Keychain at once, with nothing asked of the network, until it is dismissed.
+        let fourth = controller(service: service, backend: backend)
+        fourth.open(codeA)
+        if case .result(let result) = fourth.screen {
+            #expect(result.result == .paid)
+            #expect(result.reference == "kbl_aBcDeFgHjK")
+        } else {
+            Issue.record("expected the stored result, got \(fourth.screen)")
+        }
+        fourth.close()
+        #expect(try store.load(codeA) == nil)
     }
 
     @Test("signing out removes a signed-in merchant's attempt from the Keychain and leaves a payer's")

@@ -59,12 +59,33 @@ enum CK {
     /// A checkout already persisted by an earlier run: what a cold start finds.
     static func pending(
         _ code: LinkCode = codeA, key: String = "00000000-0000-4000-8000-00000000000A", owner: AttemptOwner = .payer,
-        reference: String? = nil, amountKobo: Int = 1_850_000
+        reference: String? = nil, amountKobo: Int = 1_850_000, settled: PaymentResult? = nil
     ) -> PendingCheckout {
         PendingCheckout(
             key: key, request: request(code, amountKobo: amountKobo), reference: reference, confirmedAmountKobo: reference == nil ? nil : amountKobo,
+            settled: settled,
             owner: owner, merchantName: "Adebayo Stores", title: "Ankara Two-Piece Set", createdAt: Date(timeIntervalSince1970: 1_790_000_000))
     }
+
+    /// A `verify` answer as the server writes it: `moneyMoved` is `true` exactly when the payment succeeded.
+    static func payment(
+        _ status: VerifiedPayment.Status = .success, reference: String = CK.reference, code: LinkCode = codeA,
+        amountKobo: Int = 1_850_000, reason: String? = nil, moneyMoved: Bool? = nil
+    ) -> VerifiedPayment {
+        VerifiedPayment(
+            reference: reference, code: code, amountKobo: amountKobo, status: status,
+            moneyMoved: moneyMoved ?? (status == .success), failureReason: reason)
+    }
+
+    static let paid = payment(.success)
+    static let declined = payment(.failed, reason: "Card declined by the simulated gateway.")
+    static let stillPending = payment(.pending)
+}
+
+extension AttemptPhase {
+    /// A started payment whose `verify` was asked and could not be completed: what the screen shows when a test
+    /// scripts `initialize` and nothing for `verify` (the fake then answers "no connection").
+    static let startedUnverified = AttemptPhase.unconfirmed(.noConnection)
 }
 
 /// A scripted `CheckoutServing`. Replies are consumed first in first out; a call with nothing queued
@@ -80,11 +101,18 @@ final class FakeCheckout: CheckoutServing, @unchecked Sendable {
         let key: String
     }
 
+    struct Verify: Equatable {
+        let reference: String
+        let key: String
+    }
+
     private let lock = NSLock()
     private var lookupQueue: [Reply<LinkLookup>] = []
     private var initializeQueue: [Reply<StartedCheckout>] = []
+    private var verifyQueue: [Reply<VerifiedPayment>] = []
     private var lookupLog: [LinkCode] = []
     private var sendLog: [Send] = []
+    private var verifyLog: [Verify] = []
     /// Called inside `initializeCheckout`, before it answers: what the store held when the request "left".
     var onSend: (@Sendable (Send) -> Void)?
 
@@ -98,6 +126,18 @@ final class FakeCheckout: CheckoutServing, @unchecked Sendable {
         lock.lock()
         initializeQueue.append(Reply(result: result, gate: gate))
         lock.unlock()
+    }
+
+    func queueVerify(_ result: Result<VerifiedPayment, APIError>, gate: Gate? = nil) {
+        lock.lock()
+        verifyQueue.append(Reply(result: result, gate: gate))
+        lock.unlock()
+    }
+
+    var verifies: [Verify] {
+        lock.lock()
+        defer { lock.unlock() }
+        return verifyLog
     }
 
     var lookups: [LinkCode] {
@@ -137,18 +177,96 @@ final class FakeCheckout: CheckoutServing, @unchecked Sendable {
         await reply.gate?.wait()
         return try reply.result.get()
     }
+
+    func verifyCheckout(reference: String, idempotencyKey: String) async throws(APIError) -> VerifiedPayment {
+        let reply: Reply<VerifiedPayment>? = {
+            lock.lock()
+            defer { lock.unlock() }
+            verifyLog.append(Verify(reference: reference, key: idempotencyKey))
+            return verifyQueue.isEmpty ? nil : verifyQueue.removeFirst()
+        }()
+        guard let reply else { throw CK.offline }
+        await reply.gate?.wait()
+        return try reply.result.get()
+    }
+}
+
+/// Stands in for the wait between automatic re-asks. Each wait is recorded and held until the test releases it,
+/// so a test decides exactly when a re-ask is due, and a cancelled wait ends instead of firing.
+final class Sleeper: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waits: [Duration] = []
+    private var released = 0
+    private var ended = 0
+
+    /// Every wait asked for, in order.
+    var requested: [Duration] {
+        lock.lock()
+        defer { lock.unlock() }
+        return waits
+    }
+
+    /// How many waits ended because their task was cancelled (not because the test released them).
+    var cancelled: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return ended
+    }
+
+    /// Let the next `count` waits (in the order they were asked) finish.
+    func release(_ count: Int = 1) {
+        lock.lock()
+        released += count
+        lock.unlock()
+    }
+
+    func sleep(_ duration: Duration) async throws {
+        let ticket: Int = {
+            lock.lock()
+            defer { lock.unlock() }
+            waits.append(duration)
+            return waits.count
+        }()
+        do {
+            // A wait nobody releases or cancels (a test that ended first) gives up after about six seconds.
+            for _ in 0..<3000 {
+                try Task.checkCancellation()
+                let go: Bool = {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    return released >= ticket
+                }()
+                if go { return }
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            throw CancellationError()
+        } catch {
+            noteEnded()
+            throw error
+        }
+    }
+
+    private func noteEnded() {
+        lock.lock()
+        ended += 1
+        lock.unlock()
+    }
 }
 
 /// Keys that are valid but recognisable: `key-1`, `key-2`, ...
 final class KeyMaker: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private let digit: Int
+
+    /// `digit` 1 for initialize keys, 2 for verify keys, so the two kinds can never be mistaken for each other.
+    init(digit: Int = 1) { self.digit = digit }
 
     func make() -> String {
         lock.lock()
         defer { lock.unlock() }
         count += 1
-        return String(format: "11111111-1111-4111-8111-%012d", count)
+        return String(format: "\(digit)\(digit)\(digit)\(digit)\(digit)\(digit)\(digit)\(digit)-\(digit)\(digit)\(digit)\(digit)-4\(digit)\(digit)\(digit)-8\(digit)\(digit)\(digit)-%012d", count)
     }
 
     var made: Int {
@@ -162,7 +280,11 @@ final class KeyMaker: @unchecked Sendable {
 struct CheckoutRig {
     let service = FakeCheckout()
     let store: InMemoryPendingCheckoutStore
+    /// The keys `initialize` is sent under. A verify never draws from here: the key a payment was initialized
+    /// under is never minted again, so `keys.made` stays 1 however often verify is asked.
     let keys = KeyMaker()
+    let verifyKeys = KeyMaker(digit: 2)
+    let sleeper = Sleeper()
     let controller: CheckoutController
     /// What `ownerNow` answers; a test changes it to model the session moving on.
     let owner: OwnerBox
@@ -188,13 +310,18 @@ struct CheckoutRig {
         box.value = owner
         self.owner = box
         let keys = self.keys
+        let verifyKeys = self.verifyKeys
         let clock = self.clock
+        let sleeper = self.sleeper
         controller = CheckoutController(
             service: service,
             store: store,
             ownerNow: { box.value },
             makeKey: { keys.make() },
-            now: { clock.value }
+            makeVerifyKey: { verifyKeys.make() },
+            now: { clock.value },
+            verifyDelays: [.seconds(2), .seconds(4), .seconds(8)],
+            sleep: { try await sleeper.sleep($0) }
         )
     }
 
@@ -222,6 +349,21 @@ struct CheckoutRig {
 
     var attemptScreen: AttemptScreen? {
         if case .attempt(let screen) = controller.screen { screen } else { nil }
+    }
+
+    var resultScreen: ResultScreen? {
+        if case .result(let screen) = controller.screen { screen } else { nil }
+    }
+
+    /// Pay with the form filled in, and wait until the screen has a reference (initialize answered).
+    func payAndStart(
+        reply: StartedCheckout = CK.started(), verify: Result<VerifiedPayment, APIError>? = nil, gate: Gate? = nil
+    ) async {
+        fillForm()
+        service.queueInitialize(.success(reply))
+        if let verify { service.queueVerify(verify, gate: gate) }
+        controller.pay()
+        _ = await waitUntil { attemptScreen?.reference != nil || resultScreen != nil }
     }
 
     func settle() async {

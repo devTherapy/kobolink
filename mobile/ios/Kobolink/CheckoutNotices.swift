@@ -1,5 +1,6 @@
 import KobolinkKit
 import SwiftUI
+import UIKit
 
 /// One button under a notice.
 struct NoticeAction: Identifiable {
@@ -119,135 +120,67 @@ extension NoticeScreen where Detail == EmptyView {
 
 // MARK: - A remembered payment
 
-/// "Payment started", or a payment of unknown outcome. Both are shown from the saved attempt, so they
-/// appear the same on a re-tap, after Back, after a relaunch and with no connection.
-///
-/// "Payment started" is the hand-off to feature I4: `initialize` answered with a reference, and `verify`
-/// (which decides the outcome) is I4's. I4 replaces this body with the verify call and the result
-/// states. Until then it says plainly that nothing has been confirmed.
-struct AttemptView: View {
-    let checkout: CheckoutController
-    let attempt: AttemptScreen
-    let onDone: () -> Void
-    @State private var confirmingStartOver = false
-
-    var body: some View {
-        content
-            .alert(CheckoutCopy.startOverTitle(), isPresented: $confirmingStartOver) {
-                Button("Cancel", role: .cancel) {}
-                Button("Start a New Payment", role: .destructive) { checkout.startOver() }
-            } message: {
-                Text(CheckoutCopy.startOverMessage(reference: attempt.reference, merchant: attempt.merchantName))
-            }
-            .onChange(of: attempt.phase) { _, phase in
-                if case .unsettled = phase { AccessibilityNotification.Announcement(CheckoutCopy.unsettledHeading).post() }
-            }
-    }
-
-    @ViewBuilder private var content: some View {
-        switch attempt.phase {
-        case .started:
-            NoticeScreen(
-                symbol: "clock", symbolStyle: .accentColor,
-                notice: Notice(
-                    heading: CheckoutCopy.startedHeading, body: nil,
-                    moneyLine: CheckoutCopy.startedMoneyLine, nextStep: CheckoutCopy.startedNextStep),
-                actions: actions(retry: false),
-                detail: {
-                    VStack(spacing: 12) {
-                        AmountLine(attempt: attempt)
-                        if let reference = attempt.reference { ReferenceBox(reference: reference) }
-                        startOverError
-                    }
-                })
-
-        case .sending:
-            NoticeScreen(
-                symbol: "arrow.triangle.2.circlepath", symbolStyle: .accentColor,
-                notice: Notice(
-                    heading: CheckoutCopy.sendingHeading, body: nil,
-                    moneyLine: CheckoutCopy.unsettledStatus, nextStep: CheckoutCopy.sendingNextStep),
-                actions: [],
-                detail: {
-                    VStack(spacing: 12) {
-                        AmountLine(attempt: attempt)
-                        ProgressView().accessibilityLabel("Starting payment")
-                    }
-                })
-
-        case .unsettled(let reason):
-            NoticeScreen(
-                symbol: "exclamationmark.triangle.fill", symbolStyle: Color.warningText,
-                notice: Notice(
-                    heading: CheckoutCopy.unsettledHeading, body: CheckoutCopy.unsettledBody(reason),
-                    moneyLine: CheckoutCopy.unsettledStatus,
-                    nextStep: CheckoutCopy.unsettledNextStep(merchant: attempt.merchantName)),
-                actions: actions(retry: true),
-                detail: {
-                    VStack(spacing: 12) {
-                        AmountLine(attempt: attempt)
-                        startOverError
-                    }
-                })
-        }
-    }
-
-    private func actions(retry: Bool) -> [NoticeAction] {
-        var list: [NoticeAction] = []
-        if retry { list.append(.init("Try Again", .prominent, checkout.retry)) }
-        list.append(.init("Done", retry ? .plain : .prominent, onDone))
-        list.append(.init("Start a New Payment", .destructive) { confirmingStartOver = true })
-        return list
-    }
-
-    @ViewBuilder private var startOverError: some View {
-        if attempt.startOverFailed {
-            Label(CheckoutCopy.startOverFailed, systemImage: "exclamationmark.circle.fill")
-                .font(.footnote)
-                .foregroundStyle(Color.errorText)
-                .multilineTextAlignment(.leading)
-        }
-    }
-}
-
-private struct AmountLine: View {
-    let attempt: AttemptScreen
+/// What a payment is for, in the places every screen about it shows it: the amount, who it went to, and what for.
+struct AmountLine: View {
+    let amountKobo: Int
+    let merchantName: String
+    let title: String
 
     var body: some View {
         VStack(spacing: 2) {
-            Text(Kobo.formatNaira(attempt.amountKobo))
+            Text(Kobo.formatNaira(amountKobo))
                 .font(.largeTitle.bold())
                 .monospacedDigit()
-            Text("to \(attempt.merchantName)")
+            Text("to \(merchantName)")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            Text(attempt.title)
+            Text(title)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .multilineTextAlignment(.center)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(Kobo.spokenNaira(attempt.amountKobo)) to \(attempt.merchantName). \(attempt.title)")
+        .accessibilityLabel("\(Kobo.spokenNaira(amountKobo)) to \(merchantName). \(title)")
     }
 }
 
-/// A reference is quoted to a merchant, so it is monospaced, selectable, and spelled out for VoiceOver.
-private struct ReferenceBox: View {
+/// A reference is quoted to a merchant, so it is monospaced, selectable, spelled out for VoiceOver, and can be copied.
+/// There is no receipt to export: the reference is the receipt.
+struct ReferenceBox: View {
     let reference: String
+    @State private var copied = false
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text("Reference").font(.footnote).foregroundStyle(.secondary)
-            Text(reference)
-                .font(.title3.monospaced())
-                .textSelection(.enabled)
+        VStack(spacing: 8) {
+            VStack(spacing: 4) {
+                Text("Reference").font(.footnote).foregroundStyle(.secondary)
+                Text(reference)
+                    .font(.title3.monospaced())
+                    .textSelection(.enabled)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Reference \(CheckoutCopy.spelledOut(reference))")
+
+            Button {
+                UIPasteboard.general.string = reference
+                copied = true
+                AccessibilityNotification.Announcement(CheckoutCopy.referenceCopied).post()
+            } label: {
+                Label(copied ? "Copied" : CheckoutCopy.copyReference, systemImage: copied ? "checkmark" : "doc.on.doc")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(CheckoutCopy.copyReference)
+            .task(id: copied) {
+                guard copied else { return }
+                try? await Task.sleep(for: .seconds(2))
+                copied = false
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Reference \(CheckoutCopy.spelledOut(reference))")
     }
 }
 

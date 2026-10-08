@@ -108,6 +108,90 @@ enum SendVerdict: Equatable {
     }
 }
 
+/// What a `POST /api/checkout/verify` answer lets the app conclude about the payment it asked after.
+///
+/// `verify` is the ONLY thing that may settle a started payment, so this is the single place that decides which
+/// answers do. The rule is the one `SendVerdict` follows for `initialize`, applied to the server's own words:
+///
+/// - `decided` needs the server to have SAID so: a `200` payment that is `success` (with `moneyMoved: true`) or
+///   `failed` (with `moneyMoved: false`) and that is about THIS reference, link and amount; or a `404 not_found` /
+///   `409 link_not_payable` that says `moneyMoved: false` (the same triples the idempotency layer stores under the key
+///   for `initialize`, so they are the answer for the reference, not for one replay).
+/// - Everything else (a 5xx, a 429, a dropped connection, a redirect, a 401, an unreadable body, a validation error, a
+///   reply about some other payment) decides NOTHING: the slot stays, and the copy never says no money moved. A
+///   refusal that applies to a request and not to the checkout cannot prove what happened to the checkout.
+enum VerifyVerdict: Equatable {
+    case decided(PaymentResult)
+    /// The server says the payment is not decided yet (`status: pending`, which by contract means `moneyMoved: false`).
+    case notDecided
+    case unconfirmed(Unconfirmed)
+
+    /// The reasons `PaymentsService.notPayableReason` writes into `failureReason` when the link could not take the
+    /// payment by the time it was decided. The contract carries them as free text (a finding for the contract owner:
+    /// a structured reason would not depend on these sentences), so only an exact match is trusted; any other
+    /// `failureReason` is shown as the server's own words.
+    static func linkProblem(forReason reason: String?) -> PaymentResult? {
+        switch reason?.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "Link is disabled": .linkDisabled
+        case "Link has expired": .linkExpired
+        case "Link is already paid": .linkAlreadyPaid
+        default: nil
+        }
+    }
+
+    static func of(
+        _ result: Result<VerifiedPayment, APIError>,
+        reference: String,
+        code: LinkCode,
+        amountKobo: Int
+    ) -> VerifyVerdict {
+        switch result {
+        case .success(let payment):
+            // A reply about some other payment is not an answer to this one.
+            guard payment.reference == reference, payment.code == code, payment.amountKobo == amountKobo else {
+                return .unconfirmed(.unreadable)
+            }
+            switch payment.status {
+            case .success:
+                return payment.moneyMoved ? .decided(.paid) : .unconfirmed(.unreadable)
+            case .failed:
+                // A failure that says money moved is not a failure this app knows how to describe.
+                guard !payment.moneyMoved else { return .unconfirmed(.unreadable) }
+                return .decided(linkProblem(forReason: payment.failureReason) ?? .declined(reason: payment.failureReason))
+            case .pending:
+                return payment.moneyMoved ? .unconfirmed(.unreadable) : .notDecided
+            }
+
+        case .failure(.server(let error)):
+            if error.moneyMoved == false {
+                if error.code == .not_found, error.status == 404 { return .decided(.checkoutNotFound) }
+                if error.code == .link_not_payable, error.status == 409, let state = error.linkState {
+                    switch state {
+                    case .disabled: return .decided(.linkDisabled)
+                    case .expired: return .decided(.linkExpired)
+                    case .already_hyphen_paid: return .decided(.linkAlreadyPaid)
+                    case .payable: break
+                    }
+                }
+            }
+            if error.status == 401 || error.status == 403 { return .unconfirmed(.unreadable) }
+            switch error.code {
+            case .rate_limited: return .unconfirmed(.rateLimited(retryAfterSeconds: error.retryAfterSeconds))
+            case ._internal: return .unconfirmed(.serverProblem)
+            default:
+                return error.status >= 500 ? .unconfirmed(.serverProblem) : .unconfirmed(.refused(message: error.message))
+            }
+
+        case .failure(.unexpectedResponse(let status)):
+            return .unconfirmed(status >= 500 ? .serverProblem : .unreadable)
+        case .failure(.undecodableResponse):
+            return .unconfirmed(.unreadable)
+        case .failure(.unreachable), .failure(.cancelled):
+            return .unconfirmed(.noConnection)
+        }
+    }
+}
+
 /// Every decision the checkout makes, as plain Swift over `CheckoutServing` and `PendingCheckoutStore`,
 /// so all of it runs in unit tests. One instance lives for the app; the screen only renders `screen`
 /// and `form` and forwards taps.
@@ -124,11 +208,23 @@ enum SendVerdict: Equatable {
 /// - A key is minted only by `pay` from the form, which is shown only when there is no slot: after a
 ///   settled refusal (the slot is gone and the link is read afresh, so a changed price is seen before a
 ///   new key is made) or after the person's confirmed `startOver`.
-/// - The slot is removed only by: a `SendVerdict.settled` or `.rejected` answer; `startOver`; and
-///   `sessionDidChange` (explicit sign-out, or a different confirmed user). An involuntary session end
-///   removes nothing. A remove that fails is reported, never swallowed: `startOver` says so and changes
-///   nothing; a failed sign-out cleanup hides what it could not remove until a retry succeeds.
+/// - The slot is removed only by: a `SendVerdict.settled` or `.rejected` answer; `startOver`; the dismissal of a
+///   finished payment (below); and `sessionDidChange` (explicit sign-out, or a different confirmed user). An
+///   involuntary session end removes nothing. A remove that fails is reported, never swallowed: `startOver` says
+///   so and changes nothing; a failed sign-out cleanup hides what it could not remove until a retry succeeds.
 /// - No silent retry: one `initializeCheckout` call per `send`, and `KobolinkAPIClient` never resends a POST.
+///
+/// ## Verify settles, and only verify
+/// A reference exists once `initialize` answers 201; from then on the controller asks `verify` (right away, whether
+/// or not the screen is still open, and again every time the link is opened). A `VerifyVerdict.decided` answer
+/// marks the slot `settled` (durably, before the screen changes); the slot is REMOVED only when the person has seen
+/// the result and dismisses it (`close`, opening another link, `startOver`). So a payment cannot be forgotten
+/// before it has been seen, and a result survives Back, a relaunch and a process kill. Nothing else settles a started
+/// payment: a 5xx, a 429, a dropped connection, a redirect, a 401 or an unreadable body leave the slot as it is
+/// (`Unconfirmed`), with "Check Again" and without ever saying no money moved. Verify is safe to repeat (a reference
+/// is decided once, under any key: `apps/api/test/checkout-verify.integration.test.ts`), so each ask carries a fresh
+/// key (`makeVerifyKey`, never `makeKey`: the key a payment was INITIALIZED under is never minted again).
+/// A `pending` answer is re-asked a bounded number of times (`verifyDelays`), then waits for the person.
 ///
 /// ## Latest wins
 /// Every `open` and `close` starts a new lookup generation; a lookup answer is applied only if its
@@ -150,7 +246,14 @@ public final class CheckoutController {
     @ObservationIgnored private let store: any PendingCheckoutStore
     @ObservationIgnored private let ownerNow: @MainActor () -> AttemptOwner
     @ObservationIgnored private let makeKey: @Sendable () -> String
+    @ObservationIgnored private let makeVerifyKey: @Sendable () -> String
     @ObservationIgnored private let now: @Sendable () -> Date
+    @ObservationIgnored private let verifyDelays: [Duration]
+    @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
+
+    /// How long to wait before each automatic re-ask after a `pending` answer. Its length is the bound: three
+    /// automatic checks (about 14 seconds), then the person decides.
+    public static let defaultVerifyDelays: [Duration] = [.seconds(2), .seconds(4), .seconds(8)]
 
     /// The link the checkout is open on (it follows the navigation stack's single link).
     @ObservationIgnored private var openCode: LinkCode?
@@ -162,6 +265,10 @@ public final class CheckoutController {
     @ObservationIgnored private var held: Held?
     /// Keys whose request is in flight now.
     @ObservationIgnored private var inFlight: Set<String> = []
+    /// Keys of attempts whose `verify` request is in flight now (one at a time per attempt).
+    @ObservationIgnored private var inFlightVerify: Set<String> = []
+    /// The wait before the next automatic `verify`, for the attempt it belongs to.
+    @ObservationIgnored private var poll: (key: String, task: Task<Void, Never>)?
     @ObservationIgnored private var confirmedUserID: String?
     /// What a sign-out still owes the device. It is written to storage BEFORE the sign-out, read again by a new
     /// process BEFORE anything else a session event does (a merge or an adoption without it would overwrite or
@@ -181,6 +288,8 @@ public final class CheckoutController {
     private struct Held {
         var pending: PendingCheckout
         var phase: AttemptPhase
+        /// Automatic re-asks already made after a `pending` answer.
+        var pollStep = 0
     }
 
     public init(
@@ -188,13 +297,19 @@ public final class CheckoutController {
         store: any PendingCheckoutStore,
         ownerNow: @escaping @MainActor () -> AttemptOwner = { .payer },
         makeKey: @escaping @Sendable () -> String = IdempotencyKey.make,
-        now: @escaping @Sendable () -> Date = { Date() }
+        makeVerifyKey: @escaping @Sendable () -> String = IdempotencyKey.make,
+        now: @escaping @Sendable () -> Date = { Date() },
+        verifyDelays: [Duration] = CheckoutController.defaultVerifyDelays,
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.service = service
         self.store = store
         self.ownerNow = ownerNow
         self.makeKey = makeKey
+        self.makeVerifyKey = makeVerifyKey
         self.now = now
+        self.verifyDelays = verifyDelays
+        self.sleep = sleep
     }
 
     // MARK: - Opening and closing
@@ -203,6 +318,8 @@ public final class CheckoutController {
     /// otherwise look the link up. Opening a different link empties the form.
     public func open(_ code: LinkCode) {
         if openCode != code {
+            dismissResult()
+            cancelPoll()
             form.reset()
             held = nil
             lookupCarry = nil
@@ -214,8 +331,11 @@ public final class CheckoutController {
     }
 
     /// The link left the screen (Back, or a link that is not one). Nothing in flight can reach the
-    /// screen afterwards, and the form is emptied so Back can never land on a stale one.
+    /// screen afterwards, and the form is emptied so Back can never land on a stale one. A finished payment that
+    /// was on screen has been seen: it is forgotten here (a removal that fails only means it is shown once more).
     public func close() {
+        dismissResult()
+        cancelPoll()
         openCode = nil
         held = nil
         lookupCarry = nil
@@ -291,16 +411,35 @@ public final class CheckoutController {
         send(current.pending, firstEverSend: false)
     }
 
+    /// "Check Again" on a started payment `verify` has not decided: ask the server again. It cannot start a second
+    /// payment (a reference is decided once), and the slot is not touched.
+    public func checkAgain() {
+        guard case .attempt(var attempt) = screen, case .unconfirmed = attempt.phase,
+            var current = held, current.pending.request.code == attempt.code, current.pending.reference != nil,
+            !inFlightVerify.contains(current.pending.key)
+        else { return }
+        current.phase = .verifying(stillProcessing: false)
+        current.pollStep = 0
+        held = current
+        attempt.phase = current.phase
+        attempt.startOverFailed = false
+        screen = .attempt(attempt)
+        startVerify(current.pending)
+    }
+
     /// "Start a new payment", after the person confirmed: forget the remembered attempt, here and in the
     /// Keychain, and read the link afresh. The form opens EMPTY: what the earlier attempt held (a name and an
     /// email) is never shown to whoever is holding the phone, only sent again in a same-key replay.
+    ///
+    /// Also "Try Again" on a payment the server has FINISHED without moving money (declined, link unavailable, no
+    /// such checkout): that outcome is settled, so no confirmation is needed. A paid one is never offered again.
     ///
     /// If the Keychain will not let go of it, NOTHING changes and the screen says so: a button that does
     /// nothing, or that forgets the attempt only in memory, would bring it back after a restart.
     public func startOver() {
         switch screen {
         case .attempt(var attempt):
-            guard !inFlight.contains(held?.pending.key ?? "") else { return }
+            guard !inFlight.contains(held?.pending.key ?? ""), !inFlightVerify.contains(held?.pending.key ?? "") else { return }
             do throws(PendingStoreError) {
                 try store.remove(attempt.code)
             } catch {
@@ -308,10 +447,25 @@ public final class CheckoutController {
                 screen = .attempt(attempt)
                 return
             }
+            cancelPoll()
             form.reset()
             held = nil
             lookupCarry = nil
             showLookup(attempt.code)
+
+        case .result(var result):
+            guard !result.result.moneyMoved else { return }
+            do throws(PendingStoreError) {
+                try store.remove(result.code)
+            } catch {
+                result.actionFailed = true
+                screen = .result(result)
+                return
+            }
+            form.reset()
+            held = nil
+            lookupCarry = nil
+            showLookup(result.code)
 
         case .storageBlocked(let code, .undecodable), .storageBlocked(let code, .undecodableClearFailed):
             do throws(PendingStoreError) {
@@ -389,24 +543,58 @@ public final class CheckoutController {
             current = existing
             let reference = existing.pending.reference
             let confirmed = existing.pending.confirmedAmountKobo
+            let settled = existing.pending.settled
             current.pending = slot
             // The answer is in memory even if writing it down failed.
             if slot.reference == nil, reference != nil {
                 current.pending.reference = reference
                 current.pending.confirmedAmountKobo = confirmed
             }
+            if slot.settled == nil, settled != nil { current.pending.settled = settled }
         } else {
             current = Held(pending: slot, phase: .unsettled(.interrupted))
         }
+
         if current.pending.reference != nil {
-            current.phase = .started
-        } else if inFlight.contains(slot.key) {
+            // Decided already: show how it ended, with no network. It stays until the person has seen it.
+            if let result = current.pending.settled {
+                held = current
+                screen = .result(Self.resultScreen(for: current.pending, result))
+                return
+            }
+            // Started and not decided: ask. This runs every time the link is shown, so a payment that was
+            // started and left (Back, a relaunch, a dropped connection) is confirmed when the person returns.
+            // If an ask is already in the air, or one is waiting its turn, this joins it rather than adding one.
+            let waiting = inFlightVerify.contains(slot.key) || poll?.key == slot.key
+            if case .verifying = current.phase, waiting {
+                // keep what it was showing, including "still processing"
+            } else {
+                current.phase = .verifying(stillProcessing: false)
+                current.pollStep = 0
+            }
+            held = current
+            screen = .attempt(Self.attemptScreen(for: current))
+            if !waiting { startVerify(current.pending) }
+            return
+        }
+        if inFlight.contains(slot.key) {
             current.phase = .sending
         } else if case .sending = current.phase {
             current.phase = .unsettled(.interrupted)
         }
         held = current
         screen = .attempt(Self.attemptScreen(for: current))
+    }
+
+    private static func resultScreen(for pending: PendingCheckout, _ result: PaymentResult) -> ResultScreen {
+        ResultScreen(
+            code: pending.request.code,
+            merchantName: pending.merchantName,
+            title: pending.title,
+            amountKobo: pending.confirmedAmountKobo ?? pending.request.amountKobo,
+            reference: pending.reference ?? "",
+            result: result
+        )
     }
 
     private static func attemptScreen(for held: Held, startOverFailed: Bool = false) -> AttemptScreen {
@@ -526,12 +714,19 @@ public final class CheckoutController {
         switch verdict {
         case .started(let started):
             guard recordReference(started, for: pending) else { return }
-            guard onScreen, var current = held else { return }
-            current.pending.reference = started.reference
-            current.pending.confirmedAmountKobo = started.amountKobo
-            current.phase = .started
-            held = current
-            screen = .attempt(Self.attemptScreen(for: current))
+            var withReference = pending
+            withReference.reference = started.reference
+            withReference.confirmedAmountKobo = started.amountKobo
+            if onScreen, var current = held {
+                current.pending.reference = started.reference
+                current.pending.confirmedAmountKobo = started.amountKobo
+                current.phase = .verifying(stillProcessing: false)
+                current.pollStep = 0
+                held = current
+                screen = .attempt(Self.attemptScreen(for: current))
+            }
+            // The person pressed Pay: confirm the payment whether or not the screen is still open.
+            startVerify(withReference)
 
         case .settled(let error):
             removeSlot(for: pending)
@@ -566,7 +761,7 @@ public final class CheckoutController {
 
         case .unsettled(let reason):
             // A late "could not confirm" never takes back an answer that has already arrived.
-            guard onScreen, var current = held, current.pending.reference == nil, current.phase != .started else { return }
+            guard onScreen, var current = held, current.pending.reference == nil else { return }
             current.phase = .unsettled(reason)
             held = current
             screen = .attempt(Self.attemptScreen(for: current))
@@ -603,15 +798,137 @@ public final class CheckoutController {
         if !attempt() { _ = attempt() }
     }
 
+    // MARK: - Verifying
+
+    struct VerifyContext {
+        let pending: PendingCheckout
+        let reference: String
+    }
+
+    /// Ask the server how `pending` was decided. One request, under a key made for this ask: a reference is decided
+    /// once, under any key, so asking again can never post a second time, and a fresh key cannot be answered with a
+    /// stale stored reply. Unstructured on purpose, like `send`: leaving the screen must not drop an answer that
+    /// decides a payment. Whether the answer reaches the SCREEN is `applyVerify`'s decision.
+    private func startVerify(_ pending: PendingCheckout) {
+        guard let reference = pending.reference, pending.settled == nil, !inFlightVerify.contains(pending.key) else { return }
+        inFlightVerify.insert(pending.key)
+        let context = VerifyContext(pending: pending, reference: reference)
+        let key = makeVerifyKey()
+        let service = self.service
+        Task { [weak self] in
+            let result: Result<VerifiedPayment, APIError>
+            do throws(APIError) {
+                result = .success(try await service.verifyCheckout(reference: reference, idempotencyKey: key))
+            } catch {
+                result = .failure(error)
+            }
+            self?.applyVerify(result, context: context)
+        }
+    }
+
+    func applyVerify(_ result: Result<VerifiedPayment, APIError>, context: VerifyContext) {
+        let pending = context.pending
+        inFlightVerify.remove(pending.key)
+        let code = pending.request.code
+        let verdict = VerifyVerdict.of(
+            result, reference: context.reference, code: code,
+            amountKobo: pending.confirmedAmountKobo ?? pending.request.amountKobo)
+        // Does the screen still show THIS attempt?
+        let onScreen = openCode == code && held?.pending.key == pending.key
+
+        switch verdict {
+        case .decided(let outcome):
+            // Written down BEFORE the screen changes, so a kill right now still finds the result. `false` means the
+            // attempt is gone from storage (sign-out, start over): there is nothing left to settle, and the answer is dropped.
+            guard recordSettled(outcome, for: pending, reference: context.reference) else { return }
+            if poll?.key == pending.key { cancelPoll() }
+            guard onScreen, var current = held else { return }
+            current.pending.reference = context.reference
+            current.pending.settled = outcome
+            held = current
+            screen = .result(Self.resultScreen(for: current.pending, outcome))
+
+        case .notDecided:
+            guard onScreen, var current = held, current.pending.settled == nil else { return }
+            let step = current.pollStep
+            if step < verifyDelays.count {
+                current.pollStep = step + 1
+                current.phase = .verifying(stillProcessing: true)
+                held = current
+                screen = .attempt(Self.attemptScreen(for: current))
+                schedulePoll(for: current.pending.key, delay: verifyDelays[step])
+            } else {
+                current.phase = .unconfirmed(.stillProcessing)
+                held = current
+                screen = .attempt(Self.attemptScreen(for: current))
+            }
+
+        case .unconfirmed(let reason):
+            // A late "could not confirm" never takes back a result that has already arrived.
+            guard onScreen, var current = held, current.pending.settled == nil else { return }
+            current.phase = .unconfirmed(reason)
+            held = current
+            screen = .attempt(Self.attemptScreen(for: current))
+        }
+    }
+
+    /// Mark the attempt's slot `settled`. `false` means the slot no longer holds this attempt. A storage failure
+    /// is not that: the answer is still shown (and asked again, with the same result, if the app is closed first).
+    private func recordSettled(_ outcome: PaymentResult, for pending: PendingCheckout, reference: String) -> Bool {
+        do throws(PendingStoreError) {
+            guard var stored = try store.load(pending.request.code), stored.key == pending.key else { return false }
+            stored.reference = stored.reference ?? reference
+            stored.confirmedAmountKobo = stored.confirmedAmountKobo ?? pending.confirmedAmountKobo
+            stored.settled = outcome
+            try store.save(stored)
+        } catch {
+            return true
+        }
+        return true
+    }
+
+    private func schedulePoll(for key: String, delay: Duration) {
+        cancelPoll()
+        let sleep = self.sleep
+        let task = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.pollIsDue(key: key)
+        }
+        poll = (key, task)
+    }
+
+    private func pollIsDue(key: String) {
+        guard poll?.key == key else { return }
+        poll = nil
+        guard let code = openCode, let current = held, current.pending.key == key,
+            current.pending.request.code == code, case .verifying = current.phase, current.pending.settled == nil
+        else { return }
+        startVerify(current.pending)
+    }
+
+    private func cancelPoll() {
+        poll?.task.cancel()
+        poll = nil
+    }
+
+    /// The person has seen a finished payment and is leaving it: forget it here and in the Keychain. If the removal
+    /// fails nothing is lost: the next time the link opens it shows the same result, and "Done" tries again.
+    private func dismissResult() {
+        guard case .result = screen, let pending = held?.pending, pending.settled != nil else { return }
+        removeSlot(for: pending)
+    }
+
     // MARK: - The session
 
     /// Whether any attempt made under a session is stored, for the sign-out confirmation. Storage that
-    /// cannot be listed counts as "yes": the safe answer is to ask.
+    /// cannot be listed counts as "yes": the safe answer is to ask. A finished payment is not an unfinished one:
+    /// it is still removed by a sign-out, but it is not worth a warning.
     public var hasSessionAttempts: Bool {
         guard let slots = try? store.all() else { return true }
         return slots.contains { slot in
             switch slot {
-            case .pending(let pending): pending.owner.isSession
+            case .pending(let pending): pending.owner.isSession && pending.settled == nil
             case .unreadable: true
             }
         }
@@ -711,6 +1028,7 @@ public final class CheckoutController {
     /// Empty everything that belongs to the person who was here, and show the open link again as it looks
     /// to whoever is here now.
     private func resetOpenScreen() {
+        cancelPoll()
         form.reset()
         held = nil
         lookupCarry = nil
@@ -763,6 +1081,7 @@ public final class CheckoutController {
                 do throws(PendingStoreError) {
                     try store.remove(pending.request.code)
                     inFlight.remove(pending.key)
+                    inFlightVerify.remove(pending.key)
                 } catch {
                     complete = false
                 }
@@ -805,6 +1124,8 @@ public final class CheckoutController {
         hideSessionAttempts = false
         pendingAdoption = nil
         inFlight = []
+        inFlightVerify = []
+        cancelPoll()
         form.reset()
         held = nil
         present(code)

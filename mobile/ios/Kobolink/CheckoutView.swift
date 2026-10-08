@@ -41,6 +41,8 @@ struct CheckoutView: View {
                 }
             case .attempt(let attempt):
                 AttemptView(checkout: checkout, attempt: attempt, onDone: onDone)
+            case .result(let result):
+                ResultView(checkout: checkout, result: result, onDone: onDone)
             }
         }
         .navigationTitle("Payment link")
