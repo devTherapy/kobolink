@@ -5,6 +5,9 @@
 	<!-- Debug. Merged with the keys Xcode generates from INFOPLIST_KEY_* build settings. -->
 	<key>KobolinkAPIBaseURL</key>
 	<string>$(KOBOLINK_API_BASE_URL)</string>
+	<!-- Asked only when you choose Scan to Pay. The camera reads a QR code on this iPhone; no picture or video is kept or sent. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Kobolink uses the camera to scan a Kobolink payment QR code, so you can pay someone without typing their phone number. Nothing is recorded or saved.</string>
 	<!-- The custom scheme kobolink://l/{code}: needs no entitlement, so it works for a free personal team and in the Simulator. -->
 	<key>CFBundleURLTypes</key>
 	<array>

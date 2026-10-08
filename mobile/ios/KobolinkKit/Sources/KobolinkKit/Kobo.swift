@@ -36,9 +36,15 @@ public enum Kobo {
     /// The amount as VoiceOver should say it: `"18,500 naira"`, `"18,500 naira, 50 kobo"`. The visible
     /// "₦" is read inconsistently, so the visible text is paired with this as its accessibility label.
     public static func spokenNaira(_ kobo: Int) -> String {
-        let (whole, remainder) = split(kobo)
-        let body = remainder == 0 ? "\(grouped(whole)) naira" : "\(grouped(whole)) naira, \(remainder) kobo"
+        let body = spokenNairaUnsigned(kobo)
         return kobo < 0 ? "minus \(body)" : body
+    }
+
+    /// The size of the amount as VoiceOver should say it, with no sign: for a caller that says the direction in
+    /// words ("out", "in"). Works from the magnitude, so `Int.min` (which has no positive twin) is safe.
+    public static func spokenNairaUnsigned(_ kobo: Int) -> String {
+        let (whole, remainder) = split(kobo)
+        return remainder == 0 ? "\(grouped(whole)) naira" : "\(grouped(whole)) naira, \(remainder) kobo"
     }
 
     /// Parse what a payer typed: `"18500"`, `"18,500"`, `"₦18,500"`, `"18500.5"`. Returns `nil` for

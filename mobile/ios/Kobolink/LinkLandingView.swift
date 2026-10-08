@@ -11,7 +11,7 @@ struct LinkLandingView: View {
         switch destination {
         case .link(let code):
             switch home {
-            case .ready(_, _, _, let checkout):
+            case .ready(_, _, _, let checkout, _):
                 CheckoutView(code: code, checkout: checkout, onDone: onDone)
             case .misconfigured(let problem):
                 MisconfiguredView(problem: problem)
