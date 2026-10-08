@@ -1,0 +1,18 @@
+#include "Base.xcconfig"
+
+// Release is exactly what is checked in: no Local.xcconfig, so no machine can
+// point a shipping build at another server.
+INFOPLIST_FILE = Kobolink/Info.plist
+
+// Universal links: applinks:pay.folusayo.com. This is the only configuration that references the
+// entitlement, because a free personal team cannot sign it (Debug builds, including every Simulator
+// run, stay entitlement-free). Release needs a paid Apple Developer Program team; see README.md.
+CODE_SIGN_ENTITLEMENTS = Config/Kobolink.entitlements
+
+// A Release or TestFlight build needs the paid team's ID. Add it HERE (a Team ID is not a secret):
+//   DEVELOPMENT_TEAM = ABCDE12345
+// Do not use Xcode's Signing & Capabilities editor for it, or to add Associated Domains: it writes
+// DEVELOPMENT_TEAM and CODE_SIGN_ENTITLEMENTS into project.pbxproj, which Debug reads too, and
+// DeepLinkConfigurationTests fails.
+
+SWIFT_COMPILATION_MODE = wholemodule

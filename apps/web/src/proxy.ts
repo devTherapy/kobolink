@@ -13,8 +13,9 @@ const SESSION_COOKIE_NAME = 'kobolink_session'
 
 /**
  * Route protection's cheap half (PLAN.md F2 "Done when": signed-out access
- * to `/dashboard` redirects). Edge middleware runs on every matched
- * navigation, so it deliberately does *not* call `getSession()` — that
+ * to `/dashboard` redirects). The proxy (Next 16's name for what was
+ * `middleware`; it runs on the Node.js runtime, no `runtime` config) runs on
+ * every matched navigation, so it deliberately does *not* call `getSession()` — that
  * would mean an `auth.me` network round trip on every dashboard navigation
  * just to answer a question a cookie's mere presence already answers for
  * the common case (no cookie at all = definitely signed out). The
@@ -26,7 +27,7 @@ const SESSION_COOKIE_NAME = 'kobolink_session'
  * construction — no separate validation needed here the way `LoginForm`
  * needs `sameOriginPath` for a `next` a stranger's URL could set.
  */
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   if (request.cookies.has(SESSION_COOKIE_NAME)) {
     return NextResponse.next()
   }

@@ -9,8 +9,9 @@ import { Card } from '@/components/ui/Card'
  * doc comment in `packages/contracts`).
  *
  * A plain function component: nothing here needs a hook or an event handler,
- * so it renders as part of `DashboardPage`'s server-side HTML with no client
- * JS of its own — same reasoning as `NonPayableScreen`.
+ * so it has no client boundary of its own. `LiveDashboard` (F7) renders it with
+ * figures kept current from the live stream — still part of the server-rendered
+ * HTML on arrival — and it is happy to be rendered by anything that has stats.
  *
  * Non-interactive, like `Card`/`Pill`: no hover/focus/active/disabled state
  * of its own. Its one loading state lives one level up, in `app/dashboard/

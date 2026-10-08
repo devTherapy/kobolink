@@ -152,6 +152,118 @@ describe('Table', () => {
     expect(within(firstRow).queryByRole('button')).not.toBeInTheDocument()
   })
 
+  describe('rowHref — rows that navigate', () => {
+    it('renders column 0 as a real link and no button, so it works without client JS', () => {
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+        />,
+      )
+
+      const link = screen.getByRole('link', { name: 'Ankara set' })
+      expect(link).toHaveAttribute('href', '/items/a')
+      expect(screen.getByRole('link', { name: 'Aso-oke gele' })).toHaveAttribute('href', '/items/b')
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      // Row and cell roles are untouched: it is a table with a link in it, not a table of links.
+      expect(within(link.closest('tr')!).getAllByRole('cell')).toHaveLength(columns.length)
+    })
+
+    it('takes its accessible name from rowLabel when given', () => {
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+          rowLabel={(row) => `Open ${row.title}`}
+        />,
+      )
+
+      expect(screen.getByRole('link', { name: 'Open Ankara set' })).toBeInTheDocument()
+    })
+
+    it('stretches the link over the whole row, so a mouse can click anywhere, and rings the row on focus', () => {
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+        />,
+      )
+
+      const link = screen.getByRole('link', { name: 'Ankara set' })
+      const row = link.closest('tr')!
+      expect(row.className).toMatch(/\brelative\b/)
+      expect(row.className).toMatch(/hover:bg-\(--color-border-soft\)/)
+      expect(row.className).toMatch(/active:bg-\(--color-border\)/)
+      expect(link.className).toMatch(/after:absolute/)
+      expect(link.className).toMatch(/after:inset-0/)
+      expect(link.className).toMatch(/focus-visible:after:outline-2/)
+      // The ring is on the stretched pseudo-element: the anchor's own outline is width-zeroed so they do not stack,
+      // and — as for the button — never `outline-none`, which would also kill the pseudo's `--tw-outline-style`.
+      expect(link.className).toMatch(/focus-visible:outline-0/)
+      expect(link.className).not.toMatch(/(^|\s)(focus-visible:)?outline-(none|hidden)/)
+    })
+
+    it('is reachable and activatable by keyboard — Tab lands on the link', async () => {
+      const user = userEvent.setup()
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+        />,
+      )
+
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Ankara set' })).toHaveFocus()
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Aso-oke gele' })).toHaveFocus()
+    })
+
+    it('wins over onRowClick when both are given', () => {
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+          onRowClick={vi.fn()}
+        />,
+      )
+
+      expect(screen.getAllByRole('link')).toHaveLength(rows.length)
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    })
+
+    it('renders a disabled row as plain text, not a link (disabled state)', () => {
+      render(
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.id}
+          emptyState="No rows"
+          rowHref={(row) => `/items/${row.id}`}
+          isRowDisabled={(row) => row.id === 'a'}
+        />,
+      )
+
+      expect(screen.queryByRole('link', { name: 'Ankara set' })).not.toBeInTheDocument()
+      expect(screen.getByText('Ankara set')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Aso-oke gele' })).toBeInTheDocument()
+    })
+  })
+
   it('blocks activation on a disabled row (disabled state)', async () => {
     const user = userEvent.setup()
     const onRowClick = vi.fn()

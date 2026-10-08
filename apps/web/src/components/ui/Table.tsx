@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
+import Link from 'next/link'
 import { cn } from './cn'
 import { Skeleton } from './Skeleton'
 
@@ -48,6 +49,16 @@ export interface TableProps<T> {
   error?: ReactNode
   /** Rows become the interactive unit when this is given — see the states note below. */
   onRowClick?: ((row: T) => void) | undefined
+  /**
+   * Rows that navigate. Column 0 renders as a real `<a href>` (so Cmd-click,
+   * open-in-new-tab, the status-bar URL and a screen reader's "link" role all
+   * work), stretched over the whole row so a mouse can click anywhere in it.
+   * Unlike `onRowClick` it needs no client JavaScript — a Server Component can
+   * pass it. When both are given, `rowHref` wins.
+   */
+  rowHref?: ((row: T) => string) | undefined
+  /** The link's accessible name, when column 0's own text is longer than a name should be. */
+  rowLabel?: ((row: T) => string) | undefined
   isRowDisabled?: ((row: T) => boolean) | undefined
   className?: string | undefined
 }
@@ -66,9 +77,11 @@ function renderBody<T>({
   emptyState,
   error,
   onRowClick,
+  rowHref,
+  rowLabel,
   isRowDisabled,
 }: Required<Pick<TableProps<T>, 'columns' | 'rows' | 'rowKey' | 'loadingRowCount' | 'emptyState'>> &
-  Pick<TableProps<T>, 'loading' | 'error' | 'onRowClick' | 'isRowDisabled'>) {
+  Pick<TableProps<T>, 'loading' | 'error' | 'onRowClick' | 'rowHref' | 'rowLabel' | 'isRowDisabled'>) {
   const columnCount = columns.length
 
   if (loading) {
@@ -107,6 +120,8 @@ function renderBody<T>({
         row={row}
         columns={columns}
         onRowClick={onRowClick}
+        href={rowHref?.(row)}
+        label={rowLabel?.(row)}
         disabled={disabled}
       />
     )
@@ -135,6 +150,8 @@ export function Table<T>({
   emptyState,
   error,
   onRowClick,
+  rowHref,
+  rowLabel,
   isRowDisabled,
   className,
 }: TableProps<T>) {
@@ -167,6 +184,8 @@ export function Table<T>({
             emptyState,
             error,
             onRowClick,
+            rowHref,
+            rowLabel,
             isRowDisabled,
           })}
         </tbody>
@@ -179,6 +198,9 @@ interface TableRowProps<T> {
   row: T
   columns: TableColumn<T>[]
   onRowClick?: ((row: T) => void) | undefined
+  /** Already resolved for this row; wins over `onRowClick`. */
+  href?: string | undefined
+  label?: string | undefined
   disabled: boolean
 }
 
@@ -201,8 +223,9 @@ interface TableRowProps<T> {
  * otherwise every click on the primary button would activate `onRowClick`
  * twice, once via the button and once via bubbling to the row.
  */
-function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
-  const clickable = Boolean(onRowClick) && !disabled
+function TableRow<T>({ row, columns, onRowClick, href, label, disabled }: TableRowProps<T>) {
+  const isLink = href !== undefined && !disabled
+  const clickable = !isLink && Boolean(onRowClick) && !disabled
 
   function handleRowClick(event: MouseEvent<HTMLTableRowElement>) {
     const target = event.target as HTMLElement
@@ -215,12 +238,44 @@ function TableRow<T>({ row, columns, onRowClick, disabled }: TableRowProps<T>) {
       onClick={clickable ? handleRowClick : undefined}
       className={cn(
         'border-b border-(--color-border-soft) last:border-0',
+        // `relative` is the containing block the link's stretched `::after`
+        // (below) measures against, so one anchor covers the whole row.
+        isLink && 'relative hover:bg-(--color-border-soft) active:bg-(--color-border)',
         clickable && 'cursor-pointer hover:bg-(--color-border-soft) active:bg-(--color-border)',
         disabled && 'opacity-50',
       )}
     >
       {columns.map((column, index) => {
-        const isPrimaryAction = index === 0 && Boolean(onRowClick)
+        if (isLink && index === 0) {
+          return (
+            <td
+              key={column.key}
+              className={cn(
+                'min-w-0 break-words px-4 py-3 text-(--color-ink)',
+                column.numeric && 'tabular',
+                column.align === 'right' ? 'text-right' : 'text-left',
+              )}
+            >
+              {/* The ring is drawn on the stretched `::after`, so it outlines
+                  the whole row (the click target) rather than the link's
+                  text; the global `:focus-visible` ring on the anchor itself
+                  is zeroed with `outline-0` (width only — not `outline-none`,
+                  see the note in `ui/Field.tsx`) so the two don't stack. */}
+              <Link
+                href={href}
+                aria-label={label}
+                className={cn(
+                  'block touch-manipulation focus-visible:outline-0',
+                  "after:absolute after:inset-0 after:content-['']",
+                  'focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-(--color-brand)',
+                )}
+              >
+                {column.render(row)}
+              </Link>
+            </td>
+          )
+        }
+        const isPrimaryAction = index === 0 && Boolean(onRowClick) && href === undefined
         return (
           <td
             key={column.key}

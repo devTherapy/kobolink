@@ -70,6 +70,18 @@ function endOfLocalDay(expiresOn: string): Date | null {
   return date
 }
 
+/**
+ * Today in the merchant's own timezone as `YYYY-MM-DD` — the `min` of the
+ * expiry picker. Local parts, not `toISOString()`, which is UTC and would
+ * name tomorrow (or yesterday) for a merchant near midnight; it matches
+ * `endOfLocalDay`, which is what "today or a later date" is judged against.
+ */
+export function todayLocalDate(now: Date = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${String(now.getFullYear()).padStart(4, '0')}-${month}-${day}`
+}
+
 function amountRangeMessage(): string {
   return `Enter an amount between ${formatNaira(MIN_AMOUNT_KOBO)} and ${formatNaira(MAX_AMOUNT_KOBO)}.`
 }

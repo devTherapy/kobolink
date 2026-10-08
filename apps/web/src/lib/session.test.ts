@@ -6,7 +6,7 @@ import { getSession } from './session'
  * `getSession` is exercised with an explicit `cookieHeader` argument rather
  * than mocking `next/headers` — see its own doc comment for why that
  * parameter exists. This is the same "forwarded cookie" contract
- * `middleware.ts` and the dashboard layout both rely on, tested directly
+ * `proxy.ts` and the dashboard layout both rely on, tested directly
  * against the mock `auth.me` handler in `src/mocks/handlers.ts`.
  */
 describe('getSession', () => {

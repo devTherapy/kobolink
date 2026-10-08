@@ -9,11 +9,14 @@
  * primary actions, current selection and focus only, never decoration.
  */
 @theme {
-  /* Supplied by next/font in src/app/layout.tsx — self-hosted, not fetched
-     from Google at runtime. The fallbacks matter: they are what renders
-     during swap and in any environment where the faces fail to load. */
-  --font-sans: var(--font-ibm-plex-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-ibm-plex-mono), "SFMono-Regular", Menlo, monospace;
+  /* Supplied by next/font/local in src/app/fonts.ts — self-hosted, never
+     fetched from Google. Each typeface is three unicode-range slices (latin,
+     latin-ext, vietnamese); ext and vietnamese come first so the size-adjusted
+     fallback that rides with the latin slice is the last Plex family tried.
+     The system fallbacks matter: they are what renders during swap and in any
+     environment where the faces fail to load. */
+  --font-sans: var(--font-ibm-plex-sans-latin-ext), var(--font-ibm-plex-sans-vietnamese), var(--font-ibm-plex-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono-latin-ext), var(--font-ibm-plex-mono-vietnamese), var(--font-ibm-plex-mono), "SFMono-Regular", Menlo, monospace;
 
   --color-brand:        #1F44D8;
   --color-brand-hover:  #1637B5;

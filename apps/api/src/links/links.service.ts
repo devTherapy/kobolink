@@ -27,7 +27,7 @@ import { rowToPayment } from '../payments/payment-mapper.js'
 /** `links.code` is the primary key (Postgres auto-names it `links_pkey`); a collision is this constraint firing on insert. */
 const LINKS_PKEY_CONSTRAINT = 'links_pkey'
 /**
- * `newLinkCode` draws from a 54-symbol, 8-character alphabet (~46 bits) — a
+ * `newLinkCode` draws from a 57-symbol, 8-character alphabet (~46 bits) — a
  * true collision against an existing row is vanishingly unlikely even at
  * scale. This many attempts exists only to bound the loop and turn a
  * catastrophically unlucky run (or a broken generator) into a clean

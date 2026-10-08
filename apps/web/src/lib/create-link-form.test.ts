@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CreateLinkRequestSchema } from '@kobolink/contracts'
-import { formFieldErrorsFromApi, validateCreateLink, type CreateLinkFormValues } from './create-link-form'
+import { formFieldErrorsFromApi, todayLocalDate, validateCreateLink, type CreateLinkFormValues } from './create-link-form'
 
 // Noon on 14 Oct 2026, local time — the "today" every date rule below is measured against.
 const NOW = new Date(2026, 9, 14, 12, 0, 0)
@@ -102,5 +102,12 @@ describe('formFieldErrorsFromApi — the API names request fields, the form name
 
   it('drops a field the form has no input to show it beside', () => {
     expect(formFieldErrorsFromApi({ isReusable: ['nope'], mystery: ['nope'] })).toEqual({})
+  })
+})
+
+describe('todayLocalDate', () => {
+  it('is the local calendar day, zero-padded', () => {
+    expect(todayLocalDate(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
+    expect(todayLocalDate(new Date(2026, 11, 31, 0, 0))).toBe('2026-12-31')
   })
 })

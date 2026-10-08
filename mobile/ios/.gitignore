@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+/Config/Local.xcconfig
+.DS_Store
+# Xcode pins via Kobolink.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+/KobolinkKit/Package.resolved
+/OpenAPITooling/Package.resolved

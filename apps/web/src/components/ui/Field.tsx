@@ -29,6 +29,8 @@ export interface FieldTextProps extends FieldSharedProps {
   type?: 'text' | 'email' | 'tel' | 'password' | 'date' | undefined
   value: string
   onChange: (value: string) => void
+  /** Earliest value the native picker offers (`YYYY-MM-DD` for `type="date"`). A hint to the picker, not validation. */
+  min?: string | undefined
 }
 
 export interface FieldAmountProps extends FieldSharedProps {
@@ -134,6 +136,7 @@ export function Field(props: FieldProps) {
             id={id}
             name={props.name}
             type={props.type ?? 'text'}
+            min={props.min}
             value={props.value}
             onChange={(event) => {
               props.onChange(event.target.value)

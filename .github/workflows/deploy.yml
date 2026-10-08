@@ -1,0 +1,113 @@
+# Production deploy to Fly.io. NEVER runs on a pull request or a push to a
+# branch: only on a manual dispatch (Actions tab -> deploy -> Run workflow) or
+# on pushing a version tag (v*), and the jobs additionally refuse any ref that
+# is not main or a v* tag.
+#
+# It is inert until the repository owner adds FLY_API_TOKEN as an ENVIRONMENT
+# secret of the `production` environment (docs/DEPLOY.md, step 2): without it
+# the first step fails with a clear message before anything is built or
+# contacted.
+#
+#   environment secret (production, NOT a repository secret)
+#             FLY_API_TOKEN      an ORGANISATION-scoped Fly token:
+#                                  fly tokens create org --name github-deploy --expiry 8760h
+#                                One workflow deploys two apps (api and web). An
+#                                app-scoped `fly tokens create deploy` token is
+#                                valid for one app only, so the second deploy
+#                                would be rejected. The trade-off (a wider token)
+#                                is documented in docs/DEPLOY.md.
+#   vars      DOMAIN             pay.folusayo.com
+#             EXPECTED_APP_ID    <APPLE_TEAM_ID>.com.folusayo.kobolink
+#             SMOKE_LINK_CODE    (optional) a real link code to render-check
+#
+# Why an ENVIRONMENT secret: a tag push runs this file from the tagged commit,
+# so whoever can push a tag can edit this workflow (drop the `if:` guard and
+# `environment: production`). A repository secret would still be handed to
+# that run. Only environment secrets are gated by the environment's rules, so
+# the token lives there. The REQUIRED REVIEWER on `production` is THE control:
+# nothing reads the token until the owner approves the run. Deployment
+# branches/tags limited to `main` and `v*` (plus branch protection on `main`)
+# is part of the setup, and a tag ruleset limiting who can create `v*` tags is
+# only an extra layer; neither replaces the reviewer, and without the
+# branch/tag restriction anyone with write access could run a branch whose
+# workflow declares `environment: production`. Do not also create a repository
+# secret of the same name. Setup: docs/DEPLOY.md, step 2.
+#
+# Order: api first (its release_command migrates the database), then web, then
+# the post-deploy smoke test as its own job, so it can be re-run alone when
+# Apple's CDN needs a little longer to ingest a brand-new domain.
+name: deploy
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# One deploy at a time, and never cancel one halfway through a migration.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy api, then web
+    # A manual dispatch from any other branch is refused, not deployed.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require FLY_API_TOKEN
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error title=FLY_API_TOKEN is not set::Add FLY_API_TOKEN as an environment secret of the production environment (an organisation-scoped Fly token; not a repository secret) before deploying. See docs/DEPLOY.md, owner checklist step 2. Nothing was deployed."
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Pinned by commit SHA (tag v1 == 1.6 at the time of writing). The token
+      # is deliberately NOT in this job's env: only the two deploy steps below
+      # see it, never checkout or this third-party setup action.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1
+      # --remote-only: Fly's builder builds the image, not this runner.
+      # The api goes first: its release_command applies migrations, and the
+      # new web build must never run against an older schema.
+      - name: Deploy api
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile --remote-only
+      - name: Deploy web
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy . --config apps/web/fly.toml --dockerfile apps/web/Dockerfile --remote-only
+
+  smoke:
+    name: post-deploy smoke test
+    needs: deploy
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      EXPECTED_APP_ID: ${{ vars.EXPECTED_APP_ID }}
+      SMOKE_LINK_CODE: ${{ vars.SMOKE_LINK_CODE }}
+    steps:
+      - name: Require DOMAIN and EXPECTED_APP_ID
+        run: |
+          for name in DOMAIN EXPECTED_APP_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=$name is not set::Add the repository variable $name (Settings -> Secrets and variables -> Actions -> Variables). See docs/DEPLOY.md."
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Association smoke test
+        run: ./scripts/smoke-associations.sh

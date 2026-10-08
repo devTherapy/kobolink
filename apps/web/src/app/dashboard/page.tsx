@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 import { getSession } from '@/lib/session'
-import { loadDashboardData } from '@/lib/dashboard'
-import { StatStrip } from '@/components/dashboard/StatStrip'
-import { LinksTable } from '@/components/dashboard/LinksTable'
+import { loadDashboardData, type DashboardData } from '@/lib/dashboard'
+import { noticeForReadFailure } from '@/components/dashboard/ReadFailureNotice'
+import { LiveDashboard } from '@/components/dashboard/LiveDashboard'
 import { NewLinkButton } from '@/components/dashboard/NewLinkButton'
 
 export const metadata: Metadata = {
@@ -32,10 +32,11 @@ export const dynamic = 'force-dynamic'
  * `cache()`, so this and the layout share the one request instead of paying
  * for it twice.
  *
- * `NewLinkButton` (F4) is the page's one client island: the CTA, the drawer and
- * the create form. Creating a link calls `router.refresh()`, which re-runs
- * this server render — that is how the table and stat strip pick up the new
- * link without a full reload.
+ * Two client islands, both small. `NewLinkButton` (F4) is the CTA, the drawer
+ * and the create form: creating a link calls `router.refresh()`, which re-runs
+ * this server render. `LiveDashboard` (F7) renders the stat strip and links
+ * table from the figures fetched here, then keeps them current from the live
+ * stream; the page's HTML on arrival is unchanged by it.
  *
  * `getSession()` and `loadDashboardData()` depend on nothing but the
  * incoming request's own cookie — neither result feeds the other — so they
@@ -44,7 +45,21 @@ export const dynamic = 'force-dynamic'
  * even start (`async-parallel`).
  */
 export default async function DashboardPage() {
-  const [session, { stats, links }] = await Promise.all([getSession(), loadDashboardData()])
+  let data: DashboardData
+  let session: Awaited<ReturnType<typeof getSession>>
+  try {
+    ;[session, data] = await Promise.all([getSession(), loadDashboardData()])
+  } catch (error) {
+    // The two failures a retry cannot fix (a customer account, a body that
+    // breaks the contract) are rendered here: `error.tsx` only ever sees an
+    // opaque digest in production and could not tell them from "unreachable".
+    // Anything else is rethrown to it — and a session that ended has already
+    // redirected inside `loadDashboardData`.
+    const notice = noticeForReadFailure(error, { subject: 'your dashboard', reloadHref: '/dashboard' })
+    if (notice) return notice
+    throw error
+  }
+  const { stats, links } = data
   const displayName = session?.user.displayName ?? 'there'
 
   return (
@@ -53,8 +68,7 @@ export default async function DashboardPage() {
         <h1 className="text-[23px] font-semibold text-(--color-ink)">Welcome back, {displayName}.</h1>
         <NewLinkButton />
       </div>
-      <StatStrip stats={stats} />
-      <LinksTable links={links.items} />
+      <LiveDashboard stats={stats} links={links.items} />
     </div>
   )
 }

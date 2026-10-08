@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { exampleLink } from '@kobolink/contracts'
 import { LinksTable } from './LinksTable'
@@ -52,9 +53,23 @@ describe('LinksTable', () => {
     expect(screen.queryByText('Ankara Two-Piece Set')).not.toBeInTheDocument()
   })
 
-  it('has no interactive rows yet — F5 owns link-detail navigation, not this feature', () => {
-    render(<LinksTable links={[exampleLink()]} />)
+  it('makes each row a real link to its detail page — keyboard-reachable, not a click handler', async () => {
+    const user = userEvent.setup()
+    render(<LinksTable links={[exampleLink(), exampleLink({ code: 'zZzZ2345', title: 'Aso-oke gele' })]} />)
+
+    const link = screen.getByRole('link', { name: 'View Ankara Two-Piece Set' })
+    expect(link).toHaveAttribute('href', '/dashboard/links/aBcDeFgH')
+    expect(screen.getByRole('link', { name: 'View Aso-oke gele' })).toHaveAttribute('href', '/dashboard/links/zZzZ2345')
+    // No button standing in for navigation.
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
+
+    await user.tab()
+    expect(link).toHaveFocus()
+  })
+
+  it('names the link by the title alone, not by a description that can run to 500 characters', () => {
+    render(<LinksTable links={[exampleLink({ description: 'x'.repeat(500) })]} />)
+    expect(screen.getByRole('link')).toHaveAccessibleName('View Ankara Two-Piece Set')
   })
 
   // `Table` is an auto-layout <table>: a `truncate` cell with nothing
