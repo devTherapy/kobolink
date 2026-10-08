@@ -388,12 +388,20 @@ port), runs the migrations, builds and starts `apps/api` (`node dist/main.js`) o
 calls the iOS client makes (login as `client: mobile`, the payer's calls with no `Authorization`, the wallet, the
 idempotency replays, the refusals and their statuses, `Retry-After` on a 429, a paginated activity read) so a contract
 change the generated models cannot see (a header, a status code, a replay that stopped returning the stored body) fails
-here. Passwords and the database password are generated per run (`openssl rand`) and live only in a mode-700 state
-directory outside the repository. It removes only what it created (the container by that name, the API by its recorded
-PID, the state directory). Subcommands: `up`, `check`, `down`, `status`.
+here. Passwords and the database password are generated per run (`openssl rand`); they are never written to a tracked
+file or printed, and sit in a mode-700 state directory outside the repository (and, while the stack is up, in the
+container's and the API's process environments). Subcommands: `up`, `check`, `down`, `status`.
 
-The API's login limiter counts every register and every login, successful or not, against 20 per 15 minutes per IP,
-so give each run its own stack (`up` ... `down`) instead of repeating `check` against one.
+**What it removes.** Only what the state file records it creating: the container by its full ID (never by name; it
+is checked to still be named `kobolink-x2-pg`), the API by its recorded PID if the recorded start time and command still
+match, and the state directory if it holds the script's own marker. It refuses to start, and removes nothing, if a
+container named `kobolink-x2-pg`, a state file or the state path already exists. `down` with no state file removes
+nothing. `KOBOLINK_X2_STATE_DIR` must be an absolute path that does not exist yet, not `/`, not `$HOME`, and not the
+repo or a parent or child of it. `scripts/test-ios-real-api-smoke.sh` proves all of this against stubs, with no Docker.
+
+The API's login limiter counts every register and every login, successful or not, against 20 per 15 minutes per IP.
+`check` uses 10 of them and `RealAPIIntegrationTests` uses 12, so `check` followed by the Swift suite, or the Swift suite
+twice, on ONE stack fails at its setup with a 429. Give each its own stack (`down`, then `up`).
 
 **The Swift suite.** `RealAPIIntegrationTests` runs the app's own client (`KobolinkAPIClient`, with the real
 `AuthMiddleware`) against the running API. It is skipped, and says why, unless `KOBOLINK_REAL_API` is set:
