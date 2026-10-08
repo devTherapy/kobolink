@@ -641,17 +641,17 @@ struct CheckoutStartOverTests {
         return rig
     }
 
-    @Test("it forgets the attempt, reads the link again and gives the form back with what was sent")
+    @Test("it forgets the attempt, reads the link again and opens an EMPTY form: the stored name and email are never shown again")
     func startOver() async {
         let rig = await startedRig()
-        rig.controller.form.reset()
         rig.service.queueLookup(.success(CK.lookup()))
         rig.controller.startOver()
         #expect(await waitUntil { rig.linkScreen != nil })
         #expect(rig.store.snapshot.isEmpty)
-        #expect(rig.controller.form.name == CK.payerName)
-        #expect(rig.controller.form.email == CK.payerEmail)
+        #expect(rig.controller.form.isEmpty)
+        #expect(rig.controller.form.errors.isEmpty)
         // The next Pay is a new attempt.
+        rig.fillForm(name: "Someone Else", email: "else@example.test")
         rig.service.queueInitialize(.success(CK.started(reference: CK.otherReference)))
         rig.controller.pay()
         #expect(await waitUntil { rig.attemptScreen?.reference == CK.otherReference })
@@ -701,5 +701,129 @@ struct CheckoutStartOverTests {
         #expect(started == "This forgets payment kbl_aBcDeFgHjK on this iPhone and starts again. If you already paid, check with Adebayo Stores first.")
         let unknown = CheckoutCopy.startOverMessage(reference: nil, merchant: "Adebayo Stores")
         #expect(unknown.contains("If you already paid, check with Adebayo Stores first."))
+    }
+}
+
+// MARK: - What a stored attempt may show
+
+@MainActor
+@Suite("Checkout: a stored payer's name and email never reach a screen")
+struct CheckoutPrivacyTests {
+    private func assertNoPayerDetails(_ rig: CheckoutRig, _ label: String) {
+        let shown = String(describing: rig.controller.screen) + rig.controller.form.name + rig.controller.form.email
+        #expect(!shown.contains("Ngozi"), "\(label) shows the payer's name")
+        #expect(!shown.contains("Okafor"), "\(label) shows the payer's name")
+        #expect(!shown.contains("ngozi@example.test"), "\(label) shows the payer's email")
+    }
+
+    @Test("started, unsettled, interrupted, sending and blocked screens carry no name or email; the form is empty after every way back")
+    func noDetailsInAnyState() async {
+        let rig = CheckoutRig()
+        await rig.openPayable()
+        rig.fillForm()
+        let gate = Gate()
+        rig.service.queueInitialize(.failure(CK.offline), gate: gate)
+        rig.controller.pay()
+        #expect(await waitUntil { rig.service.sends.count == 1 })
+        rig.controller.close()
+        rig.controller.open(CK.codeA)
+        #expect(rig.attemptScreen?.phase == .sending)
+        assertNoPayerDetails(rig, "sending")
+        gate.open()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .unsettled(.interrupted) || rig.attemptScreen?.phase == .unsettled(.noConnection) })
+        assertNoPayerDetails(rig, "unsettled")
+        rig.controller.close()
+        rig.controller.open(CK.codeA)
+        assertNoPayerDetails(rig, "interrupted")
+        rig.service.queueInitialize(.success(CK.started()))
+        rig.controller.retry()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        assertNoPayerDetails(rig, "started")
+        // A relaunch, and every way to a new form.
+        let cold = rig.relaunched()
+        cold.controller.open(CK.codeA)
+        assertNoPayerDetails(cold, "cold start")
+        cold.service.queueLookup(.success(CK.lookup()))
+        cold.controller.startOver()
+        #expect(await waitUntil { cold.linkScreen != nil })
+        assertNoPayerDetails(cold, "start over")
+        #expect(cold.controller.form.isEmpty)
+        let blocked = CheckoutRig()
+        blocked.store.fail(.read)
+        blocked.controller.open(CK.codeA)
+        assertNoPayerDetails(blocked, "blocked")
+    }
+
+    @Test("the types a screen is made of have no place for a name or an email")
+    func screenTypesHaveNoPayerFields() {
+        let mirror = Mirror(reflecting: AttemptScreen(code: CK.codeA, merchantName: "m", title: "t", amountKobo: 1, reference: nil, phase: .started))
+        let names = Set(mirror.children.compactMap(\.label))
+        #expect(names == ["code", "merchantName", "title", "amountKobo", "reference", "phase", "startOverFailed"])
+    }
+}
+
+@MainActor
+@Suite("Checkout: storage that cannot be cleared")
+struct CheckoutBlockedStorageTests {
+    @Test("Start a new payment on an unreadable record that cannot be removed says so, and changes nothing")
+    func undecodableClearFails() async {
+        let rig = CheckoutRig()
+        rig.store.plantUnreadable(CK.codeA)
+        rig.controller.open(CK.codeA)
+        #expect(rig.controller.screen == .storageBlocked(CK.codeA, .undecodable))
+        rig.store.fail(.remove)
+        rig.controller.startOver()
+        #expect(rig.controller.screen == .storageBlocked(CK.codeA, .undecodableClearFailed))
+        #expect(rig.service.lookups.isEmpty)
+        // It still works once storage does.
+        rig.store.heal()
+        rig.service.queueLookup(.success(CK.lookup()))
+        rig.controller.startOver()
+        #expect(await waitUntil { rig.linkScreen != nil })
+    }
+
+    @Test("a record that may already have been sent is never described as nothing having been sent")
+    func blockedCopy() {
+        for block in [StorageBlock.unreadable, .undecodable, .undecodableClearFailed, .cannotClear] {
+            let notice = CheckoutCopy.storageBlocked(block)
+            let words = [notice.heading, notice.body ?? "", notice.moneyLine, notice.nextStep].joined(separator: " ")
+            #expect(!words.contains("Nothing was sent"), "\(block)")
+            #expect(!words.lowercased().contains("no money"), "\(block)")
+            #expect(notice.moneyLine == "A payment may already have been started on this link.", "\(block)")
+            #expect(words.lowercased().contains("check with the merchant before paying again"), "\(block)")
+        }
+    }
+
+    @Test("a late 'could not confirm' answer never downgrades a started payment")
+    func noDowngrade() async throws {
+        let rig = CheckoutRig()
+        await rig.openPayable()
+        rig.fillForm()
+        rig.service.queueInitialize(.success(CK.started()))
+        rig.controller.pay()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        let stored = try #require(rig.store.snapshot.first)
+        rig.controller.applyOutcome(.failure(CK.offline), context: .init(pending: stored, firstEverSend: false))
+        #expect(rig.attemptScreen?.phase == .started)
+        #expect(rig.attemptScreen?.reference == CK.reference)
+    }
+
+    @Test("a payer's request still in the air when someone signs in stays 'sending': no second send, and its answer lands")
+    func inFlightPayerAttemptSurvivesSignIn() async {
+        let rig = CheckoutRig(owner: .payer)
+        await rig.openPayable()
+        rig.fillForm()
+        let gate = Gate()
+        rig.service.queueInitialize(.success(CK.started()), gate: gate)
+        rig.controller.pay()
+        #expect(await waitUntil { rig.service.sends.count == 1 })
+        rig.service.queueLookup(.success(CK.lookup()))
+        rig.controller.sessionDidChange(.signedIn(CK.userOne))
+        #expect(rig.attemptScreen?.phase == .sending)
+        rig.controller.retry()
+        #expect(rig.service.sends.count == 1)
+        gate.open()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(rig.service.sends.count == 1)
     }
 }

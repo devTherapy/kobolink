@@ -42,6 +42,40 @@ struct PendingCheckoutCodecTests {
     }
 }
 
+@Suite("The owed cleanup")
+struct CleanupObligationTests {
+    private let cutoff = Date(timeIntervalSince1970: 1_790_000_000)
+    private var before: Date { cutoff.addingTimeInterval(-60) }
+    private var after: Date { cutoff.addingTimeInterval(60) }
+
+    @Test("sign-out removes every session attempt made up to the moment of sign-out, and never a payer's")
+    func allSession() {
+        let owed = CleanupObligation(scope: .allSession, cutoff: cutoff)
+        #expect(owed.removes(.session(userID: nil), createdAt: before))
+        #expect(owed.removes(.session(userID: "usr_one"), createdAt: cutoff))
+        #expect(!owed.removes(.payer, createdAt: before))
+        // A LATER session's attempt is not this obligation's to remove.
+        #expect(!owed.removes(.session(userID: "usr_two"), createdAt: after))
+    }
+
+    @Test("a confirmed user's cleanup removes other CONFIRMED users' attempts, never an unconfirmed one, never their own")
+    func foreign() {
+        let owed = CleanupObligation(scope: .foreign, userID: "usr_two", cutoff: cutoff)
+        #expect(owed.removes(.session(userID: "usr_one"), createdAt: before))
+        #expect(!owed.removes(.session(userID: "usr_two"), createdAt: before))
+        #expect(!owed.removes(.session(userID: nil), createdAt: before))
+        #expect(!owed.removes(.payer, createdAt: before))
+        #expect(!owed.removes(.session(userID: "usr_one"), createdAt: after))
+    }
+
+    @Test("it round-trips through JSON as whole seconds")
+    func codable() throws {
+        for owed in [CleanupObligation(scope: .allSession, cutoff: cutoff), CleanupObligation(scope: .foreign, userID: "usr_one", cutoff: cutoff)] {
+            #expect(try JSONDecoder().decode(CleanupObligation.self, from: JSONEncoder().encode(owed)) == owed)
+        }
+    }
+}
+
 @Suite("The in-memory pending store behaves like the Keychain one")
 struct InMemoryPendingStoreTests {
     @Test("save, load, replace and remove, one slot per link code")

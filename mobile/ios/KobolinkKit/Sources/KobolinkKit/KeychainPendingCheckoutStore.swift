@@ -91,6 +91,60 @@ public struct KeychainPendingCheckoutStore: PendingCheckoutStore {
         }
     }
 
+    // MARK: The owed cleanup
+
+    /// Kept under a service of its own so that `all()` never lists it as a slot.
+    private var obligationIdentity: [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service + ".obligation",
+            kSecAttrAccount: "cleanup",
+            kSecAttrSynchronizable: kCFBooleanFalse as Any,
+        ]
+    }
+
+    public func loadObligation() throws(PendingStoreError) -> CleanupObligation? {
+        var query = obligationIdentity
+        query[kSecReturnData] = kCFBooleanTrue
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data, let obligation = try? JSONDecoder().decode(CleanupObligation.self, from: data) else {
+                // Something is there that cannot be read: owed, and not known what. The caller must not read it as "nothing".
+                throw PendingStoreError(operation: .obligation, kind: .undecodable, status: status)
+            }
+            return obligation
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw PendingStoreError(operation: .obligation, status: status)
+        }
+    }
+
+    public func saveObligation(_ obligation: CleanupObligation) throws(PendingStoreError) {
+        let data: Data
+        do { data = try JSONEncoder().encode(obligation) } catch { throw PendingStoreError(operation: .obligation, kind: .undecodable) }
+        let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let updated = SecItemUpdate(
+            obligationIdentity as CFDictionary, [kSecValueData: data, kSecAttrAccessible: accessible] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw PendingStoreError(operation: .obligation, status: updated) }
+        var item = obligationIdentity
+        item[kSecValueData] = data
+        item[kSecAttrAccessible] = accessible
+        let added = SecItemAdd(item as CFDictionary, nil)
+        guard added == errSecSuccess else { throw PendingStoreError(operation: .obligation, status: added) }
+    }
+
+    public func clearObligation() throws(PendingStoreError) {
+        let status = SecItemDelete(obligationIdentity as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw PendingStoreError(operation: .obligation, status: status)
+        }
+    }
+
     public func all() throws(PendingStoreError) -> [PendingSlot] {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,

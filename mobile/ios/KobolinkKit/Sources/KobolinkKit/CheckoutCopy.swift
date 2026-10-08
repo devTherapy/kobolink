@@ -86,24 +86,29 @@ public enum CheckoutCopy {
         return Notice(heading: "Couldn't load this link", body: body, moneyLine: noMoneyMoved, nextStep: "Try again.")
     }
 
+    /// Secure storage would not say, or would not let go. A saved attempt was almost certainly SENT (it is written
+    /// before the request leaves), so this never says nothing was sent: it says one may have been started and
+    /// to check with the merchant before paying again.
     public static func storageBlocked(_ block: StorageBlock) -> Notice {
         let body: String
+        let nextStep: String
         switch block {
         case .unreadable:
-            body = "Kobolink couldn't check this iPhone's secure storage for a payment you may already have started on this link. Unlock your iPhone and try again."
+            body = "Kobolink couldn't check this iPhone's secure storage for a payment you may already have started on this link."
+            nextStep = "Unlock your iPhone and try again. Check with the merchant before paying again."
         case .undecodable:
             body = "A payment on this link was saved by a different version of Kobolink, and this version can't read it."
+            nextStep = "Check with the merchant before paying again. Starting a new payment forgets the saved one."
+        case .undecodableClearFailed:
+            body = "A payment on this link was saved by a different version of Kobolink. This iPhone wouldn't let Kobolink forget it, so nothing has changed."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
         case .cannotClear:
-            body = "A payment saved on this iPhone by an earlier sign-in couldn't be removed, so it isn't shown. Restart Kobolink and try again."
+            body = "A payment saved on this iPhone by an earlier sign-in couldn't be removed, so it isn't shown here."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
         }
         return Notice(
-            heading: "Can't open this payment yet",
-            body: body,
-            moneyLine: "Nothing was sent.",
-            nextStep: block == .undecodable
-                ? "If you already paid, check with the merchant before starting again."
-                : "Try again in a moment."
-        )
+            heading: "Can't open this payment yet", body: body,
+            moneyLine: "A payment may already have been started on this link.", nextStep: nextStep)
     }
 
     // MARK: A remembered attempt
@@ -191,14 +196,17 @@ public enum CheckoutCopy {
 
     // MARK: Dates
 
-    /// "7 Oct 2026, 5:00 PM WAT". Pinned to Africa/Lagos and to the zone's own name rather than the phone's
-    /// zone: a payer abroad would otherwise read a Lagos deadline as local time. Same choice, same reason, as
-    /// `formatCheckoutDate` in `apps/web/src/lib/checkout.ts`.
+    /// "7 Oct 2026, 18:00 WAT": exactly what `formatCheckoutDate` in `apps/web/src/lib/checkout.ts` writes
+    /// (`Intl`, `en-NG`, `Africa/Lagos`, 24-hour, September as "Sept"). Pinned to Lagos and to the zone's own
+    /// name rather than the phone's zone: a payer abroad would otherwise read a Lagos deadline as local time.
+    /// The pieces are written out, not left to ICU, so a newer system's abbreviations cannot drift from the web's.
     public static func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_NG")
-        formatter.timeZone = TimeZone(identifier: "Africa/Lagos")
-        formatter.dateFormat = "d MMM yyyy, h:mm a z"
-        return formatter.string(from: date)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Africa/Lagos") ?? TimeZone(secondsFromGMT: 3600)!
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"]
+        let hour = parts.hour ?? 0, minute = parts.minute ?? 0
+        return "\(parts.day ?? 1) \(months[(parts.month ?? 1) - 1]) \(parts.year ?? 1970), "
+            + "\(hour < 10 ? "0" : "")\(hour):\(minute < 10 ? "0" : "")\(minute) WAT"
     }
 }

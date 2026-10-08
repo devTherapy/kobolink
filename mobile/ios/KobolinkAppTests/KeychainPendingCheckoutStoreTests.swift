@@ -150,6 +150,46 @@ struct KeychainPendingCheckoutStoreTests {
         #expect(throws: PendingStoreError.self) { try store.load(codeA) }
     }
 
+    @Test("the owed cleanup is stored, survives a relaunch, is replaced, taken back, and never listed as a slot")
+    func obligation() throws {
+        let (store, service) = makeStore()
+        defer {
+            cleanUp(store)
+            try? store.clearObligation()
+        }
+        #expect(try store.loadObligation() == nil)
+        try store.clearObligation()
+        let owed = CleanupObligation(scope: .allSession, cutoff: Date(timeIntervalSince1970: 1_790_000_000))
+        try store.saveObligation(owed)
+        try store.save(pending())
+        #expect(try KeychainPendingCheckoutStore(service: service).loadObligation() == owed)
+        #expect(try store.all().count == 1)
+        let narrower = CleanupObligation(scope: .foreign, userID: "usr_one", cutoff: Date(timeIntervalSince1970: 1_790_000_100))
+        try store.saveObligation(narrower)
+        #expect(try store.loadObligation() == narrower)
+        let item = try #require(attributes(service: service + ".obligation", account: "cleanup"))
+        #expect(item[kSecAttrAccessible as String] as? String == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+        try store.clearObligation()
+        #expect(try store.loadObligation() == nil)
+    }
+
+    @Test("an obligation that cannot be read is an error, never 'nothing owed'")
+    func unreadableObligation() throws {
+        let (store, service) = makeStore()
+        defer { try? store.clearObligation() }
+        let item: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword, kSecAttrService: service + ".obligation", kSecAttrAccount: "cleanup",
+            kSecValueData: Data("future".utf8),
+        ]
+        #expect(SecItemAdd(item as CFDictionary, nil) == errSecSuccess)
+        do {
+            _ = try store.loadObligation()
+            Issue.record("an unreadable obligation was read as nothing")
+        } catch {
+            #expect(error.kind == .undecodable)
+        }
+    }
+
     @Test("saving a pending checkout puts nothing in UserDefaults and no file in the app's containers")
     func notInUserDefaultsOrFiles() throws {
         let (store, _) = makeStore()

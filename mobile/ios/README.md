@@ -225,15 +225,22 @@ checks 100+ formatting and 600+ parsing inputs against contracts' own answers
 
 **Ownership** (`AttemptOwner`, the one rule): an attempt made with no stored session is a payer's; one
 made with a session (signed in, `resolving` or `offline`) belongs to that session, with the user id filled in
-once `/me` confirms it. Explicit sign-out removes every session attempt and empties the form fields; a
-confirmed different user removes the others' (and, after a sign-in with credentials, unconfirmed) ones and
-empties the form; the check confirming the same token adopts the unconfirmed ones; an involuntary 401
-removes nothing. A removal that fails is never swallowed: what could not be removed is hidden
-(`storageBlocked`) until a later attempt succeeds. Known limits: a payer's slot is per device, so two payers
-on one phone share it (the screen shows only the amount, merchant and reference, never the payer's name or
-email); a signed-in merchant who signs in again after an expiry loses an unconfirmed attempt made in the
-seconds before the check finished (a second pending checkout, never a second payment); a reusable link
-cannot be paid twice until `verify` (I4) settles the first, except through "Start a New Payment".
+once `/me` confirms it. Explicit sign-out (confirmed first when a session attempt exists) removes every
+session attempt and empties the form fields; a confirmed different user removes the other CONFIRMED
+users' attempts and empties the form; the check, and a sign-in, adopt every unconfirmed attempt for the user
+they confirm (a sign-in never drops one: it may be the same person's, outcome unknown, and forgetting it
+would mint a second key; an adoption that cannot be saved keeps the attempt and is retried); an involuntary
+401 removes nothing. A removal that fails is never swallowed: the obligation is written to the Keychain
+BEFORE the removal is attempted and taken back when it is done, a new process reads it before any slot is
+shown (if it cannot be read, no link opens), and what could not be removed is hidden (`storageBlocked`) until a
+later attempt succeeds. The obligation carries a cutoff, so it can only remove attempts made before it arose.
+A stored name or email is never shown on any screen: `AttemptScreen` has no field for them, "Start a New
+Payment" opens an empty form, and `CheckoutPrivacyTests` checks every presented state; they are only sent
+again, in a same-key "Try Again". Known limits: a payer's slot is per device, so two payers on one phone
+share it (they see the amount, merchant and reference); a different merchant who signs in after an expiry
+adopts an unconfirmed attempt that was not theirs (it is shown as above, and their sign-out removes it); every
+slot survives a reinstall; a reusable link cannot be paid twice until `verify` (I4) settles the first, except
+through "Start a New Payment".
 
 **Tests**: `swift test` in `KobolinkKit` (macOS, fast, 350+ tests) and the command under "Commands" (the
 Simulator, which also runs the hosted Keychain tests). Verification against a throwaway local stub API:

@@ -171,7 +171,12 @@ public final class CheckoutController {
     /// Keys whose request is in flight now.
     @ObservationIgnored private var inFlight: Set<String> = []
     @ObservationIgnored private var confirmedUserID: String?
-    @ObservationIgnored private var pendingCleanup: Cleanup?
+    /// A removal still owed (sign-out, a change of user) because it failed. It is written to storage before it is
+    /// attempted, loaded again by a new process before any slot is shown, and hides what it would remove until done.
+    @ObservationIgnored private var pendingCleanup: CleanupObligation?
+    @ObservationIgnored private var obligationLoaded = false
+    /// A user whose adoption of unconfirmed attempts could not be saved; retried the next time a link is shown.
+    @ObservationIgnored private var pendingAdoption: String?
 
     private enum LookupCarry: Equatable {
         case priceRefused
@@ -181,24 +186,6 @@ public final class CheckoutController {
     private struct Held {
         var pending: PendingCheckout
         var phase: AttemptPhase
-    }
-
-    /// A removal that has to happen and, if it could not, keeps hiding what it would remove.
-    private enum Cleanup: Equatable {
-        /// Explicit sign-out: every attempt made while a session existed.
-        case allSession
-        /// A confirmed user: the attempts of others, and (after a sign-in with credentials) those whose
-        /// owner was never confirmed.
-        case foreign(user: String, dropUnconfirmed: Bool)
-
-        func removes(_ owner: AttemptOwner) -> Bool {
-            switch (self, owner) {
-            case (_, .payer): false
-            case (.allSession, .session): true
-            case (.foreign(_, let dropUnconfirmed), .session(nil)): dropUnconfirmed
-            case (.foreign(let user, _), .session(let id?)): id != user
-            }
-        }
     }
 
     public init(
@@ -310,7 +297,8 @@ public final class CheckoutController {
     }
 
     /// "Start a new payment", after the person confirmed: forget the remembered attempt, here and in the
-    /// Keychain, and read the link afresh. The form is filled with what was sent so it can be corrected.
+    /// Keychain, and read the link afresh. The form opens EMPTY: what the earlier attempt held (a name and an
+    /// email) is never shown to whoever is holding the phone, only sent again in a same-key replay.
     ///
     /// If the Keychain will not let go of it, NOTHING changes and the screen says so: a button that does
     /// nothing, or that forgets the attempt only in memory, would bring it back after a restart.
@@ -325,17 +313,20 @@ public final class CheckoutController {
                 screen = .attempt(attempt)
                 return
             }
-            if let request = held?.pending.request { form.fill(from: request) }
+            form.reset()
             held = nil
             lookupCarry = nil
             showLookup(attempt.code)
 
-        case .storageBlocked(let code, .undecodable):
+        case .storageBlocked(let code, .undecodable), .storageBlocked(let code, .undecodableClearFailed):
             do throws(PendingStoreError) {
                 try store.remove(slotID: code.value)
             } catch {
+                // The confirmed button must not do nothing in silence.
+                screen = .storageBlocked(code, .undecodableClearFailed)
                 return
             }
+            form.reset()
             held = nil
             showLookup(code)
 
@@ -348,7 +339,14 @@ public final class CheckoutController {
 
     /// Decide what `code` shows: its remembered attempt, a block, or a fresh lookup.
     private func present(_ code: LinkCode) {
-        if pendingCleanup != nil { runCleanup() }
+        // What a previous process owed comes first: until it is known, no slot may be shown.
+        guard loadObligationOnce() else {
+            held = nil
+            screen = .storageBlocked(code, .unreadable)
+            return
+        }
+        if pendingCleanup != nil { runCleanup(nil) }
+        if let user = pendingAdoption { adoptUnconfirmed(by: user) }
 
         let slot: PendingCheckout?
         do throws(PendingStoreError) {
@@ -364,7 +362,7 @@ public final class CheckoutController {
             showLookup(code)
             return
         }
-        if let cleanup = pendingCleanup, cleanup.removes(slot.owner) {
+        if let cleanup = pendingCleanup, cleanup.removes(slot.owner, createdAt: slot.createdAt) {
             // An earlier session's attempt that could not be removed: never shown, never resumed.
             held = nil
             screen = .storageBlocked(code, .cannotClear)
@@ -477,7 +475,7 @@ public final class CheckoutController {
 
     // MARK: - Sending
 
-    private struct SendContext {
+    struct SendContext {
         let pending: PendingCheckout
         let firstEverSend: Bool
     }
@@ -500,7 +498,7 @@ public final class CheckoutController {
         }
     }
 
-    private func applyOutcome(_ result: Result<StartedCheckout, APIError>, context: SendContext) {
+    func applyOutcome(_ result: Result<StartedCheckout, APIError>, context: SendContext) {
         let pending = context.pending
         inFlight.remove(pending.key)
         // If the person signed out or changed while it was in the air, their attempt is already gone from
@@ -554,7 +552,8 @@ public final class CheckoutController {
             }
 
         case .unsettled(let reason):
-            guard onScreen, var current = held else { return }
+            // A late "could not confirm" never takes back an answer that has already arrived.
+            guard onScreen, var current = held, current.pending.reference == nil, current.phase != .started else { return }
             current.phase = .unsettled(reason)
             held = current
             screen = .attempt(Self.attemptScreen(for: current))
@@ -614,21 +613,26 @@ public final class CheckoutController {
 
         case .signedOutByChoice:
             confirmedUserID = nil
-            runCleanup(.allSession)
+            pendingAdoption = nil
+            runCleanup(CleanupObligation(scope: .allSession, cutoff: now()))
             resetOpenScreen()
 
         case .resolved(let user):
             let previous = confirmedUserID
             confirmedUserID = user.id
-            runCleanup(.foreign(user: user.id, dropUnconfirmed: false))
+            runCleanup(CleanupObligation(scope: .foreign, userID: user.id, cutoff: now()))
             adoptUnconfirmed(by: user.id)
             if let previous, previous != user.id {
                 resetOpenScreen()
             }
 
         case .signedIn(let user):
+            // A sign-in NEVER drops an attempt whose owner was not confirmed: it may be the same person's, with
+            // an outcome nobody has seen, and forgetting it would let the form mint a second key. The person
+            // who signs in adopts it. Only attempts of a DIFFERENT confirmed user are removed.
             confirmedUserID = user.id
-            runCleanup(.foreign(user: user.id, dropUnconfirmed: true))
+            runCleanup(CleanupObligation(scope: .foreign, userID: user.id, cutoff: now()))
+            adoptUnconfirmed(by: user.id)
             resetOpenScreen()
         }
     }
@@ -639,7 +643,8 @@ public final class CheckoutController {
         form.reset()
         held = nil
         lookupCarry = nil
-        inFlight = []
+        // `inFlight` is NOT cleared: a request still in the air for an attempt that was not removed (a payer's) is
+        // still in the air, and shows as sending so it cannot be sent twice at once.
         guard let code = openCode else {
             screen = .idle
             return
@@ -649,13 +654,38 @@ public final class CheckoutController {
         present(code)
     }
 
-    /// Remove what `cleanup` names. A removal that fails is remembered and hides what it could not
-    /// remove (`present`) until a later attempt succeeds; it is never swallowed.
-    private func runCleanup(_ cleanup: Cleanup? = nil) {
-        let target: Cleanup
+    /// Whether the cleanup a previous process owed has been read. A throw is "could not find out", and then no
+    /// slot is shown at all: guessing "nothing owed" could show a signed-out merchant's attempt.
+    private func loadObligationOnce() -> Bool {
+        if obligationLoaded { return true }
+        do throws(PendingStoreError) {
+            if let owed = try store.loadObligation() { pendingCleanup = Self.merged(pendingCleanup, owed) }
+            obligationLoaded = true
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// A sign-out supersedes any narrower cleanup that is waiting; otherwise the newer one wins.
+    private static func merged(_ existing: CleanupObligation?, _ new: CleanupObligation) -> CleanupObligation {
+        guard let existing else { return new }
+        if existing.scope == .allSession && new.scope == .foreign { return existing }
+        return new
+    }
+
+    /// Remove what `cleanup` names, or (with nil) what is still owed. The obligation is written to storage
+    /// BEFORE the removal is attempted and taken back when it is done, so a restart cannot forget it. A removal
+    /// that fails is remembered and hides what it could not remove (`present`) until a later attempt succeeds:
+    /// it is never swallowed.
+    private func runCleanup(_ cleanup: CleanupObligation?) {
+        let target: CleanupObligation
         if let cleanup {
-            // A sign-out supersedes any narrower cleanup still waiting.
-            target = (pendingCleanup == .allSession || cleanup == .allSession) ? .allSession : cleanup
+            target = Self.merged(pendingCleanup, cleanup)
+            // Best effort here: if this cannot be written the removal is still attempted now, and an
+            // obligation in memory keeps hiding what fails.
+            try? store.saveObligation(target)
+            pendingCleanup = target
         } else if let waiting = pendingCleanup {
             target = waiting
         } else {
@@ -667,21 +697,21 @@ public final class CheckoutController {
         do throws(PendingStoreError) {
             slots = try store.all()
         } catch {
-            pendingCleanup = target
             return
         }
         for slot in slots {
             switch slot {
-            case .pending(let pending) where target.removes(pending.owner):
+            case .pending(let pending) where target.removes(pending.owner, createdAt: pending.createdAt):
                 do throws(PendingStoreError) {
                     try store.remove(pending.request.code)
+                    inFlight.remove(pending.key)
                 } catch {
                     complete = false
                 }
             case .unreadable(let slotID):
-                // Cannot tell whose it is. Sign-out clears it; other cleanups leave it for the block
-                // that offers the person a way to remove it.
-                if target == .allSession {
+                // Cannot tell whose it is. Sign-out clears it; other cleanups leave it for the block that
+                // offers the person a way to remove it.
+                if target.scope == .allSession {
                     do throws(PendingStoreError) {
                         try store.remove(slotID: slotID)
                     } catch {
@@ -692,15 +722,33 @@ public final class CheckoutController {
                 break
             }
         }
-        pendingCleanup = complete ? nil : target
+        guard complete else { return }
+        pendingCleanup = nil
+        // If the marker cannot be taken back, the next process runs the same cleanup again: it is bounded by its
+        // cutoff, so it can only remove what it owed.
+        try? store.clearObligation()
     }
 
-    /// The check confirmed whose session this is: attempts made before it finished get their owner.
+    /// The check, or a sign-in, confirmed whose session this is: attempts made before it finished get their
+    /// owner. An attempt that cannot be saved with its new owner is KEPT (never dropped, never swallowed) and
+    /// adoption is retried the next time a link is shown.
     private func adoptUnconfirmed(by userID: String) {
-        guard let slots = try? store.all() else { return }
+        pendingAdoption = nil
+        let slots: [PendingSlot]
+        do throws(PendingStoreError) {
+            slots = try store.all()
+        } catch {
+            pendingAdoption = userID
+            return
+        }
         for case .pending(var pending) in slots where pending.owner == .session(userID: nil) {
             pending.owner = .session(userID: userID)
-            try? store.save(pending)
+            do throws(PendingStoreError) {
+                try store.save(pending)
+            } catch {
+                pendingAdoption = userID
+                continue
+            }
             if held?.pending.key == pending.key { held?.pending.owner = pending.owner }
         }
     }

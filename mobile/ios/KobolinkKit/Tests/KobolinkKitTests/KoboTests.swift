@@ -211,30 +211,60 @@ struct MoneyDisciplineTests {
         return files
     }
 
-    /// Code with comments and string literals blanked out, so prose about "÷ 100" does not trip the scan.
-    private static func code(_ text: String) -> String {
+    /// Code with comments and string-literal TEXT blanked out, so prose about "÷ 100" does not trip the scan. An
+    /// interpolation, `\( ... )`, is code and is kept: `Text("\(kobo / 100)")` divides.
+    static func code(_ text: String) -> String {
+        let chars = Array(text)
         var out = ""
-        var index = text.startIndex
+        var index = 0
         var inLineComment = false, inBlockComment = false, inString = false
-        while index < text.endIndex {
-            let ch = text[index]
-            let next = text.index(after: index) < text.endIndex ? text[text.index(after: index)] : Character(" ")
+        // Open-paren depth of each interpolation in progress; while non-empty we are in code, inside a string.
+        var interpolation: [Int] = []
+        func peek(_ offset: Int) -> Character { index + offset < chars.count ? chars[index + offset] : " " }
+        while index < chars.count {
+            let ch = chars[index]
             if inLineComment {
                 if ch == "\n" { inLineComment = false; out.append(ch) }
             } else if inBlockComment {
-                if ch == "*" && next == "/" { inBlockComment = false; index = text.index(after: index) }
+                if ch == "*" && peek(1) == "/" { inBlockComment = false; index += 1 }
+            } else if !interpolation.isEmpty {
+                if ch == "(" {
+                    interpolation[interpolation.count - 1] += 1
+                    out.append(ch)
+                } else if ch == ")" {
+                    interpolation[interpolation.count - 1] -= 1
+                    if interpolation.last == 0 { interpolation.removeLast(); out.append(" ") } else { out.append(ch) }
+                } else if ch == "\"" {
+                    // A string inside an interpolation: skip its text.
+                    index += 1
+                    while index < chars.count, chars[index] != "\"" {
+                        if chars[index] == "\\" { index += 1 }
+                        index += 1
+                    }
+                } else {
+                    out.append(ch)
+                }
             } else if inString {
-                if ch == "\\" { index = text.index(after: index) } else if ch == "\"" { inString = false }
-            } else if ch == "/" && next == "/" {
+                if ch == "\\" && peek(1) == "(" {
+                    interpolation.append(1)
+                    out.append(" ")
+                    index += 1
+                } else if ch == "\\" {
+                    index += 1
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else if ch == "/" && peek(1) == "/" {
                 inLineComment = true
-            } else if ch == "/" && next == "*" {
+            } else if ch == "/" && peek(1) == "*" {
                 inBlockComment = true
             } else if ch == "\"" {
                 inString = true
+                out.append(" ")
             } else {
                 out.append(ch)
             }
-            index = text.index(after: index)
+            index += 1
         }
         return out
     }
@@ -272,10 +302,16 @@ struct MoneyDisciplineTests {
         #expect(offenders.isEmpty, "\(offenders)")
     }
 
-    @Test("the scan itself can fail: it flags a planted division")
+    @Test("the scan itself can fail: it flags a planted division, in code and inside a string interpolation, and ignores prose")
     func scanCanFail() throws {
-        let planted = Self.code("let naira = kobo / 100\n// a comment about / 100 is ignored\nlet s = \"/ 100\"")
-        #expect(planted.contains(try Regex(#"[/*%]\s*100\b"#)))
-        #expect(!Self.code("// kobo / 100").contains(try Regex(#"[/*%]\s*100\b"#)))
+        let division = try Regex(#"[/*%]\s*100\b"#)
+        #expect(Self.code("let naira = kobo / 100").contains(division))
+        #expect(Self.code(#"Text("\(kobo / 100)")"#).contains(division))
+        #expect(Self.code(#"Text("Total \(format(kobo * 100)) naira")"#).contains(division))
+        #expect(Self.code(#"Text("\(kobo % 100)")"#).contains(division))
+        #expect(!Self.code("// kobo / 100").contains(division))
+        #expect(!Self.code(#"let s = "/ 100""#).contains(division))
+        #expect(!Self.code("/* kobo / 100 */ let x = 1").contains(division))
+        #expect(!Self.code(#"Text("about \(name) / 100 of it")"#).contains(division))
     }
 }

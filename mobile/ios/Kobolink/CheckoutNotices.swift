@@ -276,7 +276,7 @@ struct StorageBlockedView: View {
 
     private var actions: [NoticeAction] {
         var list: [NoticeAction] = [.init("Try Again", .prominent, checkout.reload)]
-        if block == .undecodable { list.append(.init("Start a New Payment", .destructive) { confirmingClear = true }) }
+        if block == .undecodable || block == .undecodableClearFailed { list.append(.init("Start a New Payment", .destructive) { confirmingClear = true }) }
         list.append(.init("Done", .plain, onDone))
         return list
     }

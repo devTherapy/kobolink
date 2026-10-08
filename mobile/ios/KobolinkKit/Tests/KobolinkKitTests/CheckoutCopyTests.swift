@@ -22,7 +22,7 @@ struct CheckoutCopyTests {
         let withDate = CK.link(expiresAt: Date(timeIntervalSince1970: 1_791_392_400))  // 2026-10-07 17:00 UTC = 18:00 WAT
         let dated = CheckoutCopy.notice(for: .expired, link: withDate)
         #expect(dated.heading == "This link has expired")
-        #expect(dated.body == "This payment link expired on 7 Oct 2026, 6:00 PM WAT.")
+        #expect(dated.body == "This payment link expired on 7 Oct 2026, 18:00 WAT.")
         #expect(dated.nextStep == "Ask Adebayo Stores for a new link.")
         #expect(dated.moneyLine == "No money has moved.")
         #expect(CheckoutCopy.notice(for: .expired, link: link).body == "This payment link has expired.")
@@ -51,7 +51,33 @@ struct CheckoutCopyTests {
         defer { NSTimeZone.default = saved }
         for zone in ["America/Los_Angeles", "Asia/Tokyo", "UTC"] {
             NSTimeZone.default = TimeZone(identifier: zone)!
-            #expect(CheckoutCopy.formatDate(Date(timeIntervalSince1970: 1_791_392_400)) == "7 Oct 2026, 6:00 PM WAT")
+            #expect(CheckoutCopy.formatDate(Date(timeIntervalSince1970: 1_791_392_400)) == "7 Oct 2026, 18:00 WAT")
+        }
+    }
+
+    /// `formatCheckoutDate` in apps/web/src/lib/checkout.ts (Intl, en-NG, Africa/Lagos), run in Node 22 for one date in
+    /// each month. September is "Sept" there.
+    private static let webDates: [(Int, String)] = [
+        (1767945900, "9 Jan 2026, 09:05 WAT"),
+        (1770627960, "9 Feb 2026, 10:06 WAT"),
+        (1773050820, "9 Mar 2026, 11:07 WAT"),
+        (1775732880, "9 Apr 2026, 12:08 WAT"),
+        (1778328540, "9 May 2026, 13:09 WAT"),
+        (1781010600, "9 Jun 2026, 14:10 WAT"),
+        (1783606260, "9 Jul 2026, 15:11 WAT"),
+        (1786288320, "9 Aug 2026, 16:12 WAT"),
+        (1788970380, "9 Sept 2026, 17:13 WAT"),
+        (1791566040, "9 Oct 2026, 18:14 WAT"),
+        (1794248100, "9 Nov 2026, 19:15 WAT"),
+        (1796843760, "9 Dec 2026, 20:16 WAT"),
+        (1772380800, "1 Mar 2026, 17:00 WAT"),
+        (1791415800, "8 Oct 2026, 00:30 WAT"),
+    ]
+
+    @Test("the date is exactly what the web's formatCheckoutDate writes: 24-hour, zero-padded, 'Sept'")
+    func dateMatchesWeb() {
+        for (seconds, expected) in Self.webDates {
+            #expect(CheckoutCopy.formatDate(Date(timeIntervalSince1970: TimeInterval(seconds))) == expected)
         }
     }
 

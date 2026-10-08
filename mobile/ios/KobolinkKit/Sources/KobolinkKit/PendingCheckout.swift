@@ -17,11 +17,13 @@ import Foundation
 ///   on this device);
 /// - the check confirms user U: attempts with no user id become U's; attempts made by another user are
 ///   removed;
-/// - a sign-in with credentials as U: attempts with no user id (made under a token that has since ended)
-///   and those made by another user are removed, U's own stay. This is the one place an unconfirmed
-///   attempt is given up: nothing says who held the old token, so it is not shown to the new user. An
-///   unsettled one costs that person a second pending checkout (`initialize` moves no money), never a
-///   second payment;
+/// - a sign-in with credentials as U: attempts with no user id are adopted by U exactly as above, and only
+///   those made by another CONFIRMED user are removed. A sign-in NEVER drops an unconfirmed attempt: it may
+///   be the same person's, with an outcome nobody has seen (their token expired while the first request was
+///   in the air), and forgetting it would let the form mint a second key. If the person is someone else, the
+///   attempt costs them a second look at "Payment started" or "Try Again" (it shows only the amount, the
+///   merchant and the reference), and a sign-out removes it. An adoption that cannot be saved keeps the
+///   attempt and is retried;
 /// - involuntary expiry (a 401): removes nothing.
 public enum AttemptOwner: Equatable, Hashable, Sendable {
     case payer
@@ -158,7 +160,7 @@ extension PendingCheckout: Codable {
 /// Why a pending-payment slot could not be read, written or removed. Carries the `OSStatus` and never
 /// any part of the record.
 public struct PendingStoreError: Error, Equatable, Sendable, CustomStringConvertible {
-    public enum Operation: String, Sendable { case read, write, remove, list }
+    public enum Operation: String, Sendable { case read, write, remove, list, obligation }
     public enum Kind: Equatable, Sendable {
         /// The store refused or could not be reached (a locked Keychain). The slot may still be there.
         case unavailable
@@ -177,6 +179,43 @@ public struct PendingStoreError: Error, Equatable, Sendable, CustomStringConvert
     }
 
     public var description: String { "PendingStoreError(\(operation.rawValue), \(kind), status \(status))" }
+}
+
+/// A removal that sign-out (or a change of user) owes, written down BEFORE it is attempted and taken back
+/// when it is done. Without it a clear that failed (a locked Keychain) is forgotten by a restart, and the
+/// next process shows the previous person's attempt to whoever holds the phone.
+///
+/// `cutoff` is when the obligation arose, in whole seconds: it removes only attempts made at or before
+/// that moment, so an attempt a LATER session makes is never swept up by an obligation that was left over.
+public struct CleanupObligation: Equatable, Codable, Sendable {
+    public enum Scope: String, Codable, Sendable {
+        /// Explicit sign-out: every attempt made while a session existed.
+        case allSession
+        /// A confirmed user: the attempts of other CONFIRMED users. An attempt whose owner was never
+        /// confirmed is never removed by a sign-in: whoever signs in adopts it.
+        case foreign
+    }
+
+    public let scope: Scope
+    /// The confirmed user for `.foreign`; nil otherwise.
+    public let userID: String?
+    public let cutoff: Int
+
+    public init(scope: Scope, userID: String? = nil, cutoff: Date) {
+        self.scope = scope
+        self.userID = userID
+        self.cutoff = Int(cutoff.timeIntervalSince1970)
+    }
+
+    func removes(_ owner: AttemptOwner, createdAt: Date) -> Bool {
+        guard Int(createdAt.timeIntervalSince1970) <= cutoff else { return false }
+        switch (scope, owner) {
+        case (_, .payer): return false
+        case (.allSession, .session): return true
+        case (.foreign, .session(let id?)): return id != userID
+        case (.foreign, .session(nil)): return false
+        }
+    }
 }
 
 /// One entry of `PendingCheckoutStore.all()`.
@@ -209,6 +248,11 @@ public protocol PendingCheckoutStore: Sendable {
 
     /// Every slot on the device.
     func all() throws(PendingStoreError) -> [PendingSlot]
+
+    /// The cleanup still owed, or nil. A throw is "could not find out", never "nothing owed".
+    func loadObligation() throws(PendingStoreError) -> CleanupObligation?
+    func saveObligation(_ obligation: CleanupObligation) throws(PendingStoreError)
+    func clearObligation() throws(PendingStoreError)
 }
 
 /// A store in memory, for tests and previews. It does not persist anything, so it must never be what a
@@ -286,6 +330,36 @@ public final class InMemoryPendingCheckoutStore: PendingCheckoutStore, @unchecke
         defer { lock.unlock() }
         try check(.list)
         return slots.keys.sorted().compactMap { slots[$0] }
+    }
+
+    private var storedObligation: CleanupObligation?
+
+    public func loadObligation() throws(PendingStoreError) -> CleanupObligation? {
+        lock.lock()
+        defer { lock.unlock() }
+        try check(.obligation)
+        return storedObligation
+    }
+
+    public func saveObligation(_ obligation: CleanupObligation) throws(PendingStoreError) {
+        lock.lock()
+        defer { lock.unlock() }
+        try check(.obligation)
+        storedObligation = obligation
+    }
+
+    public func clearObligation() throws(PendingStoreError) {
+        lock.lock()
+        defer { lock.unlock() }
+        try check(.obligation)
+        storedObligation = nil
+    }
+
+    /// The obligation as stored, without going through the failure switches, for assertions.
+    public var obligation: CleanupObligation? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedObligation
     }
 
     /// Everything stored, without going through the failure switches, for assertions.

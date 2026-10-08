@@ -116,7 +116,7 @@ private struct PayableForm: View {
 
             Section {
                 if link.amountKobo == nil {
-                    FieldRow(label: "Amount", error: form.errors[.amount]) {
+                    FieldRow(label: "Amount", error: form.errors[.amount], activate: { focus = .amount }) {
                         TextField("Amount", text: $form.amountText, prompt: Text("₦0.00"))
                             .keyboardType(.decimalPad)
                             .focused($focus, equals: .amount)
@@ -125,7 +125,7 @@ private struct PayableForm: View {
                     }
                     .id(form.resetCount)
                 }
-                FieldRow(label: "Your name", error: form.errors[.name]) {
+                FieldRow(label: "Your name", error: form.errors[.name], activate: { focus = .name }) {
                     TextField("Your name", text: $form.name, prompt: Text("Full name"))
                         .textContentType(.name)
                         .textInputAutocapitalization(.words)
@@ -135,7 +135,7 @@ private struct PayableForm: View {
                         .onChange(of: form.name) { form.edited(.name) }
                 }
                 .id(form.resetCount)
-                FieldRow(label: "Email", error: form.errors[.email]) {
+                FieldRow(label: "Email", error: form.errors[.email], activate: { focus = .email }) {
                     TextField("Email", text: $form.email, prompt: Text("Email address"))
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
@@ -251,10 +251,13 @@ private struct Banner {
     }
 }
 
-/// A field with a visible label above it and its validation message directly beneath, in the same row.
+/// A field with a visible label above it and its validation message directly beneath, in the same row. The
+/// whole row is the tap target (at least 44pt tall, label and error included): tapping the label, or the
+/// space beside the text, puts the cursor in the field, as in a Settings form.
 private struct FieldRow<Field: View>: View {
     let label: String
     let error: String?
+    let activate: () -> Void
     @ViewBuilder let field: Field
 
     var body: some View {
@@ -271,6 +274,8 @@ private struct FieldRow<Field: View>: View {
                     .accessibilityLabel("Error: \(error)")
             }
         }
-        .frame(minHeight: 44)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: activate)
     }
 }

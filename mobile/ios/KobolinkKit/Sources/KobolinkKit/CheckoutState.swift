@@ -43,6 +43,8 @@ public enum StorageBlock: Equatable, Sendable {
     case unreadable
     /// There is a record for this link that this build cannot read. Starting a new payment removes it.
     case undecodable
+    /// "Start a New Payment" was confirmed on an unreadable record and storage would not remove it: nothing changed.
+    case undecodableClearFailed
     /// A record belonging to an earlier session could not be removed, so it is not shown.
     case cannotClear
 }

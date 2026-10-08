@@ -135,7 +135,7 @@ struct CheckoutSessionStateTests {
         #expect(rig.attemptScreen?.phase == .unsettled(.noConnection))
     }
 
-    @Test("a different user signing in removes the previous user's attempt, and the unconfirmed one")
+    @Test("a different user signing in removes the previous user's CONFIRMED attempt")
     func differentUserClears() async {
         let confirmed = await merchantAttempt(owner: .session(userID: CK.userOne.id))
         confirmed.controller.sessionDidChange(.ended)
@@ -144,12 +144,76 @@ struct CheckoutSessionStateTests {
         #expect(confirmed.store.snapshot.isEmpty)
         #expect(await waitUntil { confirmed.linkScreen != nil })
         #expect(confirmed.controller.form.isEmpty)
+    }
 
-        let unconfirmed = await merchantAttempt(owner: .session(userID: nil))
-        unconfirmed.controller.sessionDidChange(.ended)
-        unconfirmed.service.queueLookup(.success(CK.lookup()))
-        unconfirmed.controller.sessionDidChange(.signedIn(CK.userTwo))
-        #expect(unconfirmed.store.snapshot.isEmpty)
+    @Test("signing in NEVER drops an unconfirmed attempt: the person who signs in adopts it, with its key and reference")
+    func signInAdoptsUnconfirmed() async {
+        for user in [CK.userOne, CK.userTwo] {
+            let rig = await merchantAttempt(owner: .session(userID: nil))
+            let key = rig.store.snapshot.first?.key
+            rig.controller.sessionDidChange(.ended)
+            rig.controller.sessionDidChange(.signedIn(user))
+            #expect(rig.store.snapshot.count == 1)
+            #expect(rig.store.snapshot.first?.key == key)
+            #expect(rig.store.snapshot.first?.owner == .session(userID: user.id))
+        }
+    }
+
+    @Test("the SAME person signing back in after an unknown outcome retries the same request under the same key, not a new one")
+    func samePersonSignsBackIn() async {
+        // Cold start with a token that has expired: the link opens while the session is resolving, Pay saves an
+        // attempt with no owner, the POST times out, /me answers 401, and the same merchant signs in again.
+        let rig = CheckoutRig(owner: .session(userID: nil))
+        await rig.openPayable()
+        rig.fillForm()
+        rig.service.queueInitialize(.failure(.unreachable(.timedOut)))
+        rig.controller.pay()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .unsettled(.noConnection) })
+        rig.controller.sessionDidChange(.ended)
+        rig.controller.sessionDidChange(.signedIn(CK.userOne))
+        #expect(await waitUntil { rig.attemptScreen?.phase == .unsettled(.interrupted) })
+        #expect(rig.linkScreen == nil)
+        rig.service.queueInitialize(.success(CK.started()))
+        rig.controller.retry()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        #expect(rig.keys.made == 1)
+        #expect(Set(rig.service.sends.map(\.key)).count == 1)
+        #expect(rig.service.sends.count == 2 && rig.service.sends[0].request == rig.service.sends[1].request)
+    }
+
+    @Test("the offline then Try Again then 401 then sign-in route keeps the attempt too, with its reference")
+    func offlineRoute() async {
+        let rig = CheckoutRig(owner: .session(userID: nil))
+        await rig.openPayable()
+        rig.fillForm()
+        rig.service.queueInitialize(.success(CK.started()))
+        rig.controller.pay()
+        #expect(await waitUntil { rig.attemptScreen?.phase == .started })
+        rig.controller.sessionDidChange(.ended)
+        rig.controller.sessionDidChange(.signedIn(CK.userOne))
+        #expect(rig.attemptScreen?.reference == CK.reference)
+        #expect(rig.store.snapshot.first?.reference == CK.reference)
+    }
+
+    @Test("if adopting the attempt cannot be saved, the attempt is KEPT and adoption is retried; nothing is swallowed")
+    func adoptionFailureKeepsAttempt() async {
+        let rig = await merchantAttempt(owner: .session(userID: nil))
+        let key = rig.store.snapshot.first?.key
+        rig.controller.sessionDidChange(.ended)
+        rig.store.fail(.write)
+        rig.controller.sessionDidChange(.signedIn(CK.userOne))
+        #expect(rig.store.snapshot.count == 1)
+        #expect(rig.store.snapshot.first?.owner == .session(userID: nil))
+        #expect(rig.attemptScreen?.phase == .unsettled(.interrupted))
+        // Storage recovers; the next time the link is shown, adoption is retried and succeeds.
+        rig.store.heal()
+        rig.controller.reload()
+        #expect(rig.store.snapshot.first?.owner == .session(userID: CK.userOne.id))
+        #expect(rig.store.snapshot.first?.key == key)
+        // ... so a later sign-out of that user removes it.
+        rig.service.queueLookup(.success(CK.lookup()))
+        rig.controller.sessionDidChange(.signedOutByChoice)
+        #expect(rig.store.snapshot.isEmpty)
     }
 
     @Test("the same user signing in again after an expiry keeps their own confirmed attempt")
@@ -225,6 +289,56 @@ struct CheckoutSessionStateTests {
         #expect(rig.attemptScreen?.phase == .unsettled(.interrupted))
         rig.controller.open(CK.codeA)
         #expect(rig.controller.screen == .storageBlocked(CK.codeA, .cannotClear))
+    }
+
+    @Test("a sign-out cleanup that failed is still owed after a restart: the next process does not show the attempt")
+    func cleanupSurvivesRestart() async {
+        let store = InMemoryPendingCheckoutStore()
+        try? store.save(CK.pending(CK.codeA, owner: .session(userID: CK.userOne.id)))
+        try? store.save(CK.pending(CK.codeB, key: "00000000-0000-4000-8000-00000000000B", owner: .payer))
+        let first = CheckoutRig(store: store)
+        store.fail(.remove)
+        first.controller.sessionDidChange(.signedOutByChoice)
+        #expect(store.snapshot.count == 2)
+
+        // A new process over the same storage, with the failure still in place: blocked, never shown.
+        let second = first.relaunched()
+        second.controller.open(CK.codeA)
+        #expect(second.controller.screen == .storageBlocked(CK.codeA, .cannotClear))
+        #expect(second.service.lookups.isEmpty)
+        second.controller.open(CK.codeB)
+        #expect(second.attemptScreen?.phase == .unsettled(.interrupted))
+
+        // Storage recovers: the owed cleanup runs before any slot is presented, and the payer's stays.
+        store.heal()
+        second.service.queueLookup(.success(CK.lookup()))
+        second.controller.open(CK.codeA)
+        #expect(await waitUntil { second.linkScreen != nil })
+        #expect(store.snapshot.map(\.request.code) == [CK.codeB])
+
+        // And it is not owed any more: a third process shows nothing special, and a NEW session attempt survives.
+        let third = second.relaunched(owner: .session(userID: CK.userTwo.id))
+        await third.openPayable(CK.codeA)
+        third.fillForm()
+        third.service.queueInitialize(.failure(CK.offline))
+        third.controller.pay()
+        #expect(await waitUntil { third.attemptScreen != nil })
+        third.controller.open(CK.codeA)
+        #expect(third.attemptScreen != nil)
+        #expect(store.snapshot.count == 2)
+    }
+
+    @Test("an obligation that cannot be read at cold start blocks the link rather than guessing")
+    func unreadableObligation() async {
+        let store = InMemoryPendingCheckoutStore()
+        try? store.save(CK.pending(CK.codeA, owner: .payer))
+        store.fail(.obligation)
+        let rig = CheckoutRig(store: store)
+        rig.controller.open(CK.codeA)
+        #expect(rig.controller.screen == .storageBlocked(CK.codeA, .unreadable))
+        store.heal()
+        rig.controller.reload()
+        #expect(rig.attemptScreen != nil)
     }
 
     @Test("an unreadable slot is removed by sign-out too")
