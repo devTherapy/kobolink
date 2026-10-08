@@ -5,6 +5,7 @@ import SwiftUI
 /// `WalletController` and forwards taps; every decision is in the package.
 struct WalletHomeView: View {
     @Bindable var wallet: WalletController
+    let showAccount: () -> Void
 
     var body: some View {
         let home = wallet.home
@@ -35,6 +36,14 @@ struct WalletHomeView: View {
             ActivitySection(home: home)
         }
         .navigationTitle("Wallet")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: showAccount) {
+                    Image(systemName: "person.crop.circle")
+                }
+                .accessibilityLabel("Account")
+            }
+        }
         .refreshable { await home.refresh() }
         .task { await home.refresh() }
         .sheet(isPresented: $wallet.isSendPresented, onDismiss: wallet.sheetDidDismiss) {
@@ -59,7 +68,8 @@ private struct BalanceRow: View {
                 Text(Kobo.formatNaira(balance.balanceKobo, alwaysShowKobo: true))
                     .font(.largeTitle.bold())
                     .monospacedDigit()
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.4)
                 Text(home.isRefreshing ? "Updating" : "As of \(CheckoutCopy.formatDate(balance.asOf))")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

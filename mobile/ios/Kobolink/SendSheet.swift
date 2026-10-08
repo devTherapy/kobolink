@@ -13,9 +13,12 @@ struct SendSheet: View {
                 .navigationTitle(title(for: send.screen))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(closeTitle(for: send.screen)) { wallet.isSendPresented = false }
-                            .disabled(isSending(send.screen))
+                    // The sent screen has its own Done; a second one in the bar would say it twice.
+                    if !isSent(send.screen) {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { wallet.isSendPresented = false }
+                                .disabled(isSending(send.screen))
+                        }
                     }
                 }
         }
@@ -60,11 +63,8 @@ struct SendSheet: View {
         }
     }
 
-    private func closeTitle(for screen: SendScreen) -> String {
-        switch screen {
-        case .sent: "Done"
-        default: "Close"
-        }
+    private func isSent(_ screen: SendScreen) -> Bool {
+        if case .sent = screen { true } else { false }
     }
 }
 
@@ -122,14 +122,12 @@ private struct SendFormView: View {
                     }
                 }
                 .id(form.resetCount)
-            } header: {
-                Text("Amount")
             } footer: {
                 Text("From \(Kobo.formatNaira(Kobo.minAmountKobo)) to \(Kobo.formatNaira(Kobo.maxAmountKobo)).")
             }
 
             Section {
-                FieldRow(label: "Note", error: form.errors[.note], activate: { focus = .note }) {
+                FieldRow(label: "Note (optional)", error: form.errors[.note], activate: { focus = .note }) {
                     TextField("Note", text: $form.note, prompt: Text("What is it for?"), axis: .vertical)
                         .lineLimit(1...4)
                         .focused($focus, equals: .note)
@@ -137,8 +135,6 @@ private struct SendFormView: View {
                         .onChange(of: form.note) { form.edited(.note) }
                 }
                 .id(form.resetCount)
-            } header: {
-                Text("Note (optional)")
             } footer: {
                 Text("Your recipient sees it with the payment. Up to \(TransferInstruction.noteMaxLength) characters.")
             }
@@ -239,7 +235,8 @@ private struct ReviewView: View {
                     Text(amount)
                         .font(.largeTitle.bold())
                         .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                    .minimumScaleFactor(0.4)
                         .accessibilityLabel(Kobo.spokenNaira(draft.instruction.amountKobo))
                 }
                 .padding(.vertical, 4)

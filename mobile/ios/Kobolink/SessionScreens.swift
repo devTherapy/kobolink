@@ -75,7 +75,8 @@ private struct ResolvingView: View {
     }
 }
 
-/// Signed in: the wallet, and the account. Tabs are sections, not actions; a payment link opened from outside
+/// Signed in: the wallet is the home. The account (who is signed in, the server, Sign Out) is a sheet from the
+/// toolbar, the way an app's profile is: a focused sub-task with a clear Done. A payment link opened from outside
 /// is pushed over this, so it never stands between a payer and a link.
 struct SignedInView: View {
     let user: SignedInUser
@@ -83,14 +84,35 @@ struct SignedInView: View {
     let checker: ConnectionChecker
     let wallet: WalletController
     let signOut: () -> Void
+    @State private var showingAccount = false
+    /// Sign Out was tapped in the sheet: it runs once the sheet is gone, so its confirmation is not shown from a
+    /// view that is under a sheet.
+    @State private var signOutAfterDismiss = false
 
     var body: some View {
-        TabView {
-            WalletHomeView(wallet: wallet)
-                .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
-            HomeView(user: user, host: host, checker: checker, signOut: signOut)
-                .tabItem { Label("Account", systemImage: "person.crop.circle") }
-        }
+        WalletHomeView(wallet: wallet, showAccount: { showingAccount = true })
+            .sheet(isPresented: $showingAccount, onDismiss: signOutIfAsked) {
+                NavigationStack {
+                    HomeView(
+                        user: user, host: host, checker: checker,
+                        signOut: {
+                            signOutAfterDismiss = true
+                            showingAccount = false
+                        }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingAccount = false }
+                        }
+                    }
+                }
+            }
+    }
+
+    private func signOutIfAsked() {
+        guard signOutAfterDismiss else { return }
+        signOutAfterDismiss = false
+        signOut()
     }
 }
 
@@ -126,6 +148,7 @@ struct HomeView: View {
             }
         }
         .navigationTitle("Account")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

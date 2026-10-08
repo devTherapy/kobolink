@@ -257,6 +257,67 @@ Simulator, which also runs the hosted Keychain tests). Verification against a th
 point `KOBOLINK_API_BASE_URL` at it in `Config/Local.xcconfig`, then
 `xcrun simctl openurl booted 'kobolink://l/aBcDeFgH'`.
 
+## Wallet (I5, Phase 2)
+
+```
+KobolinkKit/Sources/KobolinkKit/
+  WalletModels.swift            WalletBalance, WalletActivity, TransferInstruction, TransferReceipt, WalletServing
+  KobolinkAPIClient+Wallet.swift  the three secured calls
+  TransferOutcome.swift         TransferFailure, MoneyOutcome, TransferVerdict: the one place that decides what an answer settles
+  PendingTransfer.swift         TransferAttempt (key + exact request + user), the store protocol and the in-memory store
+  KeychainPendingTransferStore.swift  the real store, one Keychain item per USER
+  SendController.swift          the send state machine: keys, slot, verdicts, sign-out obligation, latest-wins
+  SendForm.swift / SendState.swift    the typed fields, validation, what the sheet shows
+  WalletHomeController.swift    balance (asOf), cursor paging, refresh generations
+  ScanController.swift          camera states behind the CameraAccess seam
+  QrPayloadDecoder.swift        the one place that knows the QR format
+  WalletCopy.swift              every sentence; the money line is only ever a statement the app can back
+  WalletController.swift        composition, session wiring, SignOutGate
+Kobolink/WalletHomeView.swift, SendSheet.swift, SendResultViews.swift, ScanScreenView.swift,
+  QRScannerView.swift, SystemCameraAccess.swift      the screens and the AVFoundation camera
+```
+
+The signed-in home is a tab bar: **Wallet** (large title, balance, Send Money, Scan to Pay, Recent activity with pull
+to refresh) and **Account** (what I2 had). Send and Scan are one sheet; closing it and reopening it shows the same
+payment. Wallet endpoints are secured operations, so the token rides on them, to the API origin only.
+
+**The lessons of Android's M5**, each a test (the checklist is in the PR):
+
+- **A note-less payment OMITS `note`** (contracts: optional, not nullable). `TransferWireTests` serialises through the
+  generated client; `WalletConfigurationTests` pins the document's shape.
+- **One key per payment, written to the Keychain BEFORE the request leaves**, in the signed-in user's slot, with the
+  same item attributes as the checkout's store. `Try Again` is the identical request under the same key and writes
+  nothing first. A relaunch, Close, or a killed process restores the payment as "we never saw how it ended".
+- **What settles an attempt** (`TransferVerdict`): `not_found` 404, `insufficient_funds` 422 and the own-number
+  `validation_failed` 400, each with `moneyMoved: false` (the only refusals `WalletService.decideTransfer` computes inside
+  `IdempotencyService.run`, so they are the stored answer for the key), and the body-validation 400 on the very first
+  send. Everything else (401, 429, 5xx, a dropped connection, an unreadable reply, a redirect, `idempotency_mismatch`, a
+  validation error on a retry, a storage failure on a retry) keeps the attempt and the key. "No money was taken" is
+  said only for those; unknown outcomes say "We couldn't confirm the payment. Check Recent activity before paying again."
+  The only exits from an unknown outcome are a success, a stored refusal, "I Checked: It Didn't Go Through" (confirmed),
+  and a confirmed sign-out.
+- **The QR name is attacker-controlled.** The phone number is the identifier on every screen; the name sits under it,
+  labelled "Name in the QR code (not verified)", and is dropped when the number is edited. The decoder is strict (one JSON
+  object, four keys once each, `v` 1, E.164, a clean name, an amount inside the transfer bounds). B8 has no recipient lookup
+  endpoint; until one exists nothing can verify a name.
+- **No older balance as "now".** The balance is shown with its `asOf`; a read older than the one held, and a replay's
+  stored original reply with nothing newer to compare, are not adopted. Every success and every `insufficient_funds`
+  refreshes; opening Send refreshes. A stale "load more" after a refresh is dropped (generation), and so is any reply
+  after a sign-out or user change (epoch).
+- **Sign-out and user change** empty the form (phone, amount, note, scanned name), the balance and the activity. A
+  sign-out is gated: `SignOutGate` makes the wallet's `SignOutObligation` (slot + key) and the checkout's both safe before
+  the session changes, takes the wallet's back if the checkout refuses, and the confirmation says "A payment on this
+  iPhone was started and not finished". An involuntary 401 clears nothing, and the same user signing back in gets the
+  payment back; another user's session never loads, shows or removes it.
+
+**Camera.** `NSCameraUsageDescription` is in both Info.plists. Never asked: a screen says what the camera is for, then the
+system prompt. Denied: explains and opens Settings. Restricted: explains, no Settings button. No camera (the
+Simulator): says so. "Enter Details Instead" is on every state. The camera view hands text to `ScanController`; it
+has a metadata output for QR codes and no photo, movie or data output.
+
+Not done: top-up (the endpoint exists, the app has no way to add money yet), transfer to a contact, a recipient lookup,
+iPad, VoiceOver by ear, a physical device and a real camera.
+
 ## Generated models
 
 Nothing generated is checked in. Every build of `KobolinkAPI` runs `GenerateAPI`, which
