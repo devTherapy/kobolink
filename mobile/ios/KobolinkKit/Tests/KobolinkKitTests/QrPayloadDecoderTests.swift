@@ -63,7 +63,7 @@ struct QrPayloadRefusedTests {
         ("a web link", "https://pay.folusayo.com/l/aBcDeFgH"),
         ("a Kobolink link", "kobolink://l/aBcDeFgH"),
         ("a tel: URI", "tel:+2348031234567"),
-        ("a Wi-Fi code", "WIFI:S:cafe;T:WPA;P:password;;"),
+        ("a Wi-Fi code", "WIFI:S:cafe;T:nopass;;"),
         ("a bare phone number", "+2348031234567"),
         ("an array", "[1]"),
         ("a string", "\"v\""),
