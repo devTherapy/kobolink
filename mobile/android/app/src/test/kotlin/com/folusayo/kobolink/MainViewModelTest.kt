@@ -143,6 +143,18 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `A - a confirmed different user finds an empty form on a link that never closed`() = runTest {
+        val h = harness()
+        h.vm.openLink(code)
+        h.typeSomething()
+        h.expiry.tryEmit(Unit)
+
+        h.vm.login("someone@example.com", "pw")
+
+        h.assertFormEmpty()
+    }
+
+    @Test
     fun `an involuntary end of session clears neither the form nor the attempt`() = runTest {
         val h = harness()
         h.attempt()

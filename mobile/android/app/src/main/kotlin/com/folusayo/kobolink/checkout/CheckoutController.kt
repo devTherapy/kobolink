@@ -210,8 +210,12 @@ val PayPhase.needsFreshRead: Boolean get() = this is PayPhase.PriceChanged && ne
  *
  * **Privacy.** A stored name or e-mail is never put on a screen. A remembered attempt is shown as an attempt (merchant,
  * amount, reference) with no fields; "Start a new payment" opens an EMPTY form; the names are only sent again, in a
- * same-key retry. Known limits: a payer's slot is per device, so two payers on one phone share it; every slot
- * survives a reinstall of the app only if the platform backs it up (it is excluded from backup, so it does not).
+ * same-key retry. Known limits: a payer's slot is per device, so two payers on one phone share it (they see the
+ * merchant, the amount and the reference, never the name or e-mail); the words are neutral about who started a
+ * payment, because a different merchant who signs in after an expiry adopts an unconfirmed attempt that was not
+ * theirs; a reusable link cannot be paid twice until M4's `verify` has settled the first, except through "Start a new
+ * payment"; if the obligation record cannot be taken back after a successful removal, it names attempts that are
+ * gone, which their keys make harmless. The slots and the record are excluded from backup.
  *
  * **A started payment is shown again.** When `initialize` answers, the reference is saved with the attempt. Reopening
  * the link shows the same "Payment started" screen instead of an empty form. It lasts until [startOver] (or, in M4,
