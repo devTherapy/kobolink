@@ -6,8 +6,9 @@ import Observation
 /// a posted transfer updates the home, a refusal for too little money refreshes it, a scanned code fills the form.
 ///
 /// One instance lives for the app. The wallet exists only for a signed-in user; everything of that user's in
-/// memory is emptied on a sign-out and on a different user (`sessionDidChange`), and an involuntary session end
-/// forgets nothing but closes the sheet.
+/// memory is emptied on a sign-out and on a different user (`sessionDidChange`). An involuntary session end keeps the
+/// saved payment (and the home) but closes the sheet, and closing the sheet empties whatever was typed in the form
+/// (`SendController.sheetClosed`): what the same user finds again is the unfinished PAYMENT, never a half-typed form.
 @MainActor
 @Observable
 public final class WalletController {
@@ -88,8 +89,9 @@ public final class WalletController {
     public func sessionDidChange(_ change: SessionChange) {
         switch change {
         case .ended:
-            // Nothing is forgotten, so the same user signing in again finds the payment and the form as they left
-            // them. The sheet closes: it belongs to a session that is gone.
+            // The saved payment is not forgotten, so the same user signing in again finds it. The form is NOT kept:
+            // the sheet closes (it belongs to a session that is gone) and its dismissal calls `sheetDidDismiss`, which
+            // empties whatever was typed.
             isSendPresented = false
 
         case .signedOutByChoice:

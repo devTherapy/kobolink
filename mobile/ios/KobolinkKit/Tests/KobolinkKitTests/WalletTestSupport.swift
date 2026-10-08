@@ -187,23 +187,28 @@ final class FakeCamera: CameraAccess {
 struct WalletRig {
     let service = FakeWallet()
     let store: InMemoryPendingTransferStore
-    let keys = KeyMaker()
+    let keys: KeyMaker
     let camera = FakeCamera()
     let wallet: WalletController
+    private let now: @Sendable () -> Date
 
     var send: SendController { wallet.send }
     var home: WalletHomeController { wallet.home }
 
-    init(store: InMemoryPendingTransferStore = InMemoryPendingTransferStore(), user: SignedInUser? = WK.userOne) {
+    init(
+        store: InMemoryPendingTransferStore = InMemoryPendingTransferStore(), user: SignedInUser? = WK.userOne,
+        now: @escaping @Sendable () -> Date = { Date() }, keys: KeyMaker = KeyMaker()
+    ) {
         self.store = store
-        let keys = self.keys
-        wallet = WalletController(service: service, store: store, camera: camera, makeKey: { keys.make() })
+        self.now = now
+        self.keys = keys
+        wallet = WalletController(service: service, store: store, camera: camera, makeKey: { [keys] in keys.make() }, now: now)
         if let user { wallet.sessionDidChange(.resolved(user)) }
     }
 
     /// A new process over the same storage: what a cold start sees.
     func relaunched(user: SignedInUser? = WK.userOne) -> WalletRig {
-        WalletRig(store: store, user: user)
+        WalletRig(store: store, user: user, now: now)
     }
 
     func fillForm(phone: String = "0803 123 4567", amount: String = "1500", note: String = "") {

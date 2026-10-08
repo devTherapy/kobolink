@@ -63,7 +63,7 @@ private struct BalanceRow: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Wallet balance")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
             if let balance = home.balance {
                 Text(Kobo.formatNaira(balance.balanceKobo, alwaysShowKobo: true))
                     .font(.largeTitle.bold())
@@ -72,11 +72,11 @@ private struct BalanceRow: View {
                     .minimumScaleFactor(0.4)
                 Text(home.isRefreshing ? "Updating" : "As of \(CheckoutCopy.formatDate(balance.asOf))")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondaryText)
             } else if home.hasLoaded {
                 Text("Not available")
                     .font(.title2.bold())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondaryText)
             } else {
                 Text("₦00,000.00")
                     .font(.largeTitle.bold())
@@ -92,12 +92,9 @@ private struct BalanceRow: View {
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(spoken)
-    }
-
-    private var spoken: String {
-        guard let balance = home.balance else { return home.hasLoaded ? "Wallet balance not available" : "Loading wallet balance" }
-        return "Wallet balance, \(Kobo.spokenNaira(balance.balanceKobo)), as of \(CheckoutCopy.formatDate(balance.asOf))"
+        // One element, so everything the row shows must be in what is read: the "Couldn't update your balance" line
+        // included, or VoiceOver users never learn the figure may be out of date.
+        .accessibilityLabel(WalletCopy.balanceSpoken(home.balance, hasLoaded: home.hasLoaded, problem: home.balanceProblem))
     }
 }
 
@@ -158,7 +155,7 @@ private struct ActivitySection: View {
         } else if home.hasLoaded {
             Text("No activity yet. Money you send or receive shows up here.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
                 .frame(minHeight: 44, alignment: .leading)
         } else {
             ProgressView("Loading activity")
@@ -195,11 +192,11 @@ private struct ActivityRow: View {
                 if let note = item.note, !note.isEmpty {
                     Text(note)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondaryText)
                 }
                 Text(CheckoutCopy.formatDate(item.createdAt))
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondaryText)
             }
             Spacer(minLength: 8)
             Text(WalletCopy.activityAmount(item))

@@ -193,14 +193,46 @@ struct WalletCopyTests {
         #expect(replay.contains("as of"))
     }
 
-    @Test("every block has a heading, a body and a next step; none says no money was taken")
+    @Test("activity wording survives the smallest Int: no trap, still 'out'")
+    func activityIntMin() {
+        let item = WK.activity(amountKobo: Int.min)
+        #expect(WalletCopy.activitySpoken(item).contains("out"))
+        #expect(!WalletCopy.activitySpoken(item).contains("minus"), "the direction is said once, in words")
+        #expect(WalletCopy.activityAmount(item).hasPrefix("-"))
+        let max = WK.activity(amountKobo: Int.max)
+        #expect(WalletCopy.activitySpoken(max).contains("in"))
+    }
+
+    @Test("the balance as spoken includes a problem reading it, which the screen shows beside it")
+    func balanceSpoken() {
+        let balance = WK.balance(4_850_000)
+        let plain = WalletCopy.balanceSpoken(balance, hasLoaded: true, problem: nil)
+        #expect(plain.hasPrefix("Wallet balance, 48,500 naira, as of"))
+        #expect(!plain.contains("Couldn't update"))
+        let problem = WalletCopy.balanceSpoken(balance, hasLoaded: true, problem: .noConnection)
+        #expect(problem.hasPrefix("Wallet balance, 48,500 naira, as of"))
+        #expect(problem.contains(WalletCopy.readProblem(.noConnection, what: "your balance")))
+        let none = WalletCopy.balanceSpoken(nil, hasLoaded: true, problem: .serverProblem)
+        #expect(none.hasPrefix("Wallet balance not available"))
+        #expect(none.contains("Couldn't update your balance"))
+        #expect(WalletCopy.balanceSpoken(nil, hasLoaded: false, problem: nil) == "Loading wallet balance")
+    }
+
+    @Test("every block has a heading, a body and a next step; none says nothing was sent or that no money moved")
     func blocks() {
+        // A saved attempt is written BEFORE its request leaves, so wherever storage cannot be read or cleared the
+        // payment was almost certainly sent. None of these screens may say otherwise, in any of its four lines.
+        let forbidden = ["nothing has been sent", "nothing was sent", "not been sent", "no money"]
         for block in [SendBlock.unreadable, .undecodable, .cannotClear, .obligationUnreadable, .resetFailed] {
             let text = WalletCopy.blocked(block)
-            for part in [text.heading, text.body, text.moneyLine, text.nextStep] { #expect(!part.isEmpty) }
-            #expect(!text.moneyLine.lowercased().contains("no money was taken"))
+            for part in [text.heading, text.body, text.moneyLine, text.nextStep] {
+                #expect(!part.isEmpty)
+                for phrase in forbidden { #expect(!part.lowercased().contains(phrase), "\(block): \(part)") }
+            }
+            #expect(text.moneyLine.contains("may"), "\(block) must say a payment MAY have been started")
+            #expect(text.nextStep.contains("Recent activity"), "\(block) sends the person to Recent activity")
         }
-        #expect(WalletCopy.blocked(.unreadable).moneyLine == "Nothing has been sent.")
+        #expect(WalletCopy.blocked(.unreadable).moneyLine == "A payment may already have been started.")
     }
 
     @Test("activity rows: direction, sign and a spoken form")

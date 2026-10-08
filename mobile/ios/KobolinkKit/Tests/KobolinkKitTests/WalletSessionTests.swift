@@ -266,7 +266,7 @@ struct WalletSessionTests {
         #expect(rig.store.snapshot.count == 1)
     }
 
-    @Test("another user's payment is never loaded, shown, or removed by someone else; it is there when they come back")
+    @Test("another user's payment is never loaded or shown to someone else, and their launch removes nothing; it is there when the owner comes back")
     func otherUsersPayment() async {
         let first = await unresolved()
         let key = first.service.sends[0].key
@@ -297,7 +297,7 @@ struct WalletSessionTests {
 
     // MARK: A removal that fails
 
-    @Test("a removal that fails leaves the obligation, and the payment is hidden from the next launch until it succeeds")
+    @Test("a removal that fails leaves the obligation; another user's launch shows nothing of it and retries it until it succeeds")
     func removalFails() async {
         let rig = await unresolved()
         #expect(rig.wallet.prepareSignOut())
@@ -306,18 +306,46 @@ struct WalletSessionTests {
         #expect(rig.store.snapshot.count == 1)
         #expect(rig.store.obligation != nil)
 
-        rig.store.heal()
-        rig.store.fail(.remove)
-        let again = rig.relaunched()
-        guard case .blocked(.cannotClear) = again.send.screen else { Issue.record("\(again.send.screen)"); return }
-        again.send.begin(scanning: false)
-        #expect(again.send.screen != .form, "the form is not offered while an old payment cannot be cleared")
+        // Another person launches while the Keychain still refuses the removal: the old payment is not theirs and is
+        // not shown, and the record stays so the removal is tried again.
+        let two = rig.relaunched(user: WK.userTwo)
+        #expect(two.send.screen == .idle)
+        two.wallet.openSend()
+        #expect(two.send.screen == .form)
+        #expect(two.store.snapshot.count == 1)
+        #expect(two.store.obligation != nil)
 
-        again.store.heal()
-        again.send.retryBlocked()
-        #expect(again.send.screen == .idle)
-        #expect(again.store.snapshot.isEmpty)
-        #expect(again.store.obligation == nil)
+        two.store.heal()
+        let three = two.relaunched(user: WK.userTwo)
+        #expect(three.store.snapshot.isEmpty)
+        #expect(three.store.obligation == nil)
+    }
+
+    @Test("the person who signed out and whose removal failed, signing in again, is not deleted either: the payment comes back")
+    func removalFailsThenSameUserReturns() async {
+        let rig = await unresolved()
+        let key = rig.service.sends[0].key
+        #expect(rig.wallet.prepareSignOut())
+        rig.store.fail(.remove)
+        rig.wallet.sessionDidChange(.signedOutByChoice)
+        rig.store.heal()
+        rig.wallet.sessionDidChange(.signedIn(WK.userOne))
+        guard case .failed(let attempt, let failure) = rig.send.screen else { Issue.record("\(rig.send.screen)"); return }
+        #expect(attempt.key == key && !failure.isSettled)
+        #expect(rig.send.unresolved != nil)
+        #expect(rig.store.obligation == nil)
+    }
+
+    @Test("a sign-out that could not be made safe at the last step hides every saved payment until one can be")
+    func hiddenWhenItCannotBePrepared() async {
+        let rig = await unresolved()
+        rig.store.fail(.obligation)
+        rig.wallet.sessionDidChange(.signedOutByChoice)
+        rig.store.heal()
+        rig.wallet.sessionDidChange(.signedIn(WK.userOne))
+        guard case .blocked(.cannotClear) = rig.send.screen else { Issue.record("\(rig.send.screen)"); return }
+        rig.send.begin(scanning: false)
+        #expect(rig.send.screen != .form, "the form is not offered while an old payment cannot be cleared")
     }
 
     @Test("an obligation this build cannot read blocks the wallet's payments, and the confirmed reset is the way out")

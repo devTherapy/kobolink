@@ -31,6 +31,16 @@ import Observation
 /// See `prepareSignOut`. A sign-out is the one thing that removes an unresolved payment from the device, it is gated
 /// by a persisted `SignOutObligation`, and it is confirmed by the person first. An involuntary end (a 401) removes
 /// nothing, and the same user signing in again gets the payment back.
+///
+/// ### Whose payments, and when the record counts
+/// - A sign-out, its warning (`hasSavedPayments`) and a reset (`forgetSavedPayments`) concern the signing-out user's
+///   OWN slots, plus slots nobody can read (their owner cannot be known, and an unreadable slot blocks whoever
+///   it belongs to). Another user's readable payment is never counted, named in a record, or removed by them.
+/// - A record is evidence of a sign-out only for a user who is NOT the confirmed signed-in one. It names its user
+///   (`Entry.code` is the slot, which is the user id). When that same user is confirmed signed in (a launch that
+///   resolves their token, or a sign-in), the sign-out it describes did not happen (the checkout refused it, or the
+///   process died before the token was cleared), so it is taken back, never carried out. If the take-back cannot be
+///   stored it is retried, and meanwhile the payment is shown as it always was.
 @MainActor
 @Observable
 public final class SendController {
@@ -58,6 +68,9 @@ public final class SendController {
     /// else happens, and hides what it names until the removal succeeds.
     @ObservationIgnored private var owed: SignOutObligation?
     @ObservationIgnored private var owedBeforePrepare: SignOutObligation?
+    /// Storage still holds a record that `owed` no longer describes (a take-back it would not take). It is written
+    /// again at the next chance; until then it is only ever read by a later process, which applies the same rule.
+    @ObservationIgnored private var recordStale = false
     @ObservationIgnored private var obligationLoaded = false
     /// Set when a sign-out could not be prepared in time: every saved payment is hidden until it can be.
     @ObservationIgnored private var hideAll = false
@@ -80,6 +93,7 @@ public final class SendController {
     /// its key and request intact; otherwise a fresh form, or the camera.
     public func begin(scanning: Bool) {
         guard boundUserID != nil else { return }
+        retryStaleRecord()
         if case .blocked = screen { restore() }
         switch screen {
         case .blocked, .sending:
@@ -217,6 +231,7 @@ public final class SendController {
         let service = self.service
         // Unstructured on purpose: leaving the screen must not cancel a payment request half way, because then the
         // answer would be lost along with the screen. Whether the answer reaches the SCREEN is `apply`'s decision.
+        let sentAt = now()
         Task { [weak self] in
             let result: Result<TransferReceipt, APIError>
             do throws(APIError) {
@@ -224,11 +239,11 @@ public final class SendController {
             } catch {
                 result = .failure(error)
             }
-            self?.apply(result, attempt: attempt, firstEverSend: firstEverSend)
+            self?.apply(result, attempt: attempt, firstEverSend: firstEverSend, sentAt: sentAt)
         }
     }
 
-    func apply(_ result: Result<TransferReceipt, APIError>, attempt: TransferAttempt, firstEverSend: Bool) {
+    func apply(_ result: Result<TransferReceipt, APIError>, attempt: TransferAttempt, firstEverSend: Bool, sentAt: Date? = nil) {
         inFlight.remove(attempt.key)
         let verdict = TransferVerdict.of(result, instruction: attempt.instruction, firstEverSend: firstEverSend)
         // Does the screen still show THIS payment? After a sign-out or a different user the screen was emptied and
@@ -241,7 +256,10 @@ public final class SendController {
             removeSlot(for: attempt)
             if unresolved?.key == attempt.key { unresolved = nil }
             guard showing else { return }
-            screen = .sent(attempt, receipt, replayed: !firstEverSend)
+            // Two different questions. The HOME treats every retry's balance as possibly old (`!firstEverSend`): a
+            // refresh follows either way. The SCREEN says "had already gone through" only when the posting is
+            // demonstrably older than this retry; a retry whose first request never arrived posts for the first time.
+            screen = .sent(attempt, receipt, replayed: !firstEverSend && Self.provesReplay(receipt, retriedAt: sentAt ?? now()))
             onReceipt?(receipt, !firstEverSend)
 
         case .settled(let failure):
@@ -258,6 +276,16 @@ public final class SendController {
             guard showing else { return }
             screen = .failed(attempt, failure)
         }
+    }
+
+    /// How much older than the retry a posting must be to count as proof that an earlier send created it. The phone's
+    /// clock and the server's differ a little; inside this margin the answer is worded as a plain balance.
+    static let replayEvidenceMargin: TimeInterval = 5
+
+    /// A retry's answer is the stored ORIGINAL only if the transaction was posted before this retry left. Anything
+    /// else (posted after it, or too close to tell) could be the retry's own first posting.
+    static func provesReplay(_ receipt: TransferReceipt, retriedAt: Date) -> Bool {
+        receipt.activity.createdAt < retriedAt.addingTimeInterval(-replayEvidenceMargin)
     }
 
     /// Remove the attempt's slot if it still holds this attempt. One retry, since nobody is told about it: a slot
@@ -277,18 +305,31 @@ public final class SendController {
 
     // MARK: - The session
 
-    /// Whether any unfinished payment is saved on this device, for the sign-out confirmation. Storage that cannot be
-    /// listed counts as "yes": the safe answer is to ask.
+    /// Whether the signed-in user has an unfinished payment saved, for the sign-out confirmation: their own slot, or a
+    /// slot nobody can read. Another user's payment is not theirs to be warned about. Storage that cannot be listed
+    /// counts as "yes": the safe answer is to ask.
     public var hasSavedPayments: Bool {
         guard let slots = try? store.all() else { return true }
-        return !slots.isEmpty
+        return slots.contains { isOwnOrUnreadable($0, user: boundUserID) }
     }
 
-    /// Asked by the session BEFORE it signs the person out. It writes down what the sign-out owes (every saved
-    /// payment and unreadable slot on the device, by slot and key) and returns `true` only when that is safely
+    /// A slot a sign-out or a reset of `user` may touch: theirs, or one whose owner nothing can say.
+    private func isOwnOrUnreadable(_ slot: TransferSlot, user: String?) -> Bool {
+        switch slot {
+        case .pending(let attempt): attempt.userID == user
+        case .unreadable: true
+        }
+    }
+
+    /// Asked by the session BEFORE it signs the person out. It writes down what the sign-out owes (the signing-out
+    /// user's saved payment and any unreadable slot, by slot and key) and returns `true` only when that is safely
     /// stored, or when nothing is owed. `false` means the sign-out must not happen: a sign-out whose clearing could
     /// be forgotten by a restart would show this person's payment to whoever holds the phone, or lose it silently.
     public func prepareSignOut() -> Bool {
+        prepare(leaving: boundUserID)
+    }
+
+    private func prepare(leaving userID: String?) -> Bool {
         guard loadObligationOnce() == .ok else { return false }
         let slots: [TransferSlot]
         do throws(PendingStoreError) {
@@ -297,7 +338,7 @@ public final class SendController {
             return false
         }
         var entries = owed?.entries ?? []
-        for slot in slots {
+        for slot in slots where isOwnOrUnreadable(slot, user: userID) {
             switch slot {
             case .pending(let attempt): entries.append(.init(code: attempt.userID, key: attempt.key))
             case .unreadable(let slotID): entries.append(.init(code: slotID, key: nil))
@@ -307,14 +348,12 @@ public final class SendController {
         let unique = entries.filter { seen.insert($0).inserted }
         guard !unique.isEmpty else {
             hideAll = false
+            retryStaleRecord()
             return true
         }
         let obligation = SignOutObligation(entries: unique)
-        do throws(PendingStoreError) {
-            try store.saveObligation(obligation)
-        } catch {
-            return false
-        }
+        guard writeRecord(obligation) else { return false }
+        recordStale = false
         owedBeforePrepare = owed
         owed = obligation
         hideAll = false
@@ -323,15 +362,40 @@ public final class SendController {
 
     /// The sign-out this obligation was written for did not go ahead (another part of the app refused it). Take the
     /// record back to what it was, so a restart does not carry out a sign-out that never happened.
+    ///
+    /// If storage will not take it back, the app still knows the sign-out did not happen: `owed` is what it was, so
+    /// nothing is hidden or removed in this process, and the write is retried (`retryStaleRecord`). A LATER process
+    /// finds the stale record and applies the same rule as for a crash: it names a user who is still signed in, so it
+    /// is dropped (`dropRecordNaming`), not carried out.
     public func cancelPreparedSignOut() {
         guard owed != owedBeforePrepare else { return }
-        let previous = owedBeforePrepare
+        owed = owedBeforePrepare
+        if !writeRecord(owed) { recordStale = true }
+    }
+
+    private func writeRecord(_ record: SignOutObligation?) -> Bool {
         do throws(PendingStoreError) {
-            if let previous { try store.saveObligation(previous) } else { try store.clearObligation() }
+            if let record { try store.saveObligation(record) } else { try store.clearObligation() }
+            return true
         } catch {
-            return
+            return false
         }
-        owed = previous
+    }
+
+    private func retryStaleRecord() {
+        guard recordStale, obligationLoaded else { return }
+        if writeRecord(owed) { recordStale = false }
+    }
+
+    /// `userID` is confirmed signed in, so a record naming them describes a sign-out that did not happen. Forget those
+    /// entries (the other users' stay), and write the shorter record; if that cannot be written it is retried.
+    private func dropRecordNaming(_ userID: String) {
+        guard let current = owed else { return }
+        let rest = current.entries.filter { $0.code != userID }
+        guard rest.count != current.entries.count else { return }
+        owed = rest.isEmpty ? nil : SignOutObligation(entries: rest)
+        owedBeforePrepare = owed
+        if !writeRecord(owed) { recordStale = true }
     }
 
     /// React to a change in who is signed in.
@@ -343,10 +407,11 @@ public final class SendController {
             return
 
         case .signedOutByChoice:
+            let leaving = boundUserID
             boundUserID = nil
             // The session asked first (`prepareSignOut`), so this is normally a repeat. If it cannot be made safe
             // now, every saved payment is hidden until it can be.
-            if !prepareSignOut() { hideAll = true }
+            if !prepare(leaving: leaving) { hideAll = true }
             runOwed()
             forgetMemory()
 
@@ -388,6 +453,9 @@ public final class SendController {
             screen = .blocked(.obligationUnreadable)
             return
         }
+        retryStaleRecord()
+        // A record naming THIS user describes a sign-out that did not happen: they are confirmed signed in.
+        dropRecordNaming(userID)
         runOwed()
 
         let slot: TransferAttempt?
@@ -497,14 +565,18 @@ public final class SendController {
         try? store.clearObligation()
     }
 
-    /// The safe exit when a saved payment, or the record of what a sign-out owes, cannot be read: forget EVERY
-    /// payment saved on this iPhone and the record itself, after the person confirmed ("If you already sent it,
-    /// check Recent activity first"). If storage will not let go, nothing changes and the screen says so.
+    /// The safe exit when a saved payment, or the record of what a sign-out owes, cannot be read: forget the signed-in
+    /// user's OWN saved payment, every slot nobody can read, and the record itself, after the person confirmed ("If
+    /// you already sent it, check Recent activity first"). Another user's readable payment is not theirs to forget.
+    /// The record goes whole, because when it is the thing that cannot be read it cannot be shortened; anything
+    /// it still owed is then simply not carried out, which errs towards keeping a payment. If storage will not let
+    /// go, nothing changes and the screen says so.
     public func forgetSavedPayments() {
         guard case .blocked(let block) = screen, block == .undecodable || block == .obligationUnreadable || block == .resetFailed
         else { return }
+        let user = boundUserID
         do throws(PendingStoreError) {
-            for slot in try store.all() {
+            for slot in try store.all() where isOwnOrUnreadable(slot, user: user) {
                 switch slot {
                 case .pending(let attempt): try store.remove(userID: attempt.userID)
                 case .unreadable(let slotID): try store.remove(slotID: slotID)
@@ -517,6 +589,7 @@ public final class SendController {
         }
         owed = nil
         owedBeforePrepare = nil
+        recordStale = false
         obligationLoaded = true
         hideAll = false
         inFlight = []

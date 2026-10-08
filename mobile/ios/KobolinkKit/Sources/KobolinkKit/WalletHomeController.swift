@@ -55,6 +55,8 @@ public final class WalletHomeController {
     @ObservationIgnored private let service: any WalletServing
     @ObservationIgnored private var epoch = 0
     @ObservationIgnored private var generation = 0
+    /// A "load more" was asked for while a refresh was running; the refresh answers it when it finishes.
+    @ObservationIgnored private var loadMoreWanted = false
 
     public init(service: any WalletServing) {
         self.service = service
@@ -102,6 +104,13 @@ public final class WalletHomeController {
         case .failure(let error):
             activityProblem = WalletReadProblem(error)
         }
+
+        // The "Loading more" row asks once, when it appears. If that happened while this refresh was running the ask
+        // was refused, and the row would sit there for good: answer it now that a first page and a cursor are in place.
+        if loadMoreWanted {
+            loadMoreWanted = false
+            loadMore()
+        }
     }
 
     /// Fire-and-forget `refresh`, for events that are not a pull.
@@ -111,7 +120,12 @@ public final class WalletHomeController {
 
     /// The next page of activity, if there is one and nothing else is being read.
     public func loadMore() {
-        guard let cursor = nextCursor, !isLoadingMore, !isRefreshing else { return }
+        guard let cursor = nextCursor, !isLoadingMore else { return }
+        guard !isRefreshing else {
+            // Not now: a refresh is replacing the list and the cursor. Remember the ask; the refresh repeats it.
+            loadMoreWanted = true
+            return
+        }
         isLoadingMore = true
         let startedIn = epoch
         let mine = generation
@@ -162,6 +176,7 @@ public final class WalletHomeController {
     public func reset() {
         epoch += 1
         generation += 1
+        loadMoreWanted = false
         balance = nil
         balanceProblem = nil
         items = []

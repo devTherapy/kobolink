@@ -133,8 +133,8 @@ private struct PaymentFacts: View {
             row("To", WalletCopy.recipient(attempt), spoken: NigerianPhone.spoken(attempt.instruction.toPhone))
             if let name = attempt.payeeName {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(WalletCopy.qrNameLabel).font(.footnote).foregroundStyle(.secondary)
-                    Text(name).font(.subheadline).foregroundStyle(.secondary)
+                    Text(WalletCopy.qrNameLabel).font(.footnote).foregroundStyle(Color.secondaryText)
+                    Text(name).font(.subheadline).foregroundStyle(Color.secondaryText)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(WalletCopy.qrNameLabel): \(name)")
@@ -150,7 +150,7 @@ private struct PaymentFacts: View {
 
     private func row(_ label: String, _ value: String, spoken: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.footnote).foregroundStyle(.secondary)
+            Text(label).font(.footnote).foregroundStyle(Color.secondaryText)
             Text(value).font(.body.weight(.semibold)).monospacedDigit()
         }
         .accessibilityElement(children: .combine)

@@ -38,6 +38,8 @@ public enum ScanScreen: Equatable, Sendable {
     /// The code was not one this app will pay. Scanning stays off until the person asks again, so a code held in
     /// front of the camera is not re-read in a loop.
     case rejected(QrRejection)
+    /// The camera is allowed and present but would not start. "Try Again" looks at it once more.
+    case cameraUnavailable
 }
 
 /// The camera screen's decisions: which state to show, and what a scanned string means. The camera view only hands
@@ -80,6 +82,15 @@ public final class ScanController {
             finished = true
             screen = .rejected(rejection)
         }
+    }
+
+    /// The camera was allowed and present, and still would not start (another app holds it, the hardware refused, the
+    /// session failed). Without this the screen is black with no way forward. Only meaningful while scanning:
+    /// every other state already says what is wrong.
+    public func cameraFailed() {
+        guard screen == .scanning else { return }
+        finished = true
+        screen = .cameraUnavailable
     }
 
     /// "Scan Again" after a rejected code.

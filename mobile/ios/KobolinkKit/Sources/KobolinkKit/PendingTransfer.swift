@@ -150,6 +150,7 @@ public final class InMemoryPendingTransferStore: PendingTransferStore, @unchecke
     private var slots: [String: TransferSlot] = [:]
     private var failures: [PendingStoreError.Operation: PendingStoreError.Kind] = [:]
     private var storedObligation: SignOutObligation?
+    private var obligationWritesFail = false
     private var savedLog: [TransferAttempt] = []
 
     public init() {}
@@ -165,6 +166,15 @@ public final class InMemoryPendingTransferStore: PendingTransferStore, @unchecke
         lock.lock()
         defer { lock.unlock() }
         failures = [:]
+        obligationWritesFail = false
+    }
+
+    /// Reading the obligation works, saving or clearing it does not: a Keychain that lets a record be seen but not
+    /// changed. Until `heal()`.
+    public func failObligationWrites() {
+        lock.lock()
+        defer { lock.unlock() }
+        obligationWritesFail = true
     }
 
     /// Put something unreadable in a user's slot, as a downgraded or corrupted Keychain item would be.
@@ -229,6 +239,7 @@ public final class InMemoryPendingTransferStore: PendingTransferStore, @unchecke
         lock.lock()
         defer { lock.unlock() }
         try check(.obligation)
+        if obligationWritesFail { throw PendingStoreError(operation: .obligation, kind: .unavailable, status: -1) }
         storedObligation = obligation
     }
 
@@ -236,6 +247,7 @@ public final class InMemoryPendingTransferStore: PendingTransferStore, @unchecke
         lock.lock()
         defer { lock.unlock() }
         try check(.obligation)
+        if obligationWritesFail { throw PendingStoreError(operation: .obligation, kind: .unavailable, status: -1) }
         storedObligation = nil
     }
 

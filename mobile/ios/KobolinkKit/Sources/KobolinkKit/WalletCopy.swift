@@ -120,8 +120,11 @@ public enum WalletCopy {
             nextStep: nextStep ?? "Try Again sends the same request, so it can't pay twice. If Recent activity shows it, you're done.")
     }
 
-    /// What the sent screen says about the balance. A replay's answer is the stored original, so it is worded as a
-    /// past balance with its time and is never called "your balance".
+    /// What the sent screen says about the balance. `replayed` is true only when the answer is DEMONSTRABLY the stored
+    /// original of an earlier send (`SendController.provesReplay`): then it is worded as a past balance with its
+    /// time and is never called "your balance", and the payment "had already gone through". A retry that cannot be
+    /// shown to be a replay (its first request may never have arrived) gets the plain wording, which claims only
+    /// what the time beside it backs.
     public static func balanceLine(_ receipt: TransferReceipt, replayed: Bool) -> String {
         let amount = Kobo.formatNaira(receipt.wallet.balanceKobo)
         let time = CheckoutCopy.formatDate(receipt.wallet.asOf)
@@ -165,7 +168,9 @@ public enum WalletCopy {
             return FailureText(
                 heading: "Can't check for an unfinished payment",
                 body: "Kobolink couldn't read this iPhone's secure storage, so it can't tell whether a payment you started is waiting.",
-                moneyLine: "Nothing has been sent.",
+                // A payment is saved BEFORE its request leaves, so an unreadable store most likely hides one that was
+                // sent. This line must never say otherwise (it is the wording I3's checkout uses for the same case).
+                moneyLine: "A payment may already have been started.",
                 nextStep: "Unlock your iPhone and try again. Check Recent activity before paying again.")
         case .undecodable:
             return FailureText(
@@ -234,13 +239,27 @@ public enum WalletCopy {
     }
 
     public static func activitySpoken(_ item: WalletActivity) -> String {
-        let money = Kobo.spokenNaira(abs(item.amountKobo))
+        // The magnitude, not `abs`: `abs(Int.min)` traps, and a hostile or corrupt amount must not crash the list.
+        let money = Kobo.spokenNairaUnsigned(item.amountKobo)
         let direction = item.amountKobo < 0 ? "out" : "in"
         let note = item.note.map { ", note: \($0)" } ?? ""
         return "\(activityTitle(item)), \(money) \(direction), \(CheckoutCopy.formatDate(item.createdAt))\(note)"
     }
 
     // MARK: Wallet reads
+
+    /// What VoiceOver reads for the balance row. The row is one element, so a problem reading the balance, which the
+    /// screen shows beside it, has to be part of what is read or it is never heard.
+    public static func balanceSpoken(_ balance: WalletBalance?, hasLoaded: Bool, problem: WalletReadProblem?) -> String {
+        var spoken: String
+        if let balance {
+            spoken = "Wallet balance, \(Kobo.spokenNaira(balance.balanceKobo)), as of \(CheckoutCopy.formatDate(balance.asOf))"
+        } else {
+            spoken = hasLoaded ? "Wallet balance not available" : "Loading wallet balance"
+        }
+        if let problem { spoken += ". " + readProblem(problem, what: "your balance") }
+        return spoken
+    }
 
     public static func readProblem(_ problem: WalletReadProblem, what: String) -> String {
         switch problem {

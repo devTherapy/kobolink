@@ -471,6 +471,39 @@ struct SendLeavingTests {
         #expect(second.store.snapshot.isEmpty)
     }
 
+    @Test("a retry is called a replay only when the posting is demonstrably older than the retry that returned it")
+    func replayNeedsEvidence() async {
+        let retryAt = WK.at.addingTimeInterval(3600)
+        // (posted, is it demonstrably the stored original of an earlier send?)
+        let cases: [(Date, Bool)] = [
+            (retryAt.addingTimeInterval(-600), true),  // ten minutes before this retry left
+            (retryAt.addingTimeInterval(-2), false),  // inside the clock-skew margin
+            (retryAt, false),  // the retry itself posted it
+            (retryAt.addingTimeInterval(3), false),  // later than the retry left
+        ]
+        for (posted, expected) in cases {
+            let rig = WalletRig(now: { retryAt })
+            rig.service.queueTransfer(.failure(WK.offline))
+            rig.startPayment()
+            #expect(await waitUntil { rig.failure != nil })
+            rig.service.queueTransfer(.success(WK.receipt(asOf: posted)))
+            rig.send.tryAgain()
+            #expect(await waitUntil { rig.isSent })
+            guard case .sent(_, _, let replayed) = rig.send.screen else { Issue.record("not sent"); return }
+            #expect(replayed == expected, "posted \(posted.timeIntervalSince(retryAt))s from the retry")
+        }
+    }
+
+    @Test("the first send is never called a replay, whatever the clocks say")
+    func firstSendNeverReplay() async {
+        let rig = WalletRig(now: { WK.at.addingTimeInterval(3600) })
+        rig.service.queueTransfer(.success(WK.receipt(asOf: WK.at)))
+        rig.startPayment()
+        #expect(await waitUntil { rig.isSent })
+        guard case .sent(_, _, let replayed) = rig.send.screen else { Issue.record("not sent"); return }
+        #expect(!replayed)
+    }
+
     @Test("a process killed while the request was in the air looks the same on the next launch")
     func killedMidFlight() async {
         let first = WalletRig()

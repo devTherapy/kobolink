@@ -113,7 +113,7 @@ private struct SendFormView: View {
             Section {
                 FieldRow(label: "Amount", error: form.errors[.amount], activate: { focus = .amount }) {
                     HStack(spacing: 4) {
-                        Text("₦").foregroundStyle(.secondary).accessibilityHidden(true)
+                        Text("₦").foregroundStyle(Color.secondaryText).accessibilityHidden(true)
                         TextField("Amount", text: $form.amountText, prompt: Text("0.00"))
                             .keyboardType(.decimalPad)
                             .focused($focus, equals: .amount)
@@ -123,7 +123,7 @@ private struct SendFormView: View {
                 }
                 .id(form.resetCount)
             } footer: {
-                Text("From \(Kobo.formatNaira(Kobo.minAmountKobo)) to \(Kobo.formatNaira(Kobo.maxAmountKobo)).")
+                Text("From \(Kobo.formatNaira(Kobo.minAmountKobo)) to \(Kobo.formatNaira(Kobo.maxAmountKobo)).").foregroundStyle(Color.secondaryText)
             }
 
             Section {
@@ -136,7 +136,7 @@ private struct SendFormView: View {
                 }
                 .id(form.resetCount)
             } footer: {
-                Text("Your recipient sees it with the payment. Up to \(TransferInstruction.noteMaxLength) characters.")
+                Text("Your recipient sees it with the payment. Up to \(TransferInstruction.noteMaxLength) characters.").foregroundStyle(Color.secondaryText)
             }
 
             Section {
@@ -178,7 +178,7 @@ private struct FieldRow<Field: View>: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
                 .accessibilityHidden(true)
             field
             if let error {
@@ -202,13 +202,13 @@ struct QRNameRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(WalletCopy.qrNameLabel)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
             Text(name)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
             Text(WalletCopy.qrNameWarning)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryText)
         }
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -231,7 +231,7 @@ private struct ReviewView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("You're sending")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondaryText)
                     Text(amount)
                         .font(.largeTitle.bold())
                         .monospacedDigit()
@@ -279,7 +279,7 @@ private struct ReviewView: View {
                 }
                 .controlSize(.large)
             } footer: {
-                Text(WalletCopy.reviewFooter)
+                Text(WalletCopy.reviewFooter).foregroundStyle(Color.secondaryText)
             }
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)

@@ -316,9 +316,9 @@ Kobolink/WalletHomeView.swift, SendSheet.swift, SendResultViews.swift, ScanScree
   QRScannerView.swift, SystemCameraAccess.swift      the screens and the AVFoundation camera
 ```
 
-The signed-in home is a tab bar: **Wallet** (large title, balance, Send Money, Scan to Pay, Recent activity with pull
-to refresh) and **Account** (what I2 had). Send and Scan are one sheet; closing it and reopening it shows the same
-payment. Wallet endpoints are secured operations, so the token rides on them, to the API origin only.
+The signed-in home is the **Wallet** (large title, balance, Send Money, Scan to Pay, Recent activity with pull to
+refresh); the account (what I2 had) is a sheet from the toolbar, not a tab bar. Send and Scan are one sheet; closing it
+and reopening it shows the same payment (what was typed in the form is not kept). Wallet endpoints are secured operations, so the token rides on them, to the API origin only.
 
 **The lessons of Android's M5**, each a test (the checklist is in the PR):
 
@@ -347,11 +347,26 @@ payment. Wallet endpoints are secured operations, so the token rides on them, to
   sign-out is gated: `SignOutGate` makes the wallet's `SignOutObligation` (slot + key) and the checkout's both safe before
   the session changes, takes the wallet's back if the checkout refuses, and the confirmation says "A payment on this
   iPhone was started and not finished". An involuntary 401 clears nothing, and the same user signing back in gets the
-  payment back; another user's session never loads, shows or removes it.
+  payment back; another user's session never loads or shows it, and their launch removes nothing of it.
+- **A sign-out record is evidence of a sign-out only for a user who is gone.** It names its user (the slot id). When
+  that same user is confirmed signed in (a launch that resolves their token, or a sign-in) the sign-out did not
+  happen: the checkout refused it and the take-back failed, or the process died before the token was cleared. The
+  record is then taken back (retried until storage lets it, meanwhile the payment is shown as usual), never carried
+  out. It is carried out only when a different user is the one signed in, or at the sign-out itself. Residual: a crash
+  in that window followed by a 401 for the same user and then someone else signing in still carries it out; the
+  record has no way to tell that from a real sign-out.
+- **A sign-out and a reset concern the signing-out user's own slots**, plus slots nobody can read (their owner cannot be
+  known). The warning counts those, the record names those, and "Forget Saved Payments" removes those; another user's
+  readable payment is left alone and is back, with its key, when they sign in.
+- **"Had already gone through" needs evidence.** A retry's answer is worded as the stored original only when its posting
+  time is more than five seconds older than the moment this retry left (the first request may never have arrived, so a
+  retry alone proves nothing); otherwise it gets the plain "Your balance is X, as of T". The home still treats every
+  retry's balance as possibly old.
 
 **Camera.** `NSCameraUsageDescription` is in both Info.plists. Never asked: a screen says what the camera is for, then the
 system prompt. Denied: explains and opens Settings. Restricted: explains, no Settings button. No camera (the
-Simulator): says so. "Enter Details Instead" is on every state. The camera view hands text to `ScanController`; it
+Simulator): says so. A camera that is allowed but will not start (another app holds it, a session error) says "The
+camera isn't available" with Try Again. "Enter Details Instead" is on every state. The camera view hands text to `ScanController`; it
 has a metadata output for QR codes and no photo, movie or data output.
 
 Not done: top-up (the endpoint exists, the app has no way to add money yet), transfer to a contact, a recipient lookup,

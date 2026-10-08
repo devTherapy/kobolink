@@ -63,6 +63,33 @@ struct ScanControllerTests {
         }
     }
 
+    @Test("a camera that cannot start is its own screen, not a black one; Try Again looks at the camera again")
+    func cameraUnavailable() {
+        let (controller, _, found) = make(authorization: .authorized)
+        #expect(controller.screen == .scanning)
+        controller.cameraFailed()
+        #expect(controller.screen == .cameraUnavailable)
+        controller.didRead(good)
+        #expect(found.value.isEmpty, "nothing is read from a camera that is not running")
+        controller.prepare()
+        #expect(controller.screen == .scanning)
+    }
+
+    @Test("a camera failure only matters while scanning: it never replaces the permission or a rejected-code screen")
+    func cameraFailureOnlyWhileScanning() {
+        for authorization in [CameraAuthorization.notDetermined, .denied, .restricted] {
+            let (controller, _, _) = make(authorization: authorization)
+            let before = controller.screen
+            controller.cameraFailed()
+            #expect(controller.screen == before)
+        }
+        let (controller, _, _) = make(authorization: .authorized)
+        controller.didRead("https://example.test/not-ours")
+        let rejected = controller.screen
+        controller.cameraFailed()
+        #expect(controller.screen == rejected)
+    }
+
     @Test("coming back from Settings with the camera allowed starts scanning")
     func backFromSettings() {
         let (controller, camera, _) = make(authorization: .denied)

@@ -145,6 +145,44 @@ struct WalletHomeTests {
         #expect(service.cursors.count == 2, "no cursor, no request")
     }
 
+    @Test("a load-more asked for while a refresh runs is not lost: it runs when the refresh is done, so the spinner cannot stick")
+    func loadMoreDuringRefresh() async {
+        let (service, home) = make()
+        service.queueWallet(.success(WK.balance()))
+        service.queueActivity(.success(page(["a", "b"], next: "c1")))
+        await home.refresh()
+
+        let gate = Gate()
+        service.queueWallet(.success(WK.balance()), gate: gate)
+        service.queueActivity(.success(page(["n1", "n2"], next: "d1")), gate: gate)
+        home.refreshSoon()
+        #expect(await waitUntil { service.cursors.count == 2 && home.isRefreshing })
+
+        // The spinner row appeared while the refresh was running: its one onAppear is refused...
+        home.loadMore()
+        #expect(service.cursors.count == 2, "refused while the refresh runs")
+
+        // ...and must still be answered once the refresh has put a first page and a cursor in place.
+        service.queueActivity(.success(page(["n3"], next: nil)))
+        gate.open()
+        #expect(await waitUntil { home.items.map(\.id) == ["n1", "n2", "n3"] })
+        #expect(service.cursors == [nil, nil, "d1"])
+        #expect(home.nextCursor == nil && !home.isLoadingMore)
+    }
+
+    @Test("a load-more that was never asked for is not invented by a refresh")
+    func refreshDoesNotLoadMoreByItself() async {
+        let (service, home) = make()
+        service.queueWallet(.success(WK.balance()))
+        service.queueActivity(.success(page(["a"], next: "c1")))
+        await home.refresh()
+        service.queueWallet(.success(WK.balance()))
+        service.queueActivity(.success(page(["a"], next: "c1")))
+        await home.refresh()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(service.cursors == [nil, nil])
+    }
+
     @Test("a page asked for before a refresh is dropped: it is not spliced onto the new list")
     func stalePageAfterRefresh() async {
         let (service, home) = make()

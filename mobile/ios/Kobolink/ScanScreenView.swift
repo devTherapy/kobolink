@@ -48,6 +48,15 @@ struct ScanScreenView: View {
                     heading: "No camera to scan with",
                     message: "This device has no camera Kobolink can use. You can type the details instead.",
                     actions: [.init("Enter Details Instead", .prominent, wallet.send.enterDetails)])
+            case .cameraUnavailable:
+                StatePage(
+                    symbol: "camera.badge.ellipsis", symbolStyle: Color.warningText,
+                    heading: "The camera isn't available",
+                    message: "Kobolink couldn't start the camera. Another app may be using it. Try again, or type the details instead.",
+                    actions: [
+                        .init("Try Again", .prominent, scan.prepare),
+                        .init("Enter Details Instead", .plain, wallet.send.enterDetails),
+                    ])
             case .rejected(let reason):
                 StatePage(
                     symbol: "qrcode", symbolStyle: Color.errorText,
@@ -77,7 +86,7 @@ private struct CameraStage: View {
 
     var body: some View {
         ZStack {
-            QRScannerView { scan.didRead($0) }
+            QRScannerView(onRead: { scan.didRead($0) }, onFailure: { scan.cameraFailed() })
                 .ignoresSafeArea(edges: .bottom)
 
             RoundedRectangle(cornerRadius: 24)
