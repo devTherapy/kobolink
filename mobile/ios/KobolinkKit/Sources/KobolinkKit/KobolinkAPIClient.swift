@@ -134,6 +134,28 @@ public struct KobolinkAPIClient: Sendable, AuthServing, CheckoutServing {
         }
     }
 
+    /// `POST /api/checkout/verify`. Like `initialize` it sends no `Authorization` header and no cookie, and exactly
+    /// one request: nothing here or below retries. A `200` the contract does not allow (a `moneyMoved` that
+    /// disagrees with `status`, a reference that is not one) is `undecodableResponse`: an outcome nobody can read.
+    public func verifyCheckout(reference: String, idempotencyKey: String) async throws(APIError) -> VerifiedPayment {
+        let (output, notes) = try await perform {
+            try await client.verifyCheckout(
+                .init(
+                    headers: .init(Idempotency_hyphen_Key: idempotencyKey),
+                    body: .json(.init(reference: reference))
+                ))
+        }
+        switch output {
+        case .ok(let response):
+            let body: Components.Schemas.VerifyCheckoutResponse
+            do { body = try response.body.json } catch { throw .undecodableResponse }
+            guard let payment = VerifiedPayment(body.payment) else { throw .undecodableResponse }
+            return payment
+        case .default(let status, let response):
+            throw APIError(status: status, error: try? response.body.json, notes: notes)
+        }
+    }
+
     /// `POST /api/auth/login` as a mobile client, which is the only kind that receives the token in
     /// the body. Sends no `Authorization` header (see `AuthMiddleware`).
     ///

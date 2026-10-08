@@ -105,12 +105,6 @@ struct CheckoutCopyTests {
         #expect(CheckoutCopy.unsettledBody(.refused(message: "Slow down.")) == "Kobolink answered: Slow down.")
     }
 
-    @Test("'Payment started' says no money has moved YET and that this version cannot confirm it")
-    func started() {
-        #expect(CheckoutCopy.startedHeading == "Payment started")
-        #expect(CheckoutCopy.startedMoneyLine == "No money has moved yet. This version of the app can't confirm the payment.")
-    }
-
     @Test("a refusal's message adds the money line, and points at the fields when the server named some")
     func rejection() {
         #expect(CheckoutCopy.rejection(message: "Validation failed.", hasFieldErrors: true) == "Check the highlighted fields. No money has moved.")

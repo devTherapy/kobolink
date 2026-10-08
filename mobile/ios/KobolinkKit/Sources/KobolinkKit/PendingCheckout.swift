@@ -35,9 +35,61 @@ public enum AttemptOwner: Equatable, Hashable, Sendable {
     }
 }
 
-/// A payment attempt whose outcome is not settled. It exists from just before the request leaves until
-/// something definite replaces it (a refusal the server stores under the key, or the person's confirmed
-/// "Start a new payment"); a started checkout stays too, because `verify` (feature I4) is what settles it.
+/// How a checkout ended, as the SERVER said it in a `verify` answer the app could read. This is the only thing that
+/// settles a started payment. It is written into the attempt's slot when it arrives (`PendingCheckout.settled`), so
+/// the result can be shown again after Back, a relaunch or a process kill, and the slot is removed only when the
+/// person has seen it and dismissed it (`CheckoutController`).
+///
+/// "Money moved" is a property of the case, because the server's own `moneyMoved` is what chose the case: `paid` is
+/// `status: success, moneyMoved: true`; every other case is a reply that said `moneyMoved: false`.
+public enum PaymentResult: Equatable, Hashable, Sendable {
+    /// The payment went through.
+    case paid
+    /// The gateway declined it (`status: failed`), with the server's reason when it gave one.
+    case declined(reason: String?)
+    /// `failed` because by the time it was decided the link had expired, been switched off, or been paid by someone else.
+    case linkExpired
+    case linkDisabled
+    case linkAlreadyPaid
+    /// The server has no checkout under this reference (`404 not_found`, `moneyMoved: false`).
+    case checkoutNotFound
+
+    public var moneyMoved: Bool { self == .paid }
+
+    var kind: String {
+        switch self {
+        case .paid: "paid"
+        case .declined: "declined"
+        case .linkExpired: "link_expired"
+        case .linkDisabled: "link_disabled"
+        case .linkAlreadyPaid: "link_already_paid"
+        case .checkoutNotFound: "checkout_not_found"
+        }
+    }
+
+    /// `nil` for a kind this build does not know. That is not an error: an unmarked attempt is simply verified
+    /// again, and a decided reference answers the same way every time.
+    init?(kind: String, reason: String?) {
+        switch kind {
+        case "paid": self = .paid
+        case "declined": self = .declined(reason: reason)
+        case "link_expired": self = .linkExpired
+        case "link_disabled": self = .linkDisabled
+        case "link_already_paid": self = .linkAlreadyPaid
+        case "checkout_not_found": self = .checkoutNotFound
+        default: return nil
+        }
+    }
+
+    var reason: String? {
+        if case .declined(let reason) = self { reason } else { nil }
+    }
+}
+
+/// A payment attempt whose outcome has not been seen to the end. It exists from just before the request leaves
+/// until the person has seen how it ended: a refusal the server stores under the key removes it at once, a started
+/// checkout stays until `verify` answers (`reference` set), and a `verify` answer that decides it marks it `settled`;
+/// it is removed when that result is dismissed or the person starts a new payment.
 ///
 /// It holds the payer's name and email, which are part of the request the key is bound to, so it lives
 /// only in the Keychain (`KeychainPendingCheckoutStore`).
@@ -49,6 +101,8 @@ public struct PendingCheckout: Equatable, Sendable {
     public var reference: String?
     /// The amount the server echoed with the reference.
     public var confirmedAmountKobo: Int?
+    /// How `verify` decided it, once it has. Only meaningful with a `reference`.
+    public var settled: PaymentResult?
     public var owner: AttemptOwner
     /// What the link looked like when the attempt was made, kept so the screen can say what was being
     /// paid without a network call (a cold start offline still shows the attempt).
@@ -61,6 +115,7 @@ public struct PendingCheckout: Equatable, Sendable {
         request: InitializeRequest,
         reference: String? = nil,
         confirmedAmountKobo: Int? = nil,
+        settled: PaymentResult? = nil,
         owner: AttemptOwner,
         merchantName: String,
         title: String,
@@ -70,6 +125,7 @@ public struct PendingCheckout: Equatable, Sendable {
         self.request = request
         self.reference = reference
         self.confirmedAmountKobo = confirmedAmountKobo
+        self.settled = settled
         self.owner = owner
         self.merchantName = merchantName
         self.title = title
@@ -83,6 +139,7 @@ extension PendingCheckout: Codable {
     private enum CodingKeys: String, CodingKey {
         case version, key, code, amountKobo, payerName, payerEmail
         case reference, confirmedAmountKobo, ownerKind, ownerUserID
+        case settledKind, settledReason
         case merchantName, title, createdAt
     }
 
@@ -104,6 +161,13 @@ extension PendingCheckout: Codable {
         default:
             throw DecodingError.dataCorruptedError(forKey: .ownerKind, in: c, debugDescription: "Unknown owner")
         }
+        let reference = try c.decodeIfPresent(String.self, forKey: .reference)
+        // A mark this build cannot read, or one with no reference to belong to, is dropped rather than refused: the
+        // attempt is verified again, and a decided reference gives the same answer every time.
+        var settled: PaymentResult?
+        if reference != nil, let kind = try? c.decodeIfPresent(String.self, forKey: .settledKind) {
+            settled = PaymentResult(kind: kind, reason: try? c.decodeIfPresent(String.self, forKey: .settledReason))
+        }
         self.init(
             key: key,
             request: InitializeRequest(
@@ -112,8 +176,9 @@ extension PendingCheckout: Codable {
                 payerName: try c.decode(String.self, forKey: .payerName),
                 payerEmail: try c.decode(String.self, forKey: .payerEmail)
             ),
-            reference: try c.decodeIfPresent(String.self, forKey: .reference),
+            reference: reference,
             confirmedAmountKobo: try c.decodeIfPresent(Int.self, forKey: .confirmedAmountKobo),
+            settled: settled,
             owner: owner,
             merchantName: try c.decode(String.self, forKey: .merchantName),
             title: try c.decode(String.self, forKey: .title),
@@ -131,6 +196,8 @@ extension PendingCheckout: Codable {
         try c.encode(request.payerEmail, forKey: .payerEmail)
         try c.encodeIfPresent(reference, forKey: .reference)
         try c.encodeIfPresent(confirmedAmountKobo, forKey: .confirmedAmountKobo)
+        try c.encodeIfPresent(settled?.kind, forKey: .settledKind)
+        try c.encodeIfPresent(settled?.reason, forKey: .settledReason)
         switch owner {
         case .payer:
             try c.encode("payer", forKey: .ownerKind)
