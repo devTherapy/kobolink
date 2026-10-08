@@ -67,14 +67,12 @@ import com.folusayo.kobolink.checkout.PayerField
 import com.folusayo.kobolink.checkout.PayerInput
 import com.folusayo.kobolink.checkout.PayerValidation
 import com.folusayo.kobolink.checkout.formatCheckoutDate
-import com.folusayo.kobolink.checkout.matches
 import com.folusayo.kobolink.checkout.needsFreshRead
 import com.folusayo.kobolink.checkout.merchantInitial
 import com.folusayo.kobolink.checkout.payButtonLabel
 import com.folusayo.kobolink.checkout.priceChangedMessage
 import com.folusayo.kobolink.checkout.rejectionBanner
 import com.folusayo.kobolink.checkout.showsAttempt
-import com.folusayo.kobolink.checkout.payFailureMessage
 import com.folusayo.kobolink.checkout.validatePayer
 import com.folusayo.kobolink.money.Kobo
 import com.folusayo.kobolink.ui.theme.paymentColors
@@ -140,6 +138,7 @@ fun CheckoutScreen(
                     is CheckoutState.NotFound -> NotFoundNotice(onClose = onClose)
                     is CheckoutState.LoadFailed -> LoadFailedNotice(kind = state.kind, onRetry = onReload, onClose = onClose)
                     is CheckoutState.StorageBlocked -> StorageBlockedNotice(
+                        code = state.code,
                         block = state.block,
                         onRetry = onReload,
                         onStartOver = onStartOver,
@@ -270,12 +269,7 @@ private fun PayableContent(
 
     PayBanner(pay, serverFieldErrors)
 
-    // "Try again" only while the next tap is a retry of the SAME request (same idempotency key). Edit a field and it
-    // is a new payment, so the button goes back to naming the amount it will start.
-    val isRetry = pay is PayPhase.Failed &&
-        (validatePayer(link.amountKobo, form.amountText, form.name, form.email) as? PayerValidation.Valid)
-            ?.input?.matches(pay.request) == true
-    val label = payButtonLabel(link.amountKobo, form.amountText, retry = isRetry)
+    val label = payButtonLabel(link.amountKobo, form.amountText)
     Button(
         onClick = ::submit,
         enabled = !submitting,
@@ -442,7 +436,6 @@ private fun PayerTextField(
 @Composable
 private fun PayBanner(pay: PayPhase, visibleFieldErrors: Map<PayerField, String>) {
     when (pay) {
-        is PayPhase.Failed -> Banner(payFailureMessage(pay.kind), BannerTone.Error)
         is PayPhase.Rejected -> {
             // Once the payer has fixed every field the server pointed at, "check the highlighted fields" is stale.
             if (pay.fieldErrors.isEmpty() || visibleFieldErrors.isNotEmpty()) {
@@ -454,7 +447,8 @@ private fun PayBanner(pay: PayPhase, visibleFieldErrors: Map<PayerField, String>
         }
         is PayPhase.NotRecorded -> Banner(PAY_NOT_RECORDED_MESSAGE, BannerTone.Error)
         is PayPhase.PriceChanged -> Banner(priceChangedMessage(pay.newAmountKobo), BannerTone.Warning)
-        PayPhase.Idle, PayPhase.Submitting, is PayPhase.Retrying, is PayPhase.Started -> Unit
+        // An attempt of unknown outcome is the attempt screen, never this form (RememberedAttemptNotice).
+        PayPhase.Idle, PayPhase.Submitting, is PayPhase.Failed, is PayPhase.Retrying, is PayPhase.Started -> Unit
     }
 }
 

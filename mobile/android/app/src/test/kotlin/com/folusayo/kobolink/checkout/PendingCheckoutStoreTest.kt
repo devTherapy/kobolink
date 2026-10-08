@@ -212,6 +212,22 @@ class PendingCheckoutStoreTest {
     }
 
     @Test
+    fun `a store that could not be opened is tried again on the next call, not cached as unavailable for the life of the process`() {
+        var attempts = 0
+        val real = InMemoryPendingCheckoutStore()
+        val store = ReopeningPendingCheckoutStore {
+            attempts += 1
+            if (attempts < 3) throw IllegalStateException("keystore not ready") else real
+        }
+
+        assertEquals(StoreFailureKind.Unavailable, failure { store.load(request.code) }?.kind)
+        assertEquals(StoreFailureKind.Unavailable, failure { store.saveObligation(SignOutObligation(emptyList())) }?.kind)
+        store.save(unknown) // the third try opens it
+        assertEquals(unknown, store.load(request.code))
+        assertEquals("once open it stays open", 3, attempts)
+    }
+
+    @Test
     fun `the in-memory store's failure switches are per operation and can be healed`() {
         val store = InMemoryPendingCheckoutStore()
         store.save(unknown)

@@ -34,7 +34,7 @@ class CheckoutPrivacyTest {
                     Kobo.formatNaira(pay.amountKobo),
                     startOverMessage(pay.reference, state.link.merchantName),
                 )
-                is PayPhase.Failed -> if (pay.isRemembered) parts += attemptNotice(state.link, pay).toString()
+                is PayPhase.Failed -> parts += attemptNotice(state.link, pay).toString()
                 is PayPhase.Retrying -> parts += attemptNotice(state.link, pay).toString()
                 else -> Unit
             }
@@ -71,7 +71,7 @@ class CheckoutPrivacyTest {
         assertNoPayerDetails(rig, "sending")
 
         rig.answerSend(InitializeOutcome.Failed(FailureKind.Network))
-        assertTrue("a resent attempt is still shown as an attempt", (rig.pay as PayPhase.Failed).isRemembered)
+        assertTrue("a resent attempt is still shown as an attempt", rig.pay!!.showsAttempt)
         assertNoPayerDetails(rig, "unsettled")
 
         rig.controller.retry()

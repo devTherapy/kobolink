@@ -57,12 +57,4 @@ class PayerValidationTest {
         val problems = errors(validatePayer(null, "", "", ""))
         assertEquals(setOf(PayerField.Amount, PayerField.Name, PayerField.Email), problems.keys)
     }
-
-    @Test
-    fun `an input matches the request it was made from, and only that one`() {
-        val request = InitializeRequest("7hK2mQ9x", 1_500_000, "Tunde Bello", "tunde@example.com")
-        assertTrue(PayerInput(1_500_000, "Tunde Bello", "tunde@example.com").matches(request))
-        assertEquals(false, PayerInput(1_500_000, "Tunde Bello", "other@example.com").matches(request))
-        assertEquals(false, PayerInput(1_500_001, "Tunde Bello", "tunde@example.com").matches(request))
-    }
 }

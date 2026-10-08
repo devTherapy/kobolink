@@ -101,19 +101,21 @@ sealed interface PayPhase {
 
     /**
      * The call could not be answered (network, rate limit, 5xx), or it was sent in an earlier run of the app and
-     * never seen to finish ([FailureKind.Interrupted]). The outcome is UNKNOWN: retrying the same [request] reuses
-     * the remembered idempotency key; a changed one is a new attempt.
+     * never seen to finish ([FailureKind.Interrupted]). The outcome is UNKNOWN: the request may already have created a
+     * pending checkout under its idempotency key.
      *
-     * A remembered attempt ([isRemembered]) is shown as an ATTEMPT, never as a form: its name and e-mail are only
-     * ever sent again, never put back on a screen, because the person looking at it may not be the person who made it.
+     * So, in this run or a later one, this phase is shown as an ATTEMPT ([showsAttempt]), never as a form. There is
+     * exactly one open attempt for the link, and the only ways forward are [CheckoutController.retry] (the identical
+     * request under the identical key) and the confirmed [CheckoutController.startOver] (which opens an EMPTY form).
+     * An editable form here would let a corrected e-mail or amount mint a second key over the unknown first one. Its
+     * name and e-mail are only ever sent again, never put back on a screen, because the person looking at it may not be
+     * the person who made it.
      */
     data class Failed(
         val kind: FailureKind,
         val request: InitializeRequest,
         /** "Start a new payment" was tapped and the phone would not let go of the record: nothing changed, and the screen says so. */
         val startOverFailed: Boolean = false,
-        /** This is a remembered attempt that was sent again from its own screen and still has no answer. */
-        val resumed: Boolean = false,
     ) : PayPhase
 
     /**
@@ -123,14 +125,14 @@ sealed interface PayPhase {
     data class NotRecorded(val request: InitializeRequest) : PayPhase
 }
 
-/** An attempt restored from storage (or resent from its screen), not one the payer just typed: no form is shown for it. */
-val PayPhase.Failed.isRemembered: Boolean get() = resumed || kind == FailureKind.Interrupted
-
 /** A request is in flight, so a second tap is ignored. */
 val PayPhase.isBusy: Boolean get() = this is PayPhase.Submitting || this is PayPhase.Retrying
 
-/** The screen for a remembered attempt, as opposed to the form: [PayPhase.Failed.isRemembered] or being resent. */
-val PayPhase.showsAttempt: Boolean get() = (this is PayPhase.Failed && isRemembered) || this is PayPhase.Retrying
+/** An attempt of unknown outcome is open: the screen is the attempt, with NO form (see [PayPhase.Failed]). */
+val PayPhase.showsAttempt: Boolean get() = this is PayPhase.Failed || this is PayPhase.Retrying
+
+/** An attempt exists for the link (unknown outcome, being resent, or started): no new payment can be made until it is settled or started over. */
+val PayPhase.holdsAttempt: Boolean get() = showsAttempt || this is PayPhase.Started || this is PayPhase.Submitting
 
 /** The code of the link this state is about, or null when none is open or it was unreadable. */
 val CheckoutState.code: String?
@@ -345,7 +347,7 @@ class CheckoutController(
     fun pay(input: PayerInput) {
         val loaded = _state.value as? CheckoutState.Loaded ?: return
         if (loaded.availability != LinkAvailability.Payable) return
-        if (loaded.pay.isBusy) return
+        if (loaded.pay.holdsAttempt) return // one open attempt per link: only [retry] and [startOver] move it
         if (loaded.pay.needsFreshRead) return // the price on screen was just refused; only a fresh read lifts this
 
         val request = InitializeRequest(
@@ -354,7 +356,14 @@ class CheckoutController(
             payerName = input.name,
             payerEmail = input.email,
         )
-        val attempt = attemptFor(request)
+        val unsettled = held?.takeIf { !isHidden(it) && !ownedByAnotherUser(it) }
+        if (unsettled != null && unsettled.request != request) {
+            // An unsettled attempt exists that this screen is not showing. A new key here would replace the only slot
+            // for the link while the first request may have created a checkout: show the attempt instead.
+            open(loaded.link.code)
+            return
+        }
+        val attempt = unsettled ?: PendingCheckout(request, newIdempotencyKey(), owner = ownerNow())
 
         // Write it down BEFORE the request leaves. If the process dies mid-flight the next one knows which key to
         // retry under. If it cannot be written, nothing is sent: an unrecorded payment could be paid twice.
@@ -375,30 +384,38 @@ class CheckoutController(
         job = scope.launch {
             val outcome = gateway.initialize(request, attempt.key)
             if (!isCurrent(mine)) return@launch
-            applyInitialize(loaded, attempt, outcome, mine, resumed = false)
+            applyInitialize(loaded, attempt, outcome, mine)
         }
     }
 
     /**
-     * "Try again" on a REMEMBERED attempt of unknown outcome: the SAME request under the SAME key, taken from the
-     * stored attempt, not from the form (which is empty). Nothing is written first (the key is already stored), so a
-     * storage failure cannot turn a replay into a new attempt, and nothing the server says about this replay alone
-     * can end the attempt except the refusals [applyInitialize] lists.
+     * "Try again" on an attempt of unknown outcome, in this run or a remembered one: the SAME request under the SAME
+     * key, taken from the stored attempt, never from a form (there is none). Nothing is written first (the key is
+     * already stored), so a storage failure cannot turn a replay into a new attempt, and nothing the server says about
+     * this replay alone can end the attempt except the refusals [applyInitialize] lists.
+     *
+     * If the attempt on screen is no longer one this person may resume (another user's, or one a sign-out owes the
+     * removal of), the link is presented again, which shows the blocked state: a button that does nothing, in silence,
+     * is not an option.
      */
     fun retry() {
         val loaded = _state.value as? CheckoutState.Loaded ?: return
         val pay = loaded.pay as? PayPhase.Failed ?: return
         if (loaded.availability != LinkAvailability.Payable) return
-        val attempt = held ?: return
-        if (attempt.request.code != loaded.link.code || isHidden(attempt) || ownedByAnotherUser(attempt)) return
-        if (pay.request != attempt.request) return
+        val attempt = held
+        if (attempt == null || attempt.request.code != loaded.link.code || attempt.request != pay.request ||
+            isHidden(attempt) || ownedByAnotherUser(attempt)
+        ) {
+            open(loaded.link.code)
+            return
+        }
 
         val mine = supersede()
         _state.value = loaded.copy(pay = PayPhase.Retrying(attempt.request.amountKobo))
         job = scope.launch {
             val outcome = gateway.initialize(attempt.request, attempt.key)
             if (!isCurrent(mine)) return@launch
-            applyInitialize(loaded, attempt, outcome, mine, resumed = true)
+            applyInitialize(loaded, attempt, outcome, mine)
         }
     }
 
@@ -471,8 +488,7 @@ class CheckoutController(
     /**
      * What the screen shows for a link just read, given the attempt remembered for it: the same "Payment started"
      * screen, or the interrupted attempt as a retry. Only over a payable link (a link switched off or paid says
-     * that instead), and an interrupted attempt only while its price is still the link's price (a changed price is
-     * a new request, which has a new key anyway).
+     * that instead).
      */
     private fun rememberedPhaseFor(link: CheckoutLink, availability: LinkAvailability): PayPhase {
         val remembered = held?.takeIf { !isHidden(it) && !ownedByAnotherUser(it) } ?: return PayPhase.Idle
@@ -480,8 +496,8 @@ class CheckoutController(
         if (remembered.reference != null) {
             return PayPhase.Started(remembered.reference, remembered.confirmedAmountKobo ?: remembered.request.amountKobo)
         }
-        val repriced = link.amountKobo != null && link.amountKobo != remembered.request.amountKobo
-        if (repriced) return PayPhase.Idle
+        // Whatever the link costs now: a changed price is no reason to forget the unknown first send. A same-key retry
+        // either replays the stored answer or is refused by the server (amount_mismatch), which settles it.
         return PayPhase.Failed(FailureKind.Interrupted, remembered.request)
     }
 
@@ -492,7 +508,6 @@ class CheckoutController(
         attempt: PendingCheckout,
         outcome: InitializeOutcome,
         mine: Long,
-        resumed: Boolean,
     ) {
         val request = attempt.request
         when (outcome) {
@@ -515,7 +530,7 @@ class CheckoutController(
 
             // Whatever went wrong, a request may have gone out: unknown. The slot stays, and a retry replays it.
             is InitializeOutcome.Failed ->
-                _state.value = before.copy(pay = PayPhase.Failed(outcome.kind, request, resumed = resumed))
+                _state.value = before.copy(pay = PayPhase.Failed(outcome.kind, request))
 
             is InitializeOutcome.Rejected -> {
                 val rejection = outcome.rejection
@@ -538,7 +553,7 @@ class CheckoutController(
                     rejection.kind == RejectionKind.AmountMismatch && before.link.amountKobo != null ->
                         // The merchant repriced a fixed-amount link after this screen loaded. Resubmitting
                         // cannot succeed; read the link again so the payer is told the current price.
-                        reportPriceChanged(before, mine)
+                        reportPriceChanged(before, request.amountKobo, mine)
 
                     else -> {
                         val fieldErrors = if (rejection.kind == RejectionKind.AmountMismatch) {
@@ -556,14 +571,14 @@ class CheckoutController(
         }
     }
 
-    private suspend fun reportPriceChanged(before: CheckoutState.Loaded, mine: Long) {
+    private suspend fun reportPriceChanged(before: CheckoutState.Loaded, refusedAmountKobo: Int, mine: Long) {
         val outcome = gateway.lookup(before.link.code)
         if (!isCurrent(mine)) return
         _state.value = when (outcome) {
             is LookupOutcome.Found ->
                 if (outcome.availability == LinkAvailability.Payable && outcome.link.amountKobo != null) {
                     // The very amount that was just refused is no price to offer: sending it again is the loop.
-                    val unchanged = outcome.link.amountKobo == before.link.amountKobo
+                    val unchanged = outcome.link.amountKobo == refusedAmountKobo
                     CheckoutState.Loaded(
                         outcome.link,
                         outcome.availability,
@@ -575,13 +590,6 @@ class CheckoutController(
             LookupOutcome.NotFound -> CheckoutState.NotFound(before.link.code)
             is LookupOutcome.Failed -> before.copy(pay = PayPhase.PriceChanged(newAmountKobo = null))
         }
-    }
-
-    /** The attempt to send [request] under: the remembered one if it is the identical request, else a new one. */
-    private fun attemptFor(request: InitializeRequest): PendingCheckout {
-        val remembered = held?.takeIf { !isHidden(it) && !ownedByAnotherUser(it) }
-        if (remembered != null && remembered.request == request) return remembered
-        return PendingCheckout(request, newIdempotencyKey(), owner = ownerNow())
     }
 
     private fun forget(code: String) {
@@ -675,7 +683,7 @@ class CheckoutController(
                 confirmedUser = change.user.id
                 settle(change.user)
                 // Another user than the last one, or an attempt on screen that has just been removed: do not leave it up.
-                if ((previous != null && previous != change.user.id) || heldIsGone()) resetOpenScreen()
+                if ((previous != null && previous != change.user.id) || heldIsGone() || held?.let(::ownedByAnotherUser) == true) resetOpenScreen()
             }
 
             is SessionChange.SignedIn -> {

@@ -95,7 +95,7 @@ class CheckoutPersistenceTest {
     }
 
     @Test
-    fun `a Pay after that re-tap replays the first attempt's key instead of making a second checkout`() = runTest {
+    fun `a Pay after that re-tap makes no second checkout, the started payment is the attempt`() = runTest {
         val gateway = FakeCheckoutGateway()
         val store = InMemoryPendingCheckoutStore()
         val first = appRun(gateway, store, run = 1)
@@ -108,8 +108,8 @@ class CheckoutPersistenceTest {
         second.checkout.pay(payer)
         runCurrent()
 
-        assertEquals(2, gateway.initializes.size)
-        assertEquals("run1-key-0-0123456789", keys(gateway)[1])
+        assertEquals(1, gateway.initializes.size)
+        assertEquals("run1-key-0-0123456789", store.load(code)?.key)
     }
 
     @Test
@@ -125,7 +125,7 @@ class CheckoutPersistenceTest {
         open(second)
         // The screen says so, and carries the exact request so the form can be filled back in.
         assertEquals(PayPhase.Failed(FailureKind.Interrupted, request), payOf(second))
-        second.checkout.pay(payer)
+        second.checkout.retry()
         runCurrent()
 
         assertEquals(listOf("run1-key-0-0123456789", "run1-key-0-0123456789"), keys(gateway))
@@ -144,7 +144,7 @@ class CheckoutPersistenceTest {
         val second = appRun(gateway, store, run = 2)
         open(second)
         assertEquals(PayPhase.Failed(FailureKind.Interrupted, request), payOf(second))
-        second.checkout.pay(payer)
+        second.checkout.retry()
         runCurrent()
 
         assertEquals(listOf("run1-key-0-0123456789", "run1-key-0-0123456789"), keys(gateway))
@@ -177,7 +177,7 @@ class CheckoutPersistenceTest {
 
         val second = appRun(gateway, EncryptedPendingCheckoutStore(disk), run = 2)
         open(second)
-        second.checkout.pay(payer)
+        second.checkout.retry()
         runCurrent()
 
         assertEquals(listOf("run1-key-0-0123456789", "run1-key-0-0123456789"), keys(gateway))
@@ -302,7 +302,7 @@ class CheckoutPersistenceTest {
         assertEquals(PayPhase.Started(reference, 1_500_000), payOf(first))
         open(first, code = other) // and the second one's unknown attempt is too
         assertEquals(PayPhase.Failed(FailureKind.Interrupted, request.copy(code = other)), payOf(first))
-        first.checkout.pay(payer)
+        first.checkout.retry()
         runCurrent()
 
         assertTrue(keys(gateway)[0] != keys(gateway)[1])
@@ -432,7 +432,7 @@ class CheckoutPersistenceTest {
     // ---- an attempt that no longer matches the link -----------------------------------------
 
     @Test
-    fun `an unknown attempt at an old price is not offered as a retry once the price has changed`() = runTest {
+    fun `an unknown attempt is still the attempt after the price changed, and cannot be replaced by paying the new price`() = runTest {
         val gateway = FakeCheckoutGateway()
         val store = InMemoryPendingCheckoutStore()
         val first = appRun(gateway, store, run = 1)
@@ -442,11 +442,12 @@ class CheckoutPersistenceTest {
 
         val second = appRun(gateway, store, run = 2)
         open(second, link = link(amountKobo = 1_800_000)) // repriced meanwhile; a fresh read says so
-        assertEquals(PayPhase.Idle, payOf(second))
-        second.checkout.pay(payer.copy(amountKobo = 1_800_000))
+        assertEquals(PayPhase.Failed(FailureKind.Interrupted, request), payOf(second))
+        second.checkout.pay(payer.copy(amountKobo = 1_800_000)) // there is no form to do this from; if it got here it is ignored
         runCurrent()
 
-        assertTrue("a changed amount is a new request: new key", keys(gateway)[0] != keys(gateway)[1])
+        assertEquals("nothing but the first send", 1, gateway.initializes.size)
+        assertEquals("run1-key-0-0123456789", store.load(code)?.key)
     }
 
     @Test

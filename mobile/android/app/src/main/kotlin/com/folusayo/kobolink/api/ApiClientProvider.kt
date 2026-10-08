@@ -9,7 +9,7 @@ import com.folusayo.kobolink.auth.TokenStore
 import com.folusayo.kobolink.auth.openEncryptedPrefs
 import com.folusayo.kobolink.checkout.EncryptedPendingCheckoutStore
 import com.folusayo.kobolink.checkout.PendingCheckoutStore
-import com.folusayo.kobolink.checkout.UnavailablePendingCheckoutStore
+import com.folusayo.kobolink.checkout.ReopeningPendingCheckoutStore
 import com.folusayo.kobolink.generated.api.apis.AuthApi
 import com.folusayo.kobolink.generated.api.apis.CheckoutApi
 import com.folusayo.kobolink.generated.api.apis.LinksApi
@@ -70,14 +70,13 @@ object ApiClientProvider {
     }
 
     /**
-     * Where an unsettled payment is remembered (encrypted, per owner and link). If secure storage cannot be opened
-     * this is a store that refuses to record, so no payment is sent without a record: the checkout says so.
+     * Where an unsettled payment is remembered (encrypted, one slot per link). If secure storage cannot be opened
+     * every call fails as "unavailable", so no payment is sent without a record and the checkout says so, and the
+     * open is tried again on the next call: a transient fault is not cached for the life of the process.
      */
     val pendingCheckouts: PendingCheckoutStore by lazy {
-        try {
+        ReopeningPendingCheckoutStore {
             EncryptedPendingCheckoutStore(openEncryptedPrefs(appContext, EncryptedPendingCheckoutStore.PREFS_FILE_NAME))
-        } catch (e: Exception) {
-            UnavailablePendingCheckoutStore(e)
         }
     }
 

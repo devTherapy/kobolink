@@ -432,20 +432,21 @@ class CheckoutControllerTest {
             (checkout.state.value as CheckoutState.Loaded).pay,
         )
 
-        checkout.pay(payer) // "Try again", same details
+        checkout.retry() // "Try again": the attempt screen has no form, the stored request is sent again
         runCurrent()
         gateway.initializes[1].complete(InitializeOutcome.Failed(FailureKind.Server))
         runCurrent()
-        checkout.pay(payer)
+        checkout.retry()
         runCurrent()
 
         val keys = gateway.initializes.map { it.request.second }
         assertEquals(3, keys.size)
         assertEquals("one attempt, one key, however many retries", 1, keys.toSet().size)
+        assertEquals("and the identical request each time", 1, gateway.initializes.map { it.request.first }.toSet().size)
     }
 
     @Test
-    fun `a corrected payer is a new attempt with a new key`() = runTest {
+    fun `after a failure the payer cannot send a corrected request, the first key is the only one`() = runTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         loaded(gateway, checkout)
@@ -454,12 +455,13 @@ class CheckoutControllerTest {
         runCurrent()
         gateway.initializes[0].complete(InitializeOutcome.Failed(FailureKind.Network))
         runCurrent()
-        // Re-using the first key with a changed body would be idempotency_mismatch.
+        // The first POST may have created a pending checkout under its key. Replacing the key (or the request under
+        // it) is a second checkout for one payment, so there is no form to correct and nothing to send.
         checkout.pay(payer.copy(email = "tunde.bello@example.com"))
         runCurrent()
 
-        val keys = gateway.initializes.map { it.request.second }
-        assertEquals(2, keys.toSet().size)
+        assertEquals(1, gateway.initializes.size)
+        assertTrue((checkout.state.value as CheckoutState.Loaded).pay is PayPhase.Failed)
     }
 
     @Test
@@ -494,7 +496,7 @@ class CheckoutControllerTest {
 
         // The request may or may not have been processed: the retry must carry the same key.
         loaded(gateway, checkout)
-        checkout.pay(payer)
+        checkout.retry()
         runCurrent()
         assertEquals(gateway.initializes[0].request.second, gateway.initializes[1].request.second)
         gateway.initializes[1].complete(InitializeOutcome.Failed(FailureKind.Network))
@@ -801,7 +803,7 @@ class CheckoutControllerTest {
     }
 
     @Test
-    fun `a Pay after reopening a started payment replays its attempt instead of making a second checkout`() = runTest {
+    fun `a Pay after reopening a started payment sends nothing, the started payment is the attempt`() = runTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         started(gateway, checkout)
@@ -810,12 +812,8 @@ class CheckoutControllerTest {
         checkout.pay(payer)
         runCurrent()
 
-        // Whatever reaches the server carries the SAME idempotency key, so the server answers with the stored
-        // checkout. A new key here is a second pending checkout for the same payment.
-        assertEquals(2, gateway.initializes.size)
-        assertEquals(gateway.initializes[0].request.second, gateway.initializes[1].request.second)
-        gateway.initializes[1].complete(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000))
-        runCurrent()
+        // A new key here would be a second pending checkout for the same payment; the only way out is Start a new payment.
+        assertEquals(1, gateway.initializes.size)
         assertEquals(PayPhase.Started("kbl_abcdefghjk", 1_500_000), (checkout.state.value as CheckoutState.Loaded).pay)
     }
 

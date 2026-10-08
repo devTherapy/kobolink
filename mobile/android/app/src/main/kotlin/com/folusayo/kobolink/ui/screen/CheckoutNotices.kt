@@ -127,7 +127,7 @@ internal fun LoadFailedNotice(kind: FailureKind, onRetry: () -> Unit, onClose: (
 @Composable
 internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, onDone: () -> Unit, onStartOver: () -> Unit) {
     val reference = started.reference
-    var confirmingStartOver by rememberSaveable { mutableStateOf(false) }
+    var confirmingStartOver by rememberSaveable(link.code) { mutableStateOf(false) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -228,7 +228,7 @@ internal fun RememberedAttemptNotice(
     val notice = attemptNotice(link, pay)
     val sending = pay is PayPhase.Retrying
     val startOverFailed = pay is PayPhase.Failed && pay.startOverFailed
-    var confirmingStartOver by rememberSaveable { mutableStateOf(false) }
+    var confirmingStartOver by rememberSaveable(link.code) { mutableStateOf(false) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -320,13 +320,14 @@ internal fun RememberedAttemptNotice(
  */
 @Composable
 internal fun StorageBlockedNotice(
+    code: String,
     block: StorageBlock,
     onRetry: () -> Unit,
     onStartOver: () -> Unit,
     onResetCheckoutData: () -> Unit,
     onClose: () -> Unit,
 ) {
-    var confirming by rememberSaveable { mutableStateOf(false) }
+    var confirming by rememberSaveable(code, block) { mutableStateOf(false) }
     val isReset = block == StorageBlock.ObligationUnreadable || block == StorageBlock.ResetFailed
     val offersStartOver = block == StorageBlock.Undecodable || block == StorageBlock.UndecodableClearFailed
     NoticeContent(

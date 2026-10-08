@@ -95,12 +95,14 @@ class CheckoutCopyTest {
     }
 
     @Test
-    fun `a failed payment attempt says it could not confirm the start and that no money moved`() {
-        for (kind in FailureKind.entries) {
-            val message = payFailureMessage(kind)
-            assertTrue(message, message.contains("could not confirm that your payment started"))
-            assertTrue(message, message.endsWith(NO_MONEY_MOVED))
+    fun `an attempt of unknown outcome says it could not confirm the payment, names the cause, and that no money moved`() {
+        val bodies = FailureKind.entries.map { kind ->
+            val notice = attemptNotice(link(), PayPhase.Failed(kind, CK.request()))
+            assertEquals("We couldn't confirm your payment", notice.heading)
+            assertEquals(NO_MONEY_MOVED, notice.moneyLine)
+            notice.body
         }
+        assertEquals(FailureKind.entries.size, bodies.toSet().size)
     }
 
     @Test
@@ -132,21 +134,16 @@ class CheckoutCopyTest {
 
     @Test
     fun `the pay button names the amount once it is known`() {
-        assertEquals(ButtonLabel("Pay ₦15,000", "Pay 15,000 naira"), payButtonLabel(1_500_000, "", retry = false))
-        assertEquals(ButtonLabel("Pay ₦2,500.50", "Pay 2,500 naira, 50 kobo"), payButtonLabel(null, "2,500.50", retry = false))
+        assertEquals(ButtonLabel("Pay ₦15,000", "Pay 15,000 naira"), payButtonLabel(1_500_000, ""))
+        assertEquals(ButtonLabel("Pay ₦2,500.50", "Pay 2,500 naira, 50 kobo"), payButtonLabel(null, "2,500.50"))
     }
 
     @Test
     fun `the pay button says plain Pay while an open amount is blank or not chargeable`() {
-        assertEquals("Pay", payButtonLabel(null, "", retry = false).text)
-        assertEquals("Pay", payButtonLabel(null, "5", retry = false).text) // below the ₦100 minimum
-        assertEquals("Pay", payButtonLabel(null, "99999999", retry = false).text) // above the ₦10,000,000 cap
-        assertEquals("Pay", payButtonLabel(null, "abc", retry = false).text)
-    }
-
-    @Test
-    fun `after a failure the button says try again`() {
-        assertEquals("Try again", payButtonLabel(1_500_000, "", retry = true).text)
+        assertEquals("Pay", payButtonLabel(null, "").text)
+        assertEquals("Pay", payButtonLabel(null, "5").text) // below the ₦100 minimum
+        assertEquals("Pay", payButtonLabel(null, "99999999").text) // above the ₦10,000,000 cap
+        assertEquals("Pay", payButtonLabel(null, "abc").text)
     }
 
     // ---- small helpers --------------------------------------------------------------------

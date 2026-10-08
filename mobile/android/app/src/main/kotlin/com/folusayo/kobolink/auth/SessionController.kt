@@ -181,14 +181,17 @@ class SessionController(private val auth: AuthRepository) {
         }
         _signOutBlocked.value = false
         onChange?.invoke(SessionChange.SignedOutByChoice)
-        _state.value = try {
+        // Signed out NOW, before the revoke goes over the network: a link opened while it is in the air must not pay
+        // as the user who just left (an attempt with their owner id would be missing from the obligation, and would be
+        // shown to the next person). From here on an attempt is a payer's.
+        _state.value = SessionState.SignedOut()
+        try {
             auth.logout()
-            SessionState.SignedOut()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // The device could not remove the token. Don't crash, and don't claim a clean sign-out.
-            SessionState.SignedOut(notice = LOGOUT_INCOMPLETE_NOTICE)
+            _state.value = SessionState.SignedOut(notice = LOGOUT_INCOMPLETE_NOTICE)
         }
     }
 

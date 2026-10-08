@@ -64,6 +64,3 @@ fun validatePayer(
     return PayerValidation.Valid(PayerInput(amountKobo = amountKobo, name = trimmedName, email = normalisedEmail))
 }
 
-/** Is this the very request [request] was made from? Then sending it again is a retry, not a new attempt. */
-fun PayerInput.matches(request: InitializeRequest): Boolean =
-    amountKobo == request.amountKobo && name == request.payerName && email == request.payerEmail

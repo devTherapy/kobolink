@@ -240,6 +240,40 @@ class UnavailablePendingCheckoutStore(private val reason: Throwable? = null) : P
     override fun clearObligation() = fail(StoreOperation.Obligation)
 }
 
+/**
+ * Opens the real store lazily and keeps it only once it has opened. A failure to open (a Keystore that is not ready
+ * yet, a locked device) is NOT remembered for the life of the process: every call tries again, so a transient fault
+ * does not make sign-out, and every link, fail until the app is restarted. While it cannot be opened it behaves as
+ * [UnavailablePendingCheckoutStore].
+ */
+class ReopeningPendingCheckoutStore(private val open: () -> PendingCheckoutStore) : PendingCheckoutStore {
+    private var opened: PendingCheckoutStore? = null
+
+    @Synchronized
+    private fun store(): PendingCheckoutStore {
+        opened?.let { return it }
+        return try {
+            open().also { opened = it }
+        } catch (e: Exception) {
+            UnavailablePendingCheckoutStore(e)
+        }
+    }
+
+    override fun load(code: String) = store().load(code)
+
+    override fun save(pending: PendingCheckout) = store().save(pending)
+
+    override fun remove(code: String) = store().remove(code)
+
+    override fun all() = store().all()
+
+    override fun loadObligation() = store().loadObligation()
+
+    override fun saveObligation(obligation: SignOutObligation) = store().saveObligation(obligation)
+
+    override fun clearObligation() = store().clearObligation()
+}
+
 /** The on-disk form of a pending payment: a small versioned JSON object. */
 object PendingCheckoutCodec {
     const val FORMAT_VERSION = 1

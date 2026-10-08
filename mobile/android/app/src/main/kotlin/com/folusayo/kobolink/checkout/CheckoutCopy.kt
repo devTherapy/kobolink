@@ -76,9 +76,6 @@ fun loadFailedNotice(kind: FailureKind): Notice = Notice(
     nextStep = "Try again.",
 )
 
-/** What the payer reads above the Pay button when starting a payment failed. */
-fun payFailureMessage(kind: FailureKind): String = "${failureSentence(kind)} We could not confirm that your payment started. $NO_MONEY_MOVED"
-
 /** A refusal from the API. Adds the money line unless the server said money moved. */
 fun rejectionMessage(message: String, moneyMoved: Boolean?): String =
     if (moneyMoved == true) message else "$message $NO_MONEY_MOVED"
@@ -94,11 +91,10 @@ data class ButtonLabel(val text: String, val spoken: String)
 
 /**
  * The Pay button. It names the amount once the amount is known (a fixed link, or an open-amount link whose
- * typed value is chargeable), so the payer reads the figure on the very control that spends it. After a
- * failed attempt it says "Try again": same request, same idempotency key.
+ * typed value is chargeable), so the payer reads the figure on the very control that spends it. It is only ever the
+ * button of a NEW payment: a payment of unknown outcome is shown as an attempt, whose button is "Try again".
  */
-fun payButtonLabel(fixedAmountKobo: Int?, typedAmount: String, retry: Boolean): ButtonLabel {
-    if (retry) return ButtonLabel("Try again", "Try again to start the payment")
+fun payButtonLabel(fixedAmountKobo: Int?, typedAmount: String): ButtonLabel {
     val amountKobo = fixedAmountKobo ?: Kobo.parseNaira(typedAmount)?.takeIf(Kobo::isValidAmountKobo)
     return if (amountKobo != null) {
         ButtonLabel("Pay ${Kobo.formatNaira(amountKobo)}", "Pay ${Kobo.spokenNaira(amountKobo)}")
