@@ -127,6 +127,7 @@ private fun failureSentence(kind: FailureKind): String = when (kind) {
     FailureKind.Unreadable -> "Kobolink answered with something this app couldn't read. If this keeps happening, update the app."
     // Neutral about WHO started it: a different person may have adopted an attempt made before their session was known.
     FailureKind.Interrupted -> "A payment on this phone was started earlier and Kobolink never saw how it ended."
+    FailureKind.Refused -> "Kobolink turned down this repeat of the request, which doesn't say what happened to the first one."
 }
 
 /**

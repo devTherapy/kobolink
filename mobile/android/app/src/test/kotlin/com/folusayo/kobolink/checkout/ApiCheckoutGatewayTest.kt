@@ -176,7 +176,7 @@ class ApiCheckoutGatewayTest {
             """{"code":"7hK2mQ9x","amountKobo":1500000,"payerName":"Tunde Bello","payerEmail":"tunde@example.com"}""",
             body,
         )
-        assertEquals(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000), outcome)
+        assertEquals(InitializeOutcome.Started("kbl_abcdefghjk", 1_500_000, code = "7hK2mQ9x"), outcome)
     }
 
     @Test
@@ -196,6 +196,18 @@ class ApiCheckoutGatewayTest {
         assertEquals(RejectionKind.LinkNotPayable, outcome.rejection.kind)
         assertEquals(LinkAvailability.AlreadyPaid, outcome.rejection.availability)
         assertEquals(false, outcome.rejection.moneyMoved)
+        assertEquals("the status travels with the refusal, the verdict needs it", 409, outcome.rejection.httpStatus)
+    }
+
+    @Test
+    fun `a route-level refusal carries its status and no moneyMoved, so the verdict cannot settle on it`() = runTest {
+        respond(404, apiError("not_found", "Not Found", ""))
+
+        val rejection = (gateway.initialize(request, key) as InitializeOutcome.Rejected).rejection
+
+        assertEquals(404, rejection.httpStatus)
+        assertNull(rejection.moneyMoved)
+        assertEquals(SendVerdict.Unsettled(FailureKind.Refused), sendVerdict(InitializeOutcome.Rejected(rejection), com.folusayo.kobolink.checkout.CK.request(), false))
     }
 
     @Test

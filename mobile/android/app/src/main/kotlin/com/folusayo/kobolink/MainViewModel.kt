@@ -134,7 +134,10 @@ class MainViewModel(
             initializer {
                 MainViewModel(
                     session = SessionController(
-                        AuthRepository(ApiClientProvider.auth, ApiClientProvider.tokenStore, ApiClientProvider.json),
+                        AuthRepository(
+                            ApiClientProvider.auth, ApiClientProvider.tokenStore, ApiClientProvider.json,
+                            revoke = ApiClientProvider.sessionRevoker::revoke,
+                        ),
                     ),
                     sessionExpired = ApiClientProvider.sessionExpiry.events,
                     checkoutGateway = ApiCheckoutGateway(ApiClientProvider.links, ApiClientProvider.checkout, ApiClientProvider.json),

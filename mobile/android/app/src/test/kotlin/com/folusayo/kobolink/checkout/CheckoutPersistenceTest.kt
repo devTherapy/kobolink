@@ -265,7 +265,7 @@ class CheckoutPersistenceTest {
         val store = InMemoryPendingCheckoutStore()
         val first = appRun(gateway, store, run = 1)
         open(first)
-        payAndAnswer(first, InitializeOutcome.Rejected(Rejection(RejectionKind.LinkNotPayable, "no", availability = LinkAvailability.Disabled)))
+        payAndAnswer(first, InitializeOutcome.Rejected(refusal(RejectionKind.LinkNotPayable, "no", availability = LinkAvailability.Disabled)))
         assertNull(store.load(code))
         first.finish()
 

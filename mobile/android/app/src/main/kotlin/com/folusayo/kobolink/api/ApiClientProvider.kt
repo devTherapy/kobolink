@@ -5,6 +5,7 @@ import com.folusayo.kobolink.BuildConfig
 import com.folusayo.kobolink.auth.AuthInterceptor
 import com.folusayo.kobolink.auth.EncryptedTokenStore
 import com.folusayo.kobolink.auth.SessionExpiryBus
+import com.folusayo.kobolink.auth.SessionRevoker
 import com.folusayo.kobolink.auth.TokenStore
 import com.folusayo.kobolink.auth.openEncryptedPrefs
 import com.folusayo.kobolink.checkout.EncryptedPendingCheckoutStore
@@ -137,6 +138,9 @@ object ApiClientProvider {
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
     }
+
+    /** Ends a session on the server with a token the app has already removed locally (best effort). */
+    val sessionRevoker: SessionRevoker by lazy { SessionRevoker(okHttpClient, BuildConfig.API_BASE_URL.toHttpUrl()) }
 
     val links: LinksApi by lazy { retrofit.create(LinksApi::class.java) }
     val checkout: CheckoutApi by lazy { checkoutRetrofit.create(CheckoutApi::class.java) }

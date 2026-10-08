@@ -48,6 +48,12 @@ enum class FailureKind {
      * closed, backgrounded or killed before the answer arrived) and nobody saw how it ended.
      */
     Interrupted,
+
+    /**
+     * The server answered a REPLAY (or an unrecognised refusal) with a "no" that does not settle the attempt: the first
+     * send is not accounted for, so the outcome is still unknown. See [sendVerdict].
+     */
+    Refused,
 }
 
 sealed interface LookupOutcome {
@@ -93,6 +99,8 @@ data class Rejection(
     val moneyMoved: Boolean? = null,
     /** Set for [RejectionKind.LinkNotPayable] when the server named the state. */
     val availability: LinkAvailability? = null,
+    /** The HTTP status the refusal came with. [sendVerdict] settles an attempt only on a (kind, status) pair the idempotency layer stores. */
+    val httpStatus: Int = 0,
 )
 
 /** The request `POST /api/checkout/initialize` carries; also what an idempotency key is bound to. */
@@ -105,7 +113,12 @@ data class InitializeRequest(
 
 sealed interface InitializeOutcome {
     /** The API created a pending checkout. Nothing has been charged: only `verify` posts to the ledger. */
-    data class Started(val reference: String, val amountKobo: Int) : InitializeOutcome
+    data class Started(
+        val reference: String,
+        val amountKobo: Int,
+        /** The link code the server says this checkout is for. Null only in tests that do not care: the gateway always sets it. */
+        val code: String? = null,
+    ) : InitializeOutcome
 
     data class Rejected(val rejection: Rejection) : InitializeOutcome
 

@@ -341,7 +341,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout)
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent() // the controller is now re-reading the price: lookups[1]
 
         checkout.open("Zz3Yy4Xx")
@@ -473,7 +473,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout)
         payAndAnswer(
             gateway, checkout,
-            InitializeOutcome.Rejected(Rejection(RejectionKind.LinkNotPayable, "no", availability = LinkAvailability.Disabled)),
+            InitializeOutcome.Rejected(refusal(RejectionKind.LinkNotPayable, "no", availability = LinkAvailability.Disabled)),
         )
 
         loaded(gateway, checkout) // the merchant switched it back on; the payer re-taps the link
@@ -564,7 +564,7 @@ class CheckoutControllerTest {
             loaded(gateway, checkout)
             payAndAnswer(
                 gateway, checkout,
-                InitializeOutcome.Rejected(Rejection(RejectionKind.LinkNotPayable, "This link cannot be paid right now.", availability = named)),
+                InitializeOutcome.Rejected(refusal(RejectionKind.LinkNotPayable, "This link cannot be paid right now.", availability = named)),
             )
             assertEquals(CheckoutState.Loaded(link(), expected, PayPhase.Idle), checkout.state.value)
         }
@@ -575,7 +575,7 @@ class CheckoutControllerTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         loaded(gateway, checkout)
-        val rejection = Rejection(
+        val rejection = refusal(
             RejectionKind.ValidationFailed, "Validation failed.",
             fieldErrors = mapOf(PayerField.Email to "Invalid email address"), moneyMoved = null,
         )
@@ -595,7 +595,7 @@ class CheckoutControllerTest {
 
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "That amount does not match this link.")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "That amount does not match this link.")))
         runCurrent()
         // Re-reading the link, not guessing:
         assertEquals(2, gateway.lookups.size)
@@ -616,7 +616,7 @@ class CheckoutControllerTest {
 
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(LookupOutcome.Failed(FailureKind.Network))
         runCurrent()
@@ -632,7 +632,7 @@ class CheckoutControllerTest {
 
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(found(availability = LinkAvailability.Disabled))
         runCurrent()
@@ -648,7 +648,7 @@ class CheckoutControllerTest {
 
         payAndAnswer(
             gateway, checkout,
-            InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "That amount does not match this link.")),
+            InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "That amount does not match this link.")),
         )
 
         val pay = (checkout.state.value as CheckoutState.Loaded).pay as PayPhase.Rejected
@@ -661,7 +661,7 @@ class CheckoutControllerTest {
         val gateway = FakeCheckoutGateway()
         val checkout = controller(gateway)
         loaded(gateway, checkout)
-        payAndAnswer(gateway, checkout, InitializeOutcome.Rejected(Rejection(RejectionKind.NotFound, "No link with that code.")))
+        payAndAnswer(gateway, checkout, InitializeOutcome.Rejected(refusal(RejectionKind.NotFound, "No link with that code.")))
         assertEquals(CheckoutState.NotFound("7hK2mQ9x"), checkout.state.value)
     }
 
@@ -674,7 +674,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(amountKobo = 1_500_000))
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(LookupOutcome.Failed(FailureKind.Network))
         runCurrent()
@@ -698,7 +698,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(amountKobo = 1_500_000))
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(LookupOutcome.Failed(FailureKind.Network))
         runCurrent()
@@ -732,7 +732,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(amountKobo = 1_500_000))
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(found(link(amountKobo = 1_800_000)))
         runCurrent()
@@ -865,7 +865,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(amountKobo = 1_500_000))
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(found(link(amountKobo = 1_500_000)))
         runCurrent()
@@ -896,7 +896,7 @@ class CheckoutControllerTest {
         loaded(gateway, checkout, link(amountKobo = 1_500_000))
         checkout.pay(payer)
         runCurrent()
-        gateway.initializes[0].complete(InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "mismatch")))
+        gateway.initializes[0].complete(InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "mismatch")))
         runCurrent()
         gateway.lookups[1].complete(found(link(amountKobo = null)))
         runCurrent()

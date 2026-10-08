@@ -77,15 +77,15 @@ class ApiCheckoutGateway(
         val body = response.body()
         when {
             response.isSuccessful && body != null ->
-                InitializeOutcome.Started(reference = body.reference, amountKobo = body.amountKobo)
+                InitializeOutcome.Started(reference = body.reference, amountKobo = body.amountKobo, code = body.code)
             response.isSuccessful -> InitializeOutcome.Failed(FailureKind.Unreadable)
             else -> {
                 val error = parseError(response)
-                // A 4xx with a readable ApiError body is the server's definitive "no" and the form stays
-                // so the payer can act on it. A 5xx, or a 429, is "not now": retryable, and the same key
-                // makes the retry safe, so it is a failure rather than a refusal.
+                // A 4xx with a readable ApiError body is a refusal. Whether it is the server's FINAL word on the attempt
+                // is not decided here: that depends on whether this was the first send, and on what the body says
+                // ([sendVerdict]). A 5xx, or a 429, is "not now": a failure, retryable under the same key.
                 if (error != null && response.code() < 500 && response.code() != 429) {
-                    InitializeOutcome.Rejected(error.toRejection())
+                    InitializeOutcome.Rejected(error.toRejection(response.code()))
                 } else {
                     InitializeOutcome.Failed(failureKind(response.code(), error))
                 }
@@ -129,7 +129,7 @@ private fun PublicLinkResponse.toOutcome(): LookupOutcome.Found = LookupOutcome.
     },
 )
 
-private fun ApiError.toRejection(): Rejection = Rejection(
+private fun ApiError.toRejection(httpStatus: Int): Rejection = Rejection(
     kind = when (code) {
         ApiError.Code.link_not_payable -> RejectionKind.LinkNotPayable
         ApiError.Code.amount_mismatch -> RejectionKind.AmountMismatch
@@ -149,6 +149,7 @@ private fun ApiError.toRejection(): Rejection = Rejection(
         if (field != null && first != null) field to first else null
     }.toMap(),
     moneyMoved = moneyMoved,
+    httpStatus = httpStatus,
     availability = when (state) {
         ApiError.State.payable -> null // a link_not_payable that says "payable" is a contract violation; treat as unspecified
         ApiError.State.disabled -> LinkAvailability.Disabled

@@ -24,11 +24,22 @@ class CheckoutAttemptScreenTest {
     // ---- 1. a failure in the SAME run -------------------------------------------------------------------------
 
     @Test
-    fun `(red) a failure in the same run shows the attempt, not an editable form`() = runTest {
+    fun `(red) after a failure in the same run nothing but the stored request can be sent`() = runTest {
         val rig = CheckoutRig(this)
         rig.makeAttempt(outcome = InitializeOutcome.Failed(FailureKind.Network))
+        val stored = rig.store.snapshot.single()
 
-        assertTrue("the screen for an outcome-unknown phase is the attempt", rig.pay!!.showsAttempt)
+        // No input of any kind can start another send: not the very same details, not a corrected one.
+        rig.pay(PayerInput(stored.request.amountKobo, stored.request.payerName, stored.request.payerEmail))
+        rig.pay(corrected)
+        assertEquals("pay() sends nothing while an attempt is open", 1, rig.sends.size)
+        assertTrue(rig.pay is PayPhase.Failed)
+
+        // The one thing that does send is the retry, and it sends exactly what was stored, under the stored key.
+        rig.controller.retry()
+        rig.settle()
+        assertEquals(2, rig.sends.size)
+        assertEquals(stored.request to stored.key, rig.sends[1])
     }
 
     @Test
@@ -106,7 +117,7 @@ class CheckoutAttemptScreenTest {
 
         second.controller.retry()
         second.answerSend(
-            InitializeOutcome.Rejected(Rejection(RejectionKind.AmountMismatch, "That amount does not match this link.", moneyMoved = false)),
+            InitializeOutcome.Rejected(refusal(RejectionKind.AmountMismatch, "That amount does not match this link.")),
         )
         // The refusal is the server's final word for that key: the slot goes, and the payer is told the new price.
         assertTrue(second.store.snapshot.isEmpty())

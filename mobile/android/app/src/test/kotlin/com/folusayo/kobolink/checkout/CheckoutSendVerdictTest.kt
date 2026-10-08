@@ -72,6 +72,108 @@ class CheckoutSendVerdictTest {
         assertTrue(first.pay is PayPhase.Failed)
     }
 
+    // ---- the verdict itself -------------------------------------------------------------------------------------
+
+    private val request = CK.request()
+    private val trio = listOf(RejectionKind.NotFound, RejectionKind.LinkNotPayable, RejectionKind.AmountMismatch)
+
+    private fun verdict(rejection: Rejection, first: Boolean) =
+        sendVerdict(InitializeOutcome.Rejected(rejection), request, first)
+
+    @Test
+    fun `not_found, link_not_payable and amount_mismatch with their own status and moneyMoved false settle, first send or replay`() {
+        for (kind in trio) {
+            for (first in listOf(true, false)) {
+                val rejection = refusal(kind, "no")
+                assertEquals("$kind first=$first", SendVerdict.Settled(rejection), verdict(rejection, first))
+            }
+        }
+    }
+
+    @Test
+    fun `those same refusals do NOT settle without moneyMoved false, or with a status the idempotency layer never stores`() {
+        for (kind in trio) {
+            for (moneyMoved in listOf<Boolean?>(null, true)) {
+                assertEquals("$kind moneyMoved=$moneyMoved", SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(kind, "no", moneyMoved = moneyMoved), false))
+            }
+            for (status in listOf(0, 200, 400, 401, 403, 500)) {
+                if (status == statusOf(kind)) continue
+                assertEquals("$kind status=$status", SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(kind, "no", httpStatus = status), false))
+            }
+        }
+    }
+
+    @Test
+    fun `validation_failed settles only the very first send`() {
+        val rejection = refusal(RejectionKind.ValidationFailed, "Validation failed.", moneyMoved = null)
+        assertEquals(SendVerdict.Rejected(rejection), verdict(rejection, first = true))
+        assertEquals(SendVerdict.Rejected(refusal(RejectionKind.ValidationFailed, "v", moneyMoved = false)), verdict(refusal(RejectionKind.ValidationFailed, "v", moneyMoved = false), true))
+        assertEquals(SendVerdict.Unsettled(FailureKind.Refused), verdict(rejection, first = false))
+        assertEquals("never when the server says money moved", SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(RejectionKind.ValidationFailed, "v", moneyMoved = true), true))
+        assertEquals("only as a 400", SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(RejectionKind.ValidationFailed, "v", moneyMoved = null, httpStatus = 422), true))
+    }
+
+    @Test
+    fun `every other refusal is unsettled, first send or replay`() {
+        for (first in listOf(true, false)) {
+            assertEquals(SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(RejectionKind.Other, "mismatch", moneyMoved = null, httpStatus = 422), first))
+            assertEquals(SendVerdict.Unsettled(FailureKind.Refused), verdict(refusal(RejectionKind.Other, "unauthenticated", moneyMoved = null, httpStatus = 401), first))
+        }
+    }
+
+    @Test
+    fun `a failed call is unsettled with its own kind, and a started reply must be for THIS request`() {
+        for (kind in FailureKind.entries) {
+            assertEquals(SendVerdict.Unsettled(kind), sendVerdict(InitializeOutcome.Failed(kind), request, true))
+        }
+        assertEquals(SendVerdict.Started(CK.reference, 1_500_000), sendVerdict(InitializeOutcome.Started(CK.reference, 1_500_000, CK.codeA), request, false))
+        assertEquals(SendVerdict.Started(CK.reference, 1_500_000), sendVerdict(InitializeOutcome.Started(CK.reference, 1_500_000), request, false))
+        assertEquals(SendVerdict.Unsettled(FailureKind.Unreadable), sendVerdict(InitializeOutcome.Started(CK.reference, 1_500_000, CK.codeB), request, false))
+        assertEquals(SendVerdict.Unsettled(FailureKind.Unreadable), sendVerdict(InitializeOutcome.Started(CK.reference, 1_500_001, CK.codeA), request, false))
+    }
+
+    // ---- through the controller ---------------------------------------------------------------------------------
+
+    @Test
+    fun `validation_failed on the first send ever settles it, the form stays for the payer to correct`() = runTest {
+        val rig = CheckoutRig(this)
+        rig.openPayable()
+        rig.fillForm()
+        rig.pay()
+        rig.answerSend(InitializeOutcome.Rejected(refusal(RejectionKind.ValidationFailed, "Validation failed.", mapOf(PayerField.Email to "x"), moneyMoved = null)))
+
+        assertTrue(rig.pay is PayPhase.Rejected)
+        assertTrue("nothing exists under that key, so nothing is kept", rig.store.snapshot.isEmpty())
+        assertEquals("tunde@example.com", rig.form.email)
+    }
+
+    @Test
+    fun `a settled refusal on a REPLAY ends the attempt just the same`() = runTest {
+        val rig = CheckoutRig(this)
+        rig.makeAttempt()
+        rig.controller.retry()
+        rig.answerSend(InitializeOutcome.Rejected(refusal(RejectionKind.NotFound, "No link with that code.")))
+
+        assertEquals(CheckoutState.NotFound(CK.codeA), rig.state)
+        assertTrue(rig.store.snapshot.isEmpty())
+    }
+
+    @Test
+    fun `a restart cannot turn a replay into a first send, so a remembered attempt's validation refusal keeps it`() = runTest {
+        val first = CheckoutRig(this)
+        first.makeAttempt()
+        first.finish()
+        val second = first.relaunched()
+        second.controller.open(CK.codeA)
+        second.answerLookup()
+
+        second.controller.retry()
+        second.answerSend(InitializeOutcome.Rejected(refusal(RejectionKind.ValidationFailed, "Validation failed.", moneyMoved = null)))
+
+        assertEquals("run1-key-0-0123456789", second.store.snapshot.single().key)
+        assertTrue(second.pay is PayPhase.Failed)
+    }
+
     @Test
     fun `(red) a reply about some other payment is not an answer to this one`() = runTest {
         val rig = CheckoutRig(this)

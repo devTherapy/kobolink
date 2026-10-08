@@ -364,6 +364,8 @@ class CheckoutController(
             return
         }
         val attempt = unsettled ?: PendingCheckout(request, newIdempotencyKey(), owner = ownerNow())
+        // Only the very first send of an attempt can be settled by a validation refusal; every later one is a replay.
+        val firstEverSend = unsettled == null
 
         // Write it down BEFORE the request leaves. If the process dies mid-flight the next one knows which key to
         // retry under. If it cannot be written, nothing is sent: an unrecorded payment could be paid twice.
@@ -384,7 +386,7 @@ class CheckoutController(
         job = scope.launch {
             val outcome = gateway.initialize(request, attempt.key)
             if (!isCurrent(mine)) return@launch
-            applyInitialize(loaded, attempt, outcome, mine)
+            applyInitialize(loaded, attempt, outcome, mine, firstEverSend)
         }
     }
 
@@ -415,7 +417,7 @@ class CheckoutController(
         job = scope.launch {
             val outcome = gateway.initialize(attempt.request, attempt.key)
             if (!isCurrent(mine)) return@launch
-            applyInitialize(loaded, attempt, outcome, mine)
+            applyInitialize(loaded, attempt, outcome, mine, firstEverSend = false) // a retry is a replay, always
         }
     }
 
@@ -508,17 +510,18 @@ class CheckoutController(
         attempt: PendingCheckout,
         outcome: InitializeOutcome,
         mine: Long,
+        firstEverSend: Boolean,
     ) {
         val request = attempt.request
-        when (outcome) {
-            is InitializeOutcome.Started -> {
+        when (val verdict = sendVerdict(outcome, request, firstEverSend)) {
+            is SendVerdict.Started -> {
                 // The attempt is NOT over: this checkout is pending until M4's verify settles it. Dropping its key
                 // here made the next Pay on the same link (reopened while "Payment started" was showing) a second
                 // pending checkout for one payment. Kept, an identical Pay replays THIS reference from the server,
                 // and reopening the link shows it ([rememberedPhaseFor]). If the reference cannot be saved the
                 // key still is, so a retry gets the same reference back from the server.
-                val phase = PayPhase.Started(outcome.reference, outcome.amountKobo)
-                val answered = attempt.copy(reference = outcome.reference, confirmedAmountKobo = outcome.amountKobo)
+                val phase = PayPhase.Started(verdict.reference, verdict.amountKobo)
+                val answered = attempt.copy(reference = verdict.reference, confirmedAmountKobo = verdict.amountKobo)
                 held = answered
                 try {
                     store.save(answered)
@@ -529,44 +532,52 @@ class CheckoutController(
             }
 
             // Whatever went wrong, a request may have gone out: unknown. The slot stays, and a retry replays it.
-            is InitializeOutcome.Failed ->
-                _state.value = before.copy(pay = PayPhase.Failed(outcome.kind, request))
+            is SendVerdict.Unsettled ->
+                _state.value = before.copy(pay = PayPhase.Failed(verdict.kind, request))
 
-            is InitializeOutcome.Rejected -> {
-                val rejection = outcome.rejection
-                // A refusal is a final answer the server STORES under this key, and replays for as long as the same
-                // key and body come back. If the attempt were kept, a link the merchant switches back on would keep
-                // answering "turned off" to the identical request. A refusal ends the attempt; the next Pay is new.
-                forget(request.code)
-                when {
-                    rejection.kind == RejectionKind.NotFound ->
+            // The server's final word for this key, first send or replay: it stores it and would replay it forever, so
+            // the attempt ends and the next Pay is new.
+            is SendVerdict.Settled -> {
+                val rejection = verdict.rejection
+                forget(attempt)
+                when (rejection.kind) {
+                    RejectionKind.NotFound ->
                         // Deleted between loading and paying: a form that can never succeed is no place to stay.
                         _state.value = CheckoutState.NotFound(before.link.code)
 
-                    rejection.kind == RejectionKind.LinkNotPayable ->
+                    RejectionKind.LinkNotPayable ->
                         // Lost a race with the merchant (switched off, expired) or another payer (single use).
                         _state.value = before.copy(
                             availability = rejection.availability ?: LinkAvailability.Unknown,
                             pay = PayPhase.Idle,
                         )
 
-                    rejection.kind == RejectionKind.AmountMismatch && before.link.amountKobo != null ->
-                        // The merchant repriced a fixed-amount link after this screen loaded. Resubmitting
-                        // cannot succeed; read the link again so the payer is told the current price.
-                        reportPriceChanged(before, request.amountKobo, mine)
-
-                    else -> {
-                        val fieldErrors = if (rejection.kind == RejectionKind.AmountMismatch) {
-                            // An open-amount link: the typed amount was refused, plain field validation.
-                            rejection.fieldErrors + (PayerField.Amount to rejection.message)
+                    else ->
+                        if (before.link.amountKobo != null) {
+                            // The merchant repriced a fixed-amount link after this screen loaded. Resubmitting
+                            // cannot succeed; read the link again so the payer is told the current price.
+                            reportPriceChanged(before, request.amountKobo, mine)
                         } else {
-                            rejection.fieldErrors
+                            // An open-amount link: the typed amount was refused, plain field validation.
+                            _state.value = before.copy(
+                                pay = PayPhase.Rejected(
+                                    rejection.message,
+                                    rejection.fieldErrors + (PayerField.Amount to rejection.message),
+                                    rejection.moneyMoved,
+                                ),
+                            )
                         }
-                        _state.value = before.copy(
-                            pay = PayPhase.Rejected(rejection.message, fieldErrors, rejection.moneyMoved),
-                        )
-                    }
                 }
+            }
+
+            // validation_failed on the very first send: the body is validated before anything is recorded, so nothing
+            // exists under this key. The form stays so the payer can correct it, and the next Pay is a new attempt.
+            is SendVerdict.Rejected -> {
+                val rejection = verdict.rejection
+                forget(attempt)
+                _state.value = before.copy(
+                    pay = PayPhase.Rejected(rejection.message, rejection.fieldErrors, rejection.moneyMoved),
+                )
             }
         }
     }
@@ -592,19 +603,18 @@ class CheckoutController(
         }
     }
 
-    private fun forget(code: String) {
-        held = null
-        // A slot that fails to clear comes back as an interrupted attempt; replaying it returns the stored refusal.
-        // One retry, since nothing tells the payer about it.
-        try {
-            store.remove(code)
+    /** Remove the attempt's slot if it still holds THIS attempt. One retry, since nobody is told about a failure. */
+    private fun forget(attempt: PendingCheckout) {
+        if (held?.key == attempt.key) held = null
+        fun removeIfMine(): Boolean = try {
+            val stored = store.load(attempt.request.code)
+            if (stored == null || stored.key == attempt.key) store.remove(attempt.request.code)
+            true
         } catch (e: PendingStoreException) {
-            try {
-                store.remove(code)
-            } catch (again: PendingStoreException) {
-                // Left in place: see above.
-            }
+            false
         }
+        // A slot that fails to clear comes back as an interrupted attempt; replaying it returns the stored refusal.
+        if (!removeIfMine()) removeIfMine()
     }
 
     // ---- the session -------------------------------------------------------------------------------------------
@@ -882,4 +892,64 @@ class CheckoutController(
     }
 
     private fun isCurrent(mine: Long) = mine == generation
+}
+
+/**
+ * What an answer to `POST /api/checkout/initialize` lets the app conclude about the attempt it belongs to. The Kotlin
+ * twin of iOS's `SendVerdict`, and the single place that decides whether an answer SETTLES an attempt, because that
+ * decision is where a double payment would come from: a refusal that applies only to the REPLAY says nothing about
+ * whether the first send created a checkout, and ending the attempt unlocks a new idempotency key.
+ */
+sealed interface SendVerdict {
+    /** 201 for THIS request. The attempt is kept: M4's `verify` settles it. */
+    data class Started(val reference: String, val amountKobo: Int) : SendVerdict
+
+    /**
+     * A refusal the idempotency layer stores under the key and the server says moved no money: `not_found`/404,
+     * `link_not_payable`/409, `amount_mismatch`/422 (the only outcomes the API computes inside the idempotency layer).
+     * It is THE answer for this key, first send or replay, and would be replayed to every identical retry: it ends the attempt.
+     */
+    data class Settled(val rejection: Rejection) : SendVerdict
+
+    /**
+     * `validation_failed` on the very FIRST send of an attempt. The API validates the body before the idempotency
+     * layer or the database, so nothing was recorded. On a RETRY the same answer proves nothing, because the first
+     * send is not accounted for.
+     */
+    data class Rejected(val rejection: Rejection) : SendVerdict
+
+    /** Anything else: the outcome is unknown, and the key and the exact request are kept. */
+    data class Unsettled(val kind: FailureKind) : SendVerdict
+}
+
+private val settledStatus = mapOf(
+    RejectionKind.NotFound to 404,
+    RejectionKind.LinkNotPayable to 409,
+    RejectionKind.AmountMismatch to 422,
+)
+
+fun sendVerdict(outcome: InitializeOutcome, request: InitializeRequest, firstEverSend: Boolean): SendVerdict = when (outcome) {
+    is InitializeOutcome.Started ->
+        // A reply about some other payment is not an answer to this one.
+        if ((outcome.code != null && outcome.code != request.code) || outcome.amountKobo != request.amountKobo) {
+            SendVerdict.Unsettled(FailureKind.Unreadable)
+        } else {
+            SendVerdict.Started(outcome.reference, outcome.amountKobo)
+        }
+
+    is InitializeOutcome.Failed -> SendVerdict.Unsettled(outcome.kind)
+
+    is InitializeOutcome.Rejected -> {
+        val rejection = outcome.rejection
+        when {
+            rejection.moneyMoved == false && settledStatus[rejection.kind] == rejection.httpStatus ->
+                SendVerdict.Settled(rejection)
+
+            firstEverSend && rejection.kind == RejectionKind.ValidationFailed &&
+                rejection.httpStatus == 400 && rejection.moneyMoved != true ->
+                SendVerdict.Rejected(rejection)
+
+            else -> SendVerdict.Unsettled(FailureKind.Refused)
+        }
+    }
 }

@@ -83,3 +83,24 @@ fun found(link: CheckoutLink = link(), availability: LinkAvailability = LinkAvai
     LookupOutcome.Found(link, availability)
 
 val payer = PayerInput(amountKobo = 1_500_000, name = "Tunde Bello", email = "tunde@example.com")
+
+/** The status the server gives each kind of refusal. */
+fun statusOf(kind: RejectionKind): Int = when (kind) {
+    RejectionKind.NotFound -> 404
+    RejectionKind.LinkNotPayable -> 409
+    RejectionKind.AmountMismatch -> 422
+    RejectionKind.ValidationFailed, RejectionKind.Other -> 400
+}
+
+/**
+ * A refusal as `PaymentsService.errorResult` writes it: the real status for its kind and `moneyMoved: false`, which is
+ * what makes `not_found`, `link_not_payable` and `amount_mismatch` the server's final word for an idempotency key.
+ */
+fun refusal(
+    kind: RejectionKind,
+    message: String,
+    fieldErrors: Map<PayerField, String> = emptyMap(),
+    moneyMoved: Boolean? = false,
+    availability: LinkAvailability? = null,
+    httpStatus: Int = statusOf(kind),
+) = Rejection(kind, message, fieldErrors, moneyMoved, availability, httpStatus)
