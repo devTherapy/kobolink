@@ -158,7 +158,11 @@ extension WalletActivity {
         case "link_payment": mapped = .linkPayment
         default: return nil
         }
-        self.init(id: postingId, kind: mapped, amountKobo: amountKobo, counterparty: counterparty, note: note, createdAt: createdAt)
+        // The server trims a note and stores what is left, so a whitespace-only note comes back as `""` (not `null`,
+        // found against the real API: `activity` returned `"note":""` and VoiceOver read "note:" and nothing). A blank
+        // note is no note.
+        let kept = note.flatMap { JavaScriptText.trimmed($0).isEmpty ? nil : $0 }
+        self.init(id: postingId, kind: mapped, amountKobo: amountKobo, counterparty: counterparty, note: kept, createdAt: createdAt)
     }
 
     init?(_ wire: Components.Schemas.WalletTransactionListResponse.itemsPayloadPayload) {
