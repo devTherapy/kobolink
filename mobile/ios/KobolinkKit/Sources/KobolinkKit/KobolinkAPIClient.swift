@@ -13,7 +13,7 @@ public typealias PublicLinkResponse = Components.Schemas.PublicLinkResponse
 /// Only calls the app needs are surfaced. Each new one is three lines: invoke
 /// the generated operation, return on its success case, throw
 /// `APIError(status:error:)` on `.default`.
-public struct KobolinkAPIClient: Sendable, AuthServing {
+public struct KobolinkAPIClient: Sendable, AuthServing, CheckoutServing {
     private let client: Client
 
     /// `transport` is injectable so tests run the real generated
@@ -52,8 +52,19 @@ public struct KobolinkAPIClient: Sendable, AuthServing {
         return configuration
     }
 
+    /// The session every API call runs on. It REFUSES EVERY REDIRECT (`RedirectRefusingDelegate`): the
+    /// API never redirects, so a 3xx is a misconfigured proxy or someone else's server, and following it
+    /// would carry the request (a payer's name and email, a merchant's bearer token, a login password)
+    /// to wherever the `Location` header points. A refused redirect is the 3xx response itself, which
+    /// the client reads as `unexpectedResponse`: for a payment, an outcome that is unknown.
+    ///
+    /// `configuration` is a parameter so tests can add a `URLProtocol`.
+    public static func makeSession(configuration: URLSessionConfiguration = makeSessionConfiguration()) -> URLSession {
+        URLSession(configuration: configuration, delegate: RedirectRefusingDelegate(), delegateQueue: nil)
+    }
+
     public static func makeURLSessionTransport() -> URLSessionTransport {
-        URLSessionTransport(configuration: .init(session: URLSession(configuration: makeSessionConfiguration())))
+        URLSessionTransport(configuration: .init(session: makeSession()))
     }
 
     // MARK: - Calls
@@ -77,6 +88,47 @@ public struct KobolinkAPIClient: Sendable, AuthServing {
         switch output {
         case .ok(let response):
             do { return try response.body.json } catch { throw .undecodableResponse }
+        case .default(let status, let response):
+            throw APIError(status: status, error: try? response.body.json, notes: notes)
+        }
+    }
+
+    /// `GET /api/links/{code}/public` as the checkout reads it: the link and whether it can be paid.
+    public func lookupLink(code: LinkCode) async throws(APIError) -> LinkLookup {
+        let response = try await publicLink(code: code.value)
+        guard let lookup = response.checkoutLookup else { throw .undecodableResponse }
+        return lookup
+    }
+
+    /// `POST /api/checkout/initialize`. Sends no `Authorization` header and no cookie (a payer is not
+    /// the merchant signed in on this phone), and exactly one request: nothing here or below retries.
+    ///
+    /// Read the result by what each case lets the caller conclude (`APIError`): a `.server` refusal
+    /// answers THIS request and proves nothing about an earlier send of the same key unless it is one
+    /// the idempotency layer stores (see `CheckoutController`).
+    public func initializeCheckout(
+        _ request: InitializeRequest,
+        idempotencyKey: String
+    ) async throws(APIError) -> StartedCheckout {
+        let (output, notes) = try await perform {
+            try await client.initializeCheckout(
+                .init(
+                    headers: .init(Idempotency_hyphen_Key: idempotencyKey),
+                    body: .json(
+                        .init(
+                            amountKobo: request.amountKobo,
+                            code: request.code.value,
+                            payerEmail: request.payerEmail,
+                            payerName: request.payerName
+                        ))
+                ))
+        }
+        switch output {
+        case .created(let response):
+            let body: Components.Schemas.InitializeCheckoutResponse
+            do { body = try response.body.json } catch { throw .undecodableResponse }
+            guard let started = StartedCheckout(body) else { throw .undecodableResponse }
+            return started
         case .default(let status, let response):
             throw APIError(status: status, error: try? response.body.json, notes: notes)
         }
@@ -148,6 +200,12 @@ extension APIError {
     /// A `.default` response from the generated client: an error status
     /// and, when the body decoded, the contracts' `ApiError`.
     fileprivate init(status: Int, error: Components.Schemas.ApiError?, notes: ResponseNotes) {
+        // `default` also catches statuses the document does not list, including a stray 2xx or 3xx. An
+        // `ApiError`-shaped body does not make those a refusal: the server did not refuse anything.
+        guard status >= 400 else {
+            self = (200..<300).contains(status) ? .undecodableResponse : .unexpectedResponse(status: status)
+            return
+        }
         if let error {
             self = .server(ServerError(status: status, body: error, retryAfterSeconds: notes.retryAfterSeconds))
         } else {
@@ -183,5 +241,18 @@ extension APIError {
 
     private init(urlError: URLError) {
         self = urlError.code == .cancelled ? .cancelled : .unreachable(urlError.code)
+    }
+}
+
+/// Refuses every redirect, so the 3xx itself is the final response. See `KobolinkAPIClient.makeSession`.
+final class RedirectRefusingDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

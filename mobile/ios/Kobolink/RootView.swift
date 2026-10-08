@@ -19,7 +19,7 @@ struct RootView: View {
     let home: Home
 
     enum Home {
-        case ready(host: String, checker: ConnectionChecker, session: SessionController)
+        case ready(host: String, checker: ConnectionChecker, session: SessionController, checkout: CheckoutController)
         case misconfigured(APIConfiguration.Problem)
     }
 
@@ -31,7 +31,7 @@ struct RootView: View {
         NavigationStack(path: $navigator.path) {
             homeScreen
                 .navigationDestination(for: LinkDestination.self) { destination in
-                    LinkLandingView(destination: destination)
+                    LinkLandingView(destination: destination, home: home, onDone: { navigator.path = [] })
                 }
         }
         .onOpenURL { navigator.open($0) }
@@ -43,16 +43,28 @@ struct RootView: View {
         }
         .onChange(of: navigator.path) {
             openLinkCode = navigator.path.first?.code?.value
+            followPath()
         }
         .task {
             navigator.restore(openLinkCode.flatMap(LinkCode.init))
         }
     }
 
+    /// The checkout follows the stack's one link: open it when it arrives (cold start, warm start, a second
+    /// link replacing the first), close it when Back or Done takes it away, so a form never outlives its screen.
+    private func followPath() {
+        guard case .ready(_, _, _, let checkout) = home else { return }
+        if let code = navigator.path.first?.code {
+            checkout.open(code)
+        } else {
+            checkout.close()
+        }
+    }
+
     @ViewBuilder private var homeScreen: some View {
         switch home {
-        case .ready(let host, let checker, let session):
-            SessionScreen(session: session, host: host, checker: checker)
+        case .ready(let host, let checker, let session, let checkout):
+            SessionScreen(session: session, host: host, checker: checker, checkout: checkout)
         case .misconfigured(let problem):
             MisconfiguredView(problem: problem)
         }

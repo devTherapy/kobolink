@@ -41,6 +41,23 @@ public enum SessionState: Equatable, Sendable {
     case storageUnavailable
 }
 
+/// A change to who is signed in that per-user state elsewhere in the app must react to
+/// (`CheckoutController` forgets a person's payment attempts and form on the first two kinds of
+/// sign-out and sign-in, and on none of the involuntary ones). Reported synchronously, on the main
+/// actor, right after `state` changed and before any network call, so nothing can render in between.
+public enum SessionChange: Equatable, Sendable {
+    /// The cold-start check (or Try Again after offline) confirmed `user` for the token already stored:
+    /// the same session, now with a name.
+    case resolved(SignedInUser)
+    /// A sign-in with credentials produced `user` and a new token.
+    case signedIn(SignedInUser)
+    /// The person chose Sign out. Their per-user state must go.
+    case signedOutByChoice
+    /// The server ended the session (a 401). Involuntary: it says nothing about who is at the screen, so
+    /// nothing is forgotten.
+    case ended
+}
+
 /// Why a sign-in did not complete.
 public enum SignInFailure: Error, Equatable, Sendable {
     /// Another sign-in is already running.
@@ -77,6 +94,10 @@ public protocol SigningIn: AnyObject {
 public final class SessionController: SigningIn {
     public private(set) var state: SessionState = .resolving
 
+    /// Told about every `SessionChange`, once, in order. Set once at startup by the code that owns the
+    /// per-user state.
+    @ObservationIgnored public var onChange: (@MainActor (SessionChange) -> Void)?
+
     @ObservationIgnored private let auth: any AuthServing
     @ObservationIgnored private let store: any TokenStore
     @ObservationIgnored private let installMarker: any InstallMarker
@@ -111,6 +132,17 @@ public final class SessionController: SigningIn {
         }
     }
 
+    /// Who a payment attempt started right now belongs to; see `AttemptOwner` for the rule. With no stored
+    /// session it is a payer. With one, signed in or not yet confirmed (`resolving`, `offline`,
+    /// `storageUnavailable`), it is a session, with the user's id once the server has said who.
+    public var attemptOwner: AttemptOwner {
+        switch state {
+        case .signedOut: .payer
+        case .signedIn(let user): .session(userID: user.id)
+        case .resolving, .offline, .storageUnavailable: .session(userID: nil)
+        }
+    }
+
     // MARK: Cold start
 
     private func runCheck() async {
@@ -142,22 +174,23 @@ public final class SessionController: SigningIn {
 
         do throws(APIError) {
             let user = try await auth.currentUser()
-            finish(.signedIn(user), ifEpoch: startedAt)
+            finish(.signedIn(user), ifEpoch: startedAt, reporting: .resolved(user))
         } catch {
             if error.isUnauthenticated {
                 // Definitive: the server does not honour this token. A failed removal must not stop
                 // the move to signed-out; the next launch gets the same 401 and tries again.
                 discardIfStillStored(token)
-                finish(.signedOut(.sessionExpired), ifEpoch: startedAt)
+                finish(.signedOut(.sessionExpired), ifEpoch: startedAt, reporting: .ended)
             } else {
                 finish(.offline(message: Self.offlineMessage(for: error)), ifEpoch: startedAt)
             }
         }
     }
 
-    private func finish(_ new: SessionState, ifEpoch startedAt: Int) {
+    private func finish(_ new: SessionState, ifEpoch startedAt: Int, reporting change: SessionChange? = nil) {
         guard epoch == startedAt else { return }
         state = new
+        if let change { onChange?(change) }
     }
 
     /// The Keychain outlives the app, so an install with no marker is either brand new or a
@@ -217,6 +250,7 @@ public final class SessionController: SigningIn {
         }
         epoch += 1
         state = .signedIn(session.user)
+        onChange?(.signedIn(session.user))
         return .success(())
     }
 
@@ -233,6 +267,8 @@ public final class SessionController: SigningIn {
         } catch {
             state = .signedOut(.tokenNotRemoved)
         }
+        // Before the revoke: the person's payment attempts and form are gone before the network is touched.
+        onChange?(.signedOutByChoice)
         if let token { await revokeQuietly(token) }
     }
 
@@ -245,6 +281,7 @@ public final class SessionController: SigningIn {
         epoch += 1
         try? store.clearToken()
         state = .signedOut(.sessionExpired)
+        onChange?(.ended)
     }
 
     private func revokeQuietly(_ token: SessionToken) async {

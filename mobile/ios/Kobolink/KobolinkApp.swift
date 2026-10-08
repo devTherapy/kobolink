@@ -25,7 +25,15 @@ struct KobolinkApp: App {
             rejections.handler = { token in
                 Task { @MainActor in session.tokenRejected(token) }
             }
-            home = .ready(host: configuration.host, checker: ConnectionChecker(api: client), session: session)
+            // A payer's checkout. Attempts are remembered in the Keychain and owned by the session that made
+            // them; the session tells the checkout when a person signs out or a different one signs in.
+            let checkout = CheckoutController(
+                service: client,
+                store: KeychainPendingCheckoutStore(),
+                ownerNow: { session.attemptOwner }
+            )
+            session.onChange = { checkout.sessionDidChange($0) }
+            home = .ready(host: configuration.host, checker: ConnectionChecker(api: client), session: session, checkout: checkout)
         } catch {
             home = .misconfigured(error)
         }

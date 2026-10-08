@@ -89,8 +89,18 @@ extension APIError {
     /// The server rejected the credential this request carried (or, for `login`, the credentials it
     /// was given). Only this says anything about whether a stored token is still good: offline, a
     /// timeout and a 5xx do not.
+    ///
+    /// A 401 whose body is not a readable `ApiError` (a proxy's HTML page, a code this build does not
+    /// know) is still a 401: the status line is the server's answer to the credential, and the
+    /// signed-in path already acts on the status alone (`AuthMiddleware` reports every 401 that
+    /// answers a bearer token). Reading only parsed bodies here would leave a cold start stuck at
+    /// "offline" for a token the server has already refused.
     public var isUnauthenticated: Bool {
-        if case .server(let error) = self { error.isUnauthenticated } else { false }
+        switch self {
+        case .server(let error): error.isUnauthenticated
+        case .unexpectedResponse(let status): status == 401
+        case .undecodableResponse, .unreachable, .cancelled: false
+        }
     }
 
     /// Plain-language text for the person using the app; nil when there is

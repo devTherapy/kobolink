@@ -28,8 +28,8 @@ cd mobile/ios/OpenAPITooling && swift test
 
 ## Deep links
 
-`kobolink://l/{code}` and `https://pay.folusayo.com/l/{code}` both land on `LinkLandingView`
-(the checkout itself is feature I3). In the Simulator, with the app installed:
+`kobolink://l/{code}` and `https://pay.folusayo.com/l/{code}` both land on `LinkLandingView`,
+which is the checkout (`CheckoutView`, feature I3; see "Checkout" below). In the Simulator, with the app installed:
 
 ```sh
 xcrun simctl openurl booted 'kobolink://l/aBcDeFgH'
@@ -159,14 +159,86 @@ Kobolink/LoginView.swift, SessionScreens.swift   the screens
   (link lookup, health) carry no token.
 - **Wrong password and unknown user** are one message on purpose; the API answers both the same.
 
-Not yet: there is no refresh, biometric unlock, "remember me" choice, or password reset. Any per-user
-state added later (I3/I5: payer name and email, pending payments) must be removed on sign-out and on a
-user change, and an entry saved while the session was not yet known must be owned before it is trusted.
-Per-user state to clear today: the token, the cached user (it lives only in `SessionState`), and the login
-form. `@SceneStorage("openLinkCode")` holds a public link code, not user data.
+Not yet: there is no refresh, biometric unlock, "remember me" choice, or password reset. Per-user state
+must be removed on sign-out and on a user change, and an entry saved while the session was not yet known
+must be owned before it is trusted. Per-user state today: the token, the cached user (it lives only in
+`SessionState`), the login form, and (I3) the checkout's form fields and the payment attempts made under
+a session; "Checkout" below says exactly what clears them and when. `@SceneStorage("openLinkCode")` holds
+a public link code, not user data.
 
 To run against a stub instead of the real API, point `KOBOLINK_API_BASE_URL` at it in
 `Config/Local.xcconfig`; no real credentials are needed or used.
+
+## Checkout (I3)
+
+```
+KobolinkKit/Sources/KobolinkKit/
+  Kobo.swift                  the ONLY file that divides or multiplies by 100; mirrors contracts' money.ts
+  PayerValidation.swift       name / email / amount rules; mirrors the server's Zod schemas
+  CheckoutModels.swift        CheckoutLink, InitializeRequest, StartedCheckout, CheckoutServing, IdempotencyKey
+  CheckoutState.swift         CheckoutScreen and its parts: what the screen shows
+  CheckoutController.swift    every decision: keys, slot, verdicts, latest-wins, session reactions
+  CheckoutCopy.swift          every sentence; the non-payable deck is the web's, word for word
+  PendingCheckout.swift       the persisted attempt, AttemptOwner, the store protocol and the in-memory store
+  KeychainPendingCheckoutStore.swift   the real store
+Kobolink/CheckoutView.swift, CheckoutNotices.swift, Palette.swift   the screens
+```
+
+`RootView` follows the navigation stack's one link: when it arrives the checkout `open`s it, when Back or
+Done removes it the checkout `close`s (the form is emptied), and a second link replaces the first. A payer
+never meets the merchant login: the link is pushed over the session screen and asks nothing of the session.
+The public calls carry no token (`AuthMiddleware` is an allow-list of secured operations, checked
+against `apps/api/openapi.json`) and the API session refuses every redirect.
+
+**Money** is `Int` kobo end to end. `MoneyDisciplineTests` fails if a `/ 100`, `Double`, `Decimal` or
+`NumberFormatter` appears in any other file. `KoboTests` repeats contracts' `money.test.ts` case for case and
+checks 100+ formatting and 600+ parsing inputs against contracts' own answers
+(`Tools/generate-money-cases.mjs`, `Tools/generate-payer-cases.mjs`; JavaScript's whitespace and ASCII-only
+`\d` differ from Swift's, so they are implemented, not assumed).
+
+**The payment attempt** (the lessons of Android's M3 and M5):
+
+- One idempotency key per attempt, made when the attempt is made and written to the Keychain
+  (generic password, `AfterFirstUnlockThisDeviceOnly`, not synchronizable, no file, so nothing for a backup
+  to include) BEFORE the request leaves. If it cannot be written, nothing is sent and the screen says no
+  money was taken (true: there is no earlier attempt).
+- One slot per link code per DEVICE, read by `open` before any session has resolved. Done, Back, a
+  relaunch and a process kill all show "Payment started" (same reference) or the interrupted attempt, and
+  "Try Again" resends the SAME request under the SAME key. While an attempt exists the form is not shown,
+  so its request cannot be edited under the old key. A new key is made only from the form, which is shown
+  only when there is no slot: after a settled refusal (the link is then read afresh, so a changed price is
+  seen first) or the person's confirmed "Start a New Payment" ("If you already paid, check with the
+  merchant first"; a failed clear changes nothing and says so).
+- What settles an attempt (`SendVerdict`): a 201 (kept: `verify`, I4, settles it); `not_found`,
+  `link_not_payable`, `amount_mismatch` WITH `moneyMoved: false` and their own status (the only results
+  `PaymentsService.decideInitialize` computes inside the idempotency layer, so they are the answer for that
+  key whether first send or replay, and would be replayed forever); `validation_failed` on the very first
+  send ever (the server validates before it records anything). Everything else (429, 5xx, a dropped
+  connection, an unreadable reply, a redirect, a 401, `idempotency_mismatch`, a validation error on a
+  replay) is "we couldn't confirm", the attempt and key are kept, and the copy never says no money moved.
+- No silent retry: `waitsForConnectivity` off, `URLSession` does not resend a POST, nothing in the client
+  does, and a retry writes nothing first, so a storage failure cannot turn a replay into a new attempt.
+- Latest wins: a lookup answer is applied only if its generation is current and its link is still open; a
+  payment answer reaches the screen only while its attempt is still on it, but its reference is always
+  stored, and it only ever updates or removes the slot that still holds its own key, so a late answer
+  cannot bring back an attempt that sign-out cleared.
+
+**Ownership** (`AttemptOwner`, the one rule): an attempt made with no stored session is a payer's; one
+made with a session (signed in, `resolving` or `offline`) belongs to that session, with the user id filled in
+once `/me` confirms it. Explicit sign-out removes every session attempt and empties the form fields; a
+confirmed different user removes the others' (and, after a sign-in with credentials, unconfirmed) ones and
+empties the form; the check confirming the same token adopts the unconfirmed ones; an involuntary 401
+removes nothing. A removal that fails is never swallowed: what could not be removed is hidden
+(`storageBlocked`) until a later attempt succeeds. Known limits: a payer's slot is per device, so two payers
+on one phone share it (the screen shows only the amount, merchant and reference, never the payer's name or
+email); a signed-in merchant who signs in again after an expiry loses an unconfirmed attempt made in the
+seconds before the check finished (a second pending checkout, never a second payment); a reusable link
+cannot be paid twice until `verify` (I4) settles the first, except through "Start a New Payment".
+
+**Tests**: `swift test` in `KobolinkKit` (macOS, fast, 350+ tests) and the command under "Commands" (the
+Simulator, which also runs the hosted Keychain tests). Verification against a throwaway local stub API:
+point `KOBOLINK_API_BASE_URL` at it in `Config/Local.xcconfig`, then
+`xcrun simctl openurl booted 'kobolink://l/aBcDeFgH'`.
 
 ## Generated models
 

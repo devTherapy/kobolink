@@ -12,7 +12,7 @@ import Foundation
 /// inputs.
 public struct LinkCode: Hashable, Sendable, Codable, CustomStringConvertible {
     public static let length = 8
-    private static let alphabet = Set("23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8)
+    static let alphabet = Set("23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8)
 
     public let value: String
 
