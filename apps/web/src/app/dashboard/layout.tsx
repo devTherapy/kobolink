@@ -5,7 +5,7 @@ import { DashboardStreamProvider } from '@/components/live/DashboardStreamProvid
 import { DashboardHeader } from './DashboardHeader'
 
 /**
- * Route protection's authoritative half (PLAN.md F2 "Done when"). `middleware.ts`
+ * Route protection's authoritative half (PLAN.md F2 "Done when"). `proxy.ts`
  * already redirected the plainly-signed-out case (no cookie at all) before
  * this ever runs — what lands here is either a genuinely valid session, or a
  * cookie that is present but stale/revoked, which only a real `auth.me`
@@ -22,7 +22,7 @@ import { DashboardHeader } from './DashboardHeader'
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await getSession()
   if (!session) {
-    // The middleware's own redirect preserves the exact path via `?next=`;
+    // The proxy's own redirect preserves the exact path via `?next=`;
     // this fallback path does not have it (a Server Component layout has no
     // direct read of the current request's pathname) — sending the merchant
     // back to `/dashboard` itself is still a same-origin, ordinary next step

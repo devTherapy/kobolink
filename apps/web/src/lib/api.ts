@@ -203,7 +203,7 @@ export const client = {
     login: (body: LoginRequest) =>
       request<AuthResponse>(AuthResponseSchema, API.auth.login, { method: 'POST', body }),
     // `init?.headers` exists for `src/lib/session.ts`'s server-side
-    // `getSession()`: a Server Component/route handler/middleware fetch has
+    // `getSession()`: a Server Component/route handler/proxy fetch has
     // no browser behind it, so the httpOnly session cookie only reaches the
     // API if the caller forwards it by hand as a `Cookie` header. A
     // browser's own client-side call (there is none of those for `me` in
