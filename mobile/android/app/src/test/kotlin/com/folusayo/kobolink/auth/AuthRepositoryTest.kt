@@ -149,6 +149,34 @@ class AuthRepositoryTest {
     }
 
     @Test
+    fun `(red) logout clears the local token BEFORE the revoke goes over the network`() = runTest {
+        val tokenStore = RecordingTokenStore()
+        tokenStore.saveToken("token-of-a")
+        val api = FakeAuthApi()
+        var storedWhileRevoking: String? = "not looked at"
+        api.onLogout = { storedWhileRevoking = tokenStore.token() }
+        val repo = AuthRepository(api, tokenStore, json)
+
+        repo.logout()
+
+        // If the process died while the revoke was in the air, the next launch must not sign A back in.
+        assertNull(storedWhileRevoking)
+    }
+
+    @Test
+    fun `(red) a sign-in as B while A's revoke is in the air is not wiped by A's late clear`() = runTest {
+        val tokenStore = RecordingTokenStore()
+        tokenStore.saveToken("token-of-a")
+        val api = FakeAuthApi()
+        api.onLogout = { tokenStore.saveToken("token-of-b") }
+        val repo = AuthRepository(api, tokenStore, json)
+
+        repo.logout()
+
+        assertEquals("token-of-b", tokenStore.token())
+    }
+
+    @Test
     fun `forgetLocalSession clears without calling the API`() = runTest {
         val tokenStore = RecordingTokenStore()
         tokenStore.saveToken("stale-token")
