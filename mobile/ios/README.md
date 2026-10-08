@@ -388,16 +388,25 @@ port), runs the migrations, builds and starts `apps/api` (`node dist/main.js`) o
 calls the iOS client makes (login as `client: mobile`, the payer's calls with no `Authorization`, the wallet, the
 idempotency replays, the refusals and their statuses, `Retry-After` on a 429, a paginated activity read) so a contract
 change the generated models cannot see (a header, a status code, a replay that stopped returning the stored body) fails
-here. Passwords and the database password are generated per run (`openssl rand`); they are never written to a tracked
-file or printed, and sit in a mode-700 state directory outside the repository (and, while the stack is up, in the
-container's and the API's process environments). Subcommands: `up`, `check`, `down`, `status`.
+here. The database password and the test users' passwords are throwaway values generated per run (`openssl rand`) for a
+database bound to `127.0.0.1`; they are never written to a tracked file or printed, and are not stored in the state
+directory. While the run lasts they are visible to other local users (the database password on the `docker create`
+command line, in `docker inspect` and in the node environment; passwords and bearer tokens on `curl` command lines), so
+do not run it on a shared machine. `apps/api` reads only `PORT`, so it listens on all interfaces until `down`.
+Subcommands: `up`, `check`, `down`, `status`.
 
-**What it removes.** Only what the state file records it creating: the container by its full ID (never by name; it
-is checked to still be named `kobolink-x2-pg`), the API by its recorded PID if the recorded start time and command still
-match, and the state directory if it holds the script's own marker. It refuses to start, and removes nothing, if a
-container named `kobolink-x2-pg`, a state file or the state path already exists. `down` with no state file removes
-nothing. `KOBOLINK_X2_STATE_DIR` must be an absolute path that does not exist yet, not `/`, not `$HOME`, and not the
-repo or a parent or child of it. `scripts/test-ios-real-api-smoke.sh` proves all of this against stubs, with no Docker.
+**What it removes.** Only what the state file records it creating: the container by its full ID (made with
+`docker create`, labelled `kobolink.x2=<run token>`; it is removed only if it is still named `kobolink-x2-pg` and still
+carries the recorded token), the API by its recorded PID if the recorded start time and command still match, and the
+state directory if it is a real directory of yours at its resolved path, mode 700, holding the script's own marker.
+`down` prints what it did and what it declined to do. It refuses to start, and removes nothing, if a container named
+`kobolink-x2-pg`, the state path (a symlink included) or the API port is already taken, or if it cannot find a state
+directory (no `TMPDIR` and no `KOBOLINK_X2_STATE_DIR`: it never falls back to a shared `/tmp`). `down` with no state
+file removes nothing. `KOBOLINK_X2_STATE_DIR` must be absolute with an existing parent; trailing slashes are removed, the
+parent is resolved with `cd -P` and the resolved path is what is checked and used: it must not be `/`, `$HOME` or a
+parent of it, or the repo (resolved) or anything above or inside it, and it must not exist yet. `check` refuses, before
+registering anyone, unless the recorded PID is the running, unchanged listener on the API port.
+`scripts/test-ios-real-api-smoke.sh` proves this against stubs, with no Docker.
 
 The API's login limiter counts every register and every login, successful or not, against 20 per 15 minutes per IP.
 `check` uses 10 of them and `RealAPIIntegrationTests` uses 12, so `check` followed by the Swift suite, or the Swift suite

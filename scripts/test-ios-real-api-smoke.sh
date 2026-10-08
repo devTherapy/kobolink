@@ -116,17 +116,18 @@ EOF
 cat > "$STUB_BIN/node" <<'EOF'
 #!/bin/bash
 # `node dist/db/migrate.js` and `node dist/main.js`. The "API" really listens on $PORT (so the script's listener
-# check is exercised) and logs the line Nest logs; its argv0 is "node dist/main.js" like the real command line.
+# check is exercised) and logs the line Nest logs; its command line contains "dist/main.js" like the real one.
 case "$*" in
   *migrate.js*) [ -n "${STUB_FAIL_MIGRATE:-}" ] && exit 1; exit 0 ;;
   *main.js*)
     echo "$$|$(ps -p $$ -o lstart= 2>/dev/null)" >> "$STUB_DIR/pids"
     [ -n "${STUB_NODE_CRASH:-}" ] && { echo "Error: listen EADDRINUSE: address already in use :::$PORT" >&2; exit 1; }
-    exec -a "node dist/main.js" python3 -c 'import os,socket,sys,time
+    # (python re-execs itself on macOS, so argv0 cannot carry the name: the script path is passed as an argument.)
+    exec python3 -c 'import os,socket,sys,time
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", int(os.environ["PORT"]))); s.listen(1)
 print("[Bootstrap] listening on port " + os.environ["PORT"]); sys.stdout.flush()
-time.sleep(600)' ;;
+time.sleep(600)' dist/main.js ;;
 esac
 exit 0
 EOF

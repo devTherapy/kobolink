@@ -18,28 +18,39 @@
 # The lifecycle is tested without Docker by ./scripts/test-ios-real-api-smoke.sh.
 #
 # Needs: docker (daemon running), node 22, npm, npm dependencies installed
-# (`npm ci --ignore-scripts`), curl, jq, python3, openssl. Uses the postgres:17-alpine
-# image already pulled for the e2e suite; it pulls nothing else.
+# (`npm ci --ignore-scripts`), curl, jq, python3, openssl (lsof is used when present). Uses the
+# postgres:17-alpine image already pulled for the e2e suite; it pulls nothing else.
 #
 # What it creates, and ONLY this:
-#   - one container named kobolink-x2-pg (postgres:17-alpine, bound to 127.0.0.1 on a random free port)
-#   - one node process: apps/api `node dist/main.js` on a random free port (never 3000/3001)
+#   - one container named kobolink-x2-pg (postgres:17-alpine), made with `docker create`, labelled
+#     kobolink.x2=<a random run token>, its id recorded, then started; bound to 127.0.0.1 on a random free port
+#   - one node process: apps/api `node dist/main.js` on a free port (never 3000/3001). apps/api reads only PORT, so
+#     it listens on ALL interfaces for as long as the run lasts
 #   - a state directory with the API log and a state file recording the two things above.
-#     Default "${TMPDIR:-/tmp}/kobolink-x2-state"; KOBOLINK_X2_STATE_DIR overrides it. It must be an absolute
-#     path that does not exist yet (the script creates it, mode 700, and drops a marker file in it), not `/`,
-#     not $HOME, and neither the repository nor a parent or child of it.
 #
-# What it removes, and ONLY this (`down`, or the exit of `all`, or a failed `up`):
-#   - the container whose full ID the state file records (never one found by name; it is also checked to still
-#     be named kobolink-x2-pg first),
+# The state directory: KOBOLINK_X2_STATE_DIR, else $TMPDIR/kobolink-x2-state; with neither set the script refuses
+# (it never falls back to a shared /tmp). Repeated and trailing slashes are removed once, up front. The path must be
+# absolute and dot-free, and its PARENT must exist; the parent is resolved with `cd -P`, and the resolved ("physical")
+# path is what is used from then on and what is checked: it must not be `/`, $HOME or a parent of $HOME, and not the
+# repository (also resolved) or anything above or inside it. The path itself must not exist, not even as a symlink
+# (a dangling one included). The script creates it with mode 700, owned by you, and drops a marker file in it.
+#
+# What it removes, and ONLY this (`down`, the exit of `all`, or a failed `up`):
+#   - the container whose full ID the state file records, only if it is still named kobolink-x2-pg AND still carries
+#     the recorded run label (never one found by name),
 #   - the API process whose PID the state file records, only if its start time and command still match,
-#   - the state directory, only if it carries the script's own marker and passes the path rules above.
-# With no state file, `down` removes nothing. If `up` finds a container already named kobolink-x2-pg, or a
-# state file, or an existing state path, it refuses and touches none of them.
+#   - the state directory, only if it is a real directory (not a symlink) at the resolved path, owned by you, mode
+#     700, and carries the script's own marker.
+# `down` prints what it did and what it declined to do. With no state file, `down` removes nothing. If `up` finds a
+# container already named kobolink-x2-pg, a state path, or a busy API port, it refuses and touches none of them.
+# `check` refuses (before it registers anyone) unless the recorded PID is alive, unchanged and is the listener on
+# the API port.
 #
-# Secrets: the database password and the test users' passwords are generated at run time (`openssl rand`) and are
-# never written to a tracked file or printed. They are in the state dir (mode 700) and in the process
-# environments of the container (`docker inspect`) and the API (node's env) while the stack is up.
+# Secrets: the database password and the test users' passwords are throwaway values generated at run time
+# (`openssl rand`) for a database bound to 127.0.0.1. They are never written to a tracked file or printed, and they
+# are NOT stored in the state directory. While the run lasts the database password is visible to other local users
+# on the `docker create` command line (`ps`) and in `docker inspect` and the node environment, and bearer tokens and
+# passwords are on `curl` command lines. Do not run it on a shared machine.
 #
 # The API's per-IP limiter counts every register and every login, successful or not, 20 per 15 minutes. `check`
 # uses 10 of them and RealAPIIntegrationTests (mobile/ios) uses 12, so `check` followed by the Swift suite, or
@@ -48,25 +59,37 @@
 # Env
 #   KOBOLINK_X2_STATE_DIR   see above
 #   KOBOLINK_X2_SKIP_BUILD  1 = reuse apps/api/dist and packages/contracts/dist as they are
-#   KOBOLINK_X2_API_PORT    force the API port (default: a free random one)
+#   KOBOLINK_X2_API_PORT    force the API port (default: a free random one); it must be free
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-default_tmp="${TMPDIR:-/tmp}"; default_tmp="${default_tmp%/}"   # macOS TMPDIR ends in a slash
-STATE_DIR="${KOBOLINK_X2_STATE_DIR:-$default_tmp/kobolink-x2-state}"
-STATE_DIR="$(printf '%s' "$STATE_DIR" | sed 's#//*#/#g')"   # collapse repeated slashes (text only; no filesystem access)
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PG_NAME="kobolink-x2-pg"
 IMAGE="postgres:17-alpine"
+LABEL_KEY="kobolink.x2"
+MARKER_TEXT="kobolink-x2 smoke state v1"
+
+if [[ -n "${KOBOLINK_X2_STATE_DIR:-}" ]]; then
+  STATE_DIR="$KOBOLINK_X2_STATE_DIR"
+elif [[ -n "${TMPDIR:-}" ]]; then
+  STATE_DIR="$TMPDIR/kobolink-x2-state"
+else
+  STATE_DIR=""
+fi
+# Repeated and trailing slashes, once, before anything is derived from the path (text only; no filesystem access).
+STATE_DIR="$(printf '%s' "$STATE_DIR" | sed -e 's#//*#/#g' -e 's#/*$##')"
 STATE="$STATE_DIR/stack.env"
 MARKER="$STATE_DIR/.kobolink-x2-state"
-MARKER_TEXT="kobolink-x2 smoke state v1"
+STATE_PROBLEM=""
 
 # Set to 1 only once this process has created something it must clean up on exit.
 TEARDOWN_ON_EXIT=0
+# What teardown actually did, one line each.
+DONE_MSGS=""
 
 fail() { printf '\033[31mFAIL\033[0m  %s\n' "$1" >&2; exit 1; }
 pass() { printf '\033[32mok\033[0m    %s\n' "$1"; }
 note() { printf '      %s\n' "$1"; }
+record() { DONE_MSGS="$DONE_MSGS$1"$'\n'; }
 
 need() { command -v "$1" >/dev/null 2>&1 || fail "$1 is required"; }
 
@@ -80,36 +103,78 @@ s.close()
 PY
 }
 
+# port_is_free PORT: nothing is bound to it on loopback or on all interfaces.
+port_is_free() {
+  python3 - "$1" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+for host in ("127.0.0.1", "0.0.0.0"):
+    s = socket.socket()
+    try:
+        s.bind((host, port))
+    except OSError:
+        sys.exit(1)
+    finally:
+        s.close()
+PY
+}
+
 # ---------------------------------------------------------------------------
 # State directory rules
 # ---------------------------------------------------------------------------
 
-# state_path_ok PATH: an absolute, dot-free path at least two levels deep that is not $HOME and not the repo,
-# inside it, or above it. These are the only paths this script will ever create or delete.
-state_path_ok() {
-  local p="$1"
-  case "$p" in /*) ;; *) return 1 ;; esac
-  case "$p" in */./*|*/../*|*/.|*/..|*//*) return 1 ;; esac
-  p="${p%/}"
-  case "$p" in /*/*) ;; *) return 1 ;; esac
-  local home="${HOME:-}"; home="${home%/}"
-  [[ -z "$home" || "$p" != "$home" ]] || return 1
-  local r="${root%/}"
-  [[ "$p" != "$r" && "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+state_problem() { STATE_PROBLEM="$1"; return 1; }
+
+# init_state_paths: validate the state path and replace it with its resolved ("physical") form. Every command calls
+# this first; nothing below touches STATE_DIR before it has returned 0.
+init_state_paths() {
+  local p="$STATE_DIR"
+  [[ -n "$p" ]] || { state_problem "neither KOBOLINK_X2_STATE_DIR nor TMPDIR is set (this script never falls back to a shared /tmp)"; return 1; }
+  case "$p" in /*) ;; *) state_problem "'$p' is not an absolute path"; return 1 ;; esac
+  case "$p" in */./*|*/../*|*/.|*/..) state_problem "'$p' has a dot segment"; return 1 ;; esac
+  local parent base physparent phys
+  parent="$(dirname "$p")"; base="$(basename "$p")"
+  [[ -d "$parent" ]] || { state_problem "the parent directory '$parent' does not exist"; return 1; }
+  physparent="$(cd -P "$parent" 2>/dev/null && pwd -P)" || { state_problem "cannot resolve '$parent'"; return 1; }
+  if [[ "$physparent" == "/" ]]; then phys="/$base"; else phys="$physparent/$base"; fi
+  case "$phys" in /*/*) ;; *) state_problem "'$phys' is too close to /"; return 1 ;; esac
+  if [[ -L "$phys" ]]; then state_problem "'$phys' is a symlink"; return 1; fi
+
+  local physhome=""
+  if [[ -n "${HOME:-}" && -d "$HOME" ]]; then physhome="$(cd -P "$HOME" 2>/dev/null && pwd -P || true)"; fi
+  if [[ -n "$physhome" ]]; then
+    if [[ "$phys" == "$physhome" || "$physhome/" == "$phys/"* ]]; then
+      state_problem "'$phys' is your home directory or a parent of it"; return 1
+    fi
+  fi
+  if [[ "$phys/" == "$root/"* || "$root/" == "$phys/"* ]]; then
+    state_problem "'$phys' is the repository, inside it, or above it"; return 1
+  fi
+
+  STATE_DIR="$phys"
+  STATE="$STATE_DIR/stack.env"
+  MARKER="$STATE_DIR/.kobolink-x2-state"
   return 0
 }
 
-# remove_state_dir: delete $STATE_DIR only if it is ours: a real directory (not a symlink) at an acceptable path
-# that carries the marker this script wrote.
+# state_dir_is_ours: a real directory at the resolved path, owned by us, mode 700, with our marker.
+state_dir_is_ours() {
+  [[ -d "$STATE_DIR" && ! -L "$STATE_DIR" ]] || return 1
+  [[ -O "$STATE_DIR" ]] || return 1
+  [[ "$(ls -ld "$STATE_DIR" | cut -c1-10)" == "drwx------" ]] || return 1
+  [[ "$(cd -P "$STATE_DIR" 2>/dev/null && pwd -P)" == "$STATE_DIR" ]] || return 1
+  [[ "$(cat "$MARKER" 2>/dev/null || true)" == "$MARKER_TEXT" ]] || return 1
+  return 0
+}
+
 remove_state_dir() {
   if [[ ! -e "$STATE_DIR" && ! -L "$STATE_DIR" ]]; then return 0; fi
-  if ! state_path_ok "$STATE_DIR"; then note "not removing $STATE_DIR (not an acceptable state path)"; return 0; fi
-  if [[ -L "$STATE_DIR" || ! -d "$STATE_DIR" ]]; then note "not removing $STATE_DIR (not a plain directory)"; return 0; fi
-  if [[ "$(cat "$MARKER" 2>/dev/null || true)" != "$MARKER_TEXT" ]]; then
-    note "not removing $STATE_DIR (it has no marker: this script did not create it)"
-    return 0
+  if state_dir_is_ours; then
+    rm -rf -- "$STATE_DIR"
+    record "removed the state dir $STATE_DIR"
+  else
+    record "not removing $STATE_DIR (not a plain directory of yours, mode 700, carrying this script's marker)"
   fi
-  rm -rf "$STATE_DIR"
 }
 
 # state_get KEY: one value from the state file, read without executing it.
@@ -136,39 +201,62 @@ load_state() {
   BASE_URL="http://localhost:$API_PORT"
 }
 
+# api_is_ours PID START PORT: the recorded process is alive, is the one we started (start time and command), and,
+# when lsof is available, is the listener on PORT. Never trusts a health check from whatever answers on the port.
+api_is_ours() {
+  local pid="$1" start="$2" port="$3"
+  [[ "$pid" =~ ^[0-9]+$ && -n "$start" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [[ "$(ps -p "$pid" -o lstart= 2>/dev/null || true)" == "$start" ]] || return 1
+  [[ "$(ps -p "$pid" -o command= 2>/dev/null || true)" == *"dist/main.js"* ]] || return 1
+  if command -v lsof >/dev/null 2>&1; then
+    local listeners
+    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+    case $'\n'"$listeners"$'\n' in *$'\n'"$pid"$'\n'*) ;; *) return 1 ;; esac
+  fi
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Teardown: only what the state file records
 # ---------------------------------------------------------------------------
 teardown_recorded() {
-  [[ -f "$STATE" && "$(cat "$MARKER" 2>/dev/null || true)" == "$MARKER_TEXT" ]] || { remove_state_dir; return 0; }
+  if [[ ! -f "$STATE" ]] || ! state_dir_is_ours; then remove_state_dir; return 0; fi
 
-  local pid start cid
-  pid="$(state_get API_PID)"; start="$(state_get API_START)"; cid="$(state_get CONTAINER_ID)"
+  local pid start cid token
+  pid="$(state_get API_PID)"; start="$(state_get API_START)"; cid="$(state_get CONTAINER_ID)"; token="$(state_get RUN_TOKEN)"
 
-  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-    local now_start now_cmd
-    now_start="$(ps -p "$pid" -o lstart= 2>/dev/null || true)"
-    now_cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    # The recorded PID may have been reused: it is ours only if the start time we recorded and the command match.
-    if [[ -n "$start" && "$now_start" == "$start" && "$now_cmd" == *"dist/main.js"* ]]; then
-      kill "$pid" 2>/dev/null || true
-      local _
-      for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-      if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi
+  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    if kill -0 "$pid" 2>/dev/null; then
+      # The recorded PID may have been reused: it is ours only if the start time we recorded and the command match.
+      if [[ -n "$start" && "$(ps -p "$pid" -o lstart= 2>/dev/null || true)" == "$start" \
+            && "$(ps -p "$pid" -o command= 2>/dev/null || true)" == *"dist/main.js"* ]]; then
+        kill "$pid" 2>/dev/null || true
+        local _
+        for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+        if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi
+        record "stopped the API (pid $pid)"
+      else
+        record "not killing pid $pid (its start time or command no longer matches what was recorded)"
+      fi
     else
-      note "not killing pid $pid (its start time or command no longer matches what was recorded)"
+      record "the API (pid $pid) was no longer running"
     fi
   fi
 
   if [[ "$cid" =~ ^[0-9a-f]{64}$ ]]; then
     if docker container inspect "$cid" >/dev/null 2>&1; then
-      local name
+      local name label
       name="$(docker container inspect --format '{{.Name}}' "$cid" 2>/dev/null || true)"
-      if [[ "$name" == "/$PG_NAME" ]]; then
+      label="$(docker container inspect --format '{{index .Config.Labels "kobolink.x2"}}' "$cid" 2>/dev/null || true)"
+      if [[ "$name" == "/$PG_NAME" && -n "$token" && "$label" == "$token" ]]; then
         docker rm -f -v "$cid" >/dev/null
+        record "removed container ${cid:0:12} ($PG_NAME)"
       else
-        note "not removing container $cid (it is named '$name', not $PG_NAME)"
+        record "not removing container ${cid:0:12} (its name or run label does not match what was recorded)"
       fi
+    else
+      record "container ${cid:0:12} was already gone"
     fi
   fi
   remove_state_dir
@@ -187,10 +275,10 @@ on_exit() {
 # ---------------------------------------------------------------------------
 cmd_up() {
   need docker; need node; need npm; need curl; need jq; need python3; need openssl
+  init_state_paths || fail "the state path is not acceptable: $STATE_PROBLEM"
   docker info >/dev/null 2>&1 || fail "the docker daemon is not running"
 
   # Every refusal happens BEFORE anything is created, and with TEARDOWN_ON_EXIT still 0, so a refusal removes nothing.
-  state_path_ok "$STATE_DIR" || fail "KOBOLINK_X2_STATE_DIR / the state path '$STATE_DIR' is not acceptable: it must be an absolute path, not / or \$HOME, and not the repository or a parent or child of it"
   if [[ -e "$STATE_DIR" || -L "$STATE_DIR" ]]; then
     fail "$STATE_DIR already exists (a stack from an earlier 'up', or something else); run '$0 down' for a stack this script started, or choose another KOBOLINK_X2_STATE_DIR. Nothing was touched."
   fi
@@ -201,30 +289,37 @@ cmd_up() {
   docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "$IMAGE is not pulled; run: docker pull $IMAGE"
   [[ -d "$root/node_modules" ]] || fail "run: npm ci --ignore-scripts"
 
-  local pg_port api_port db_password
+  local pg_port api_port db_password run_token
   pg_port="$(free_port)"
   api_port="${KOBOLINK_X2_API_PORT:-$(free_port)}"
   [[ "$api_port" =~ ^[0-9]+$ ]] || fail "KOBOLINK_X2_API_PORT must be a number"
   case "$api_port" in 3000|3001) fail "refusing to use port $api_port (the dev servers' ports)";; esac
+  port_is_free "$api_port" || fail "port $api_port is already in use by another process; this script will not start its API there and will not talk to whatever is listening. Nothing was touched."
   db_password="$(openssl rand -hex 16)"
+  run_token="$(openssl rand -hex 12)"
 
   # From here on this process owns what it creates, and tears down exactly that if it fails.
   mkdir -m 700 "$STATE_DIR" || fail "could not create $STATE_DIR"
-  TEARDOWN_ON_EXIT=1
   umask 077
-  printf '%s\n' "$MARKER_TEXT" > "$MARKER"
+  printf '%s\n' "$MARKER_TEXT" > "$MARKER" || fail "could not write the marker in $STATE_DIR; leaving it alone"
+  state_dir_is_ours || fail "$STATE_DIR is not the plain directory (yours, mode 700) it was just created as; leaving it alone"
+  TEARDOWN_ON_EXIT=1
   {
     echo "PG_PORT=$pg_port"
     echo "API_PORT=$api_port"
+    echo "RUN_TOKEN=$run_token"
   } > "$STATE"
 
-  note "starting $PG_NAME on 127.0.0.1:$pg_port"
+  note "creating $PG_NAME on 127.0.0.1:$pg_port"
   local cid
-  cid="$(docker run -d --name "$PG_NAME" \
+  # create -> record the id -> start: whatever happens at `start` (a port taken, a daemon error), the container
+  # exists, is recorded, and is removed by the failed run's teardown.
+  cid="$(docker create --name "$PG_NAME" --label "$LABEL_KEY=$run_token" \
     -e POSTGRES_USER=kobolink -e POSTGRES_PASSWORD="$db_password" -e POSTGRES_DB=kobolink \
-    -p "127.0.0.1:$pg_port:5432" "$IMAGE")" || fail "docker run failed"
-  [[ "$cid" =~ ^[0-9a-f]{64}$ ]] || fail "docker run did not print a container id"
+    -p "127.0.0.1:$pg_port:5432" "$IMAGE")" || fail "docker create failed"
+  [[ "$cid" =~ ^[0-9a-f]{64}$ ]] || fail "docker create did not print a container id"
   state_set CONTAINER_ID "$cid"
+  docker start "$cid" >/dev/null || fail "docker start failed"
 
   local i
   for i in $(seq 1 60); do
@@ -254,20 +349,30 @@ cmd_up() {
       nohup node dist/main.js >"$STATE_DIR/api.log" 2>&1 </dev/null &
     echo $! > "$STATE_DIR/api.pid"
   )
-  local api_pid; api_pid="$(cat "$STATE_DIR/api.pid")"
+  local api_pid api_start
+  api_pid="$(cat "$STATE_DIR/api.pid")"
   [[ "$api_pid" =~ ^[0-9]+$ ]] || fail "could not read the API pid"
+  api_start="$(ps -p "$api_pid" -o lstart= 2>/dev/null || true)"
   state_set API_PID "$api_pid"
-  state_set API_START "$(ps -p "$api_pid" -o lstart= 2>/dev/null || true)"
+  state_set API_START "$api_start"
 
+  # Wait for OUR process to say it is listening; a crash (EADDRINUSE, a bad env) is a failure even if some other
+  # server happens to answer on the port.
   for i in $(seq 1 60); do
+    kill -0 "$api_pid" 2>/dev/null || { tail -20 "$STATE_DIR/api.log" >&2; fail "the API exited before it was ready"; }
+    if grep -q "listening on port $api_port" "$STATE_DIR/api.log" 2>/dev/null; then break; fi
+    sleep 1
+    [[ "$i" == 60 ]] && fail "the API did not log that it is listening on port $api_port"
+  done
+  api_is_ours "$api_pid" "$api_start" "$api_port" || fail "the process listening on port $api_port is not the API this script started"
+  for i in $(seq 1 30); do
     if curl -fsS "http://localhost:$api_port/api/health" >/dev/null 2>&1; then
       # Up and recorded: from here the stack is the caller's, and stays unless `down` (or `all`'s exit) removes it.
       TEARDOWN_ON_EXIT=0
       pass "API healthy at http://localhost:$api_port (pid $api_pid, postgres on 127.0.0.1:$pg_port)"
-      note "state: $STATE_DIR   log: $STATE_DIR/api.log"
+      note "state: $STATE_DIR   log: $STATE_DIR/api.log   (the API listens on all interfaces until you run 'down')"
       return 0
     fi
-    kill -0 "$api_pid" 2>/dev/null || { tail -20 "$STATE_DIR/api.log" >&2; fail "the API exited before it was ready"; }
     sleep 1
   done
   fail "the API did not answer /api/health"
@@ -278,18 +383,24 @@ cmd_up() {
 # ---------------------------------------------------------------------------
 cmd_down() {
   need docker
+  init_state_paths || fail "the state path is not acceptable: $STATE_PROBLEM"
   if [[ ! -f "$STATE" ]]; then
     note "no state file at $STATE: nothing was recorded, so nothing is removed"
     return 0
   fi
-  if [[ "$(cat "$MARKER" 2>/dev/null || true)" != "$MARKER_TEXT" ]]; then
-    fail "$STATE_DIR is not a directory this script created (no marker): refusing to touch it"
-  fi
+  state_dir_is_ours || fail "$STATE_DIR is not a directory this script created (a plain directory of yours, mode 700, with its marker): refusing to touch it"
   teardown_recorded
-  pass "removed the recorded container and API process, and $STATE_DIR"
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && note "$line"
+  done <<EOF
+$DONE_MSGS
+EOF
+  pass "down finished"
 }
 
 cmd_status() {
+  init_state_paths || fail "the state path is not acceptable: $STATE_PROBLEM"
   if [[ -f "$STATE" ]]; then
     load_state
     echo "up: $BASE_URL (api pid $(state_get API_PID), postgres 127.0.0.1:$(state_get PG_PORT))"
@@ -328,7 +439,12 @@ rand_phone() { printf '+23480%08d' $(( (RANDOM * 32768 + RANDOM) % 100000000 ));
 
 cmd_check() {
   need curl; need jq; need openssl
+  init_state_paths || fail "the state path is not acceptable: $STATE_PROBLEM"
   load_state
+  # Before any request: whatever answers on the port must be the API process this script started, or the checks
+  # would register users on (and send passwords to) a server that is not ours.
+  api_is_ours "$(state_get API_PID)" "$(state_get API_START)" "$API_PORT" \
+    || fail "the process on port $API_PORT is not the API this script started (recorded pid $(state_get API_PID)): refusing to talk to it. Run '$0 down' and 'up' again."
   curl -fsS "$BASE_URL/api/health" >/dev/null || fail "no API at $BASE_URL"
   local tag; tag="$(openssl rand -hex 4)"
   local m_email="merchant-$tag@example.test" c_email="customer-$tag@example.test"
