@@ -35,7 +35,9 @@ ENV API_ORIGIN=$API_ORIGIN \
     NEXT_PUBLIC_IOS_APP_STORE_ID=$NEXT_PUBLIC_IOS_APP_STORE_ID \
     NEXT_OUTPUT=standalone \
     NEXT_TELEMETRY_DISABLED=1
-# next/font downloads Google Fonts at build time, so this step needs network.
+# Fonts are self-hosted (src/app/fonts/, next/font/local): the build fetches
+# nothing from Google. Next bundles the woff2 files into .next/static/media,
+# which the runtime stage copies below.
 RUN npm run build -w apps/web
 
 FROM node:22-alpine AS runtime

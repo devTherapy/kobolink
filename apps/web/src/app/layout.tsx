@@ -1,26 +1,29 @@
 import type { Metadata, Viewport } from 'next'
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google'
+import {
+  plexMono,
+  plexMonoLatinExt,
+  plexMonoVietnamese,
+  plexSans,
+  plexSansLatinExt,
+  plexSansVietnamese,
+} from './fonts'
 import './globals.css'
 
-/**
- * Self-hosted at build time by next/font: no render-blocking request to
- * Google, no layout shift, and no third-party connection from the payer's
- * browser — which matters on a checkout page.
+/*
+ * Self-hosted by next/font/local (./fonts.ts): no render-blocking request to
+ * Google, no layout shift, no third-party connection from the payer's browser
+ * — which matters on a checkout page — and no network needed at build time.
  */
-const sans = IBM_Plex_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-ibm-plex-sans',
-  display: 'swap',
-})
-
-// Mono is for references and codes only, never as a "technical" costume.
-const mono = IBM_Plex_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  variable: '--font-ibm-plex-mono',
-  display: 'swap',
-})
+const fontVariables = [
+  plexSans,
+  plexSansLatinExt,
+  plexSansVietnamese,
+  plexMono,
+  plexMonoLatinExt,
+  plexMonoVietnamese,
+]
+  .map((font) => font.variable)
+  .join(' ')
 
 export const metadata: Metadata = {
   title: { default: 'Kobolink', template: '%s · Kobolink' },
@@ -35,7 +38,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    <html lang="en" className={fontVariables}>
       <body>{children}</body>
     </html>
   )
