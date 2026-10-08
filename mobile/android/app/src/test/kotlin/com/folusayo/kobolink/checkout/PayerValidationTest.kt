@@ -59,14 +59,6 @@ class PayerValidationTest {
     }
 
     @Test
-    fun `a remembered amount goes back into the field as the same number`() {
-        for (kobo in listOf(10_000, 1_500_000, 1_500_050, 999_999_999, 1_000_000_000)) {
-            assertEquals(kobo, Kobo.parseNaira(amountFieldText(kobo)))
-        }
-        assertEquals("15000.50", amountFieldText(1_500_050))
-    }
-
-    @Test
     fun `an input matches the request it was made from, and only that one`() {
         val request = InitializeRequest("7hK2mQ9x", 1_500_000, "Tunde Bello", "tunde@example.com")
         assertTrue(PayerInput(1_500_000, "Tunde Bello", "tunde@example.com").matches(request))

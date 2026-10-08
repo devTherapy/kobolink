@@ -64,9 +64,6 @@ fun validatePayer(
     return PayerValidation.Valid(PayerInput(amountKobo = amountKobo, name = trimmedName, email = normalisedEmail))
 }
 
-/** An amount as it is typed into the field ("15000.50"): the one inverse of [Kobo.parseNaira] the form needs. */
-fun amountFieldText(amountKobo: Int): String = Kobo.formatNaira(amountKobo, alwaysShowKobo = true).filter { it.isDigit() || it == '.' }
-
 /** Is this the very request [request] was made from? Then sending it again is a retry, not a new attempt. */
 fun PayerInput.matches(request: InitializeRequest): Boolean =
     amountKobo == request.amountKobo && name == request.payerName && email == request.payerEmail

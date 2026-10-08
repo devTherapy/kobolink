@@ -13,6 +13,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.folusayo.kobolink.api.ApiClientProvider
@@ -25,6 +28,8 @@ import com.folusayo.kobolink.ui.screen.CheckoutScreen
 import com.folusayo.kobolink.ui.screen.HomeScreen
 import com.folusayo.kobolink.ui.screen.LoginScreen
 import com.folusayo.kobolink.ui.screen.OfflineScreen
+import com.folusayo.kobolink.ui.screen.SignOutBlockedDialog
+import com.folusayo.kobolink.ui.screen.SignOutWarningDialog
 import com.folusayo.kobolink.ui.screen.toDisplayMessage
 import com.folusayo.kobolink.ui.theme.KobolinkTheme
 import java.io.IOException
@@ -74,6 +79,8 @@ class MainActivity : ComponentActivity() {
             KobolinkTheme {
                 val session by viewModel.sessionState.collectAsState()
                 val checkout by viewModel.checkout.state.collectAsState()
+                val signOutBlocked by viewModel.signOutBlocked.collectAsState()
+                var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
 
                 val destination = route(session, linkOpen = checkout.isOpen)
 
@@ -92,7 +99,8 @@ class MainActivity : ComponentActivity() {
                     is Destination.Home -> HomeScreen(
                         user = destination.user,
                         fetchWallet = ::fetchWallet,
-                        onLogout = viewModel::logout,
+                        // An unfinished payment made under this session goes with it: say so first.
+                        onLogout = { if (viewModel.hasSessionAttempts()) confirmingSignOut = true else viewModel.logout() },
                     )
                     is Destination.Link -> CheckoutScreen(
                         state = checkout,
@@ -101,8 +109,22 @@ class MainActivity : ComponentActivity() {
                         onReload = viewModel.checkout::reload,
                         onStartOver = viewModel.checkout::startOver,
                         onClose = { leaveLink(session) },
+                        onRetry = viewModel.checkout::retry,
+                        onResetCheckoutData = viewModel.checkout::resetCheckoutData,
                     )
                 }
+
+                if (confirmingSignOut) {
+                    SignOutWarningDialog(
+                        onConfirm = {
+                            confirmingSignOut = false
+                            viewModel.logout()
+                        },
+                        onDismiss = { confirmingSignOut = false },
+                    )
+                }
+                // The sign-out did not happen: what it must clear could not be written down first.
+                if (signOutBlocked) SignOutBlockedDialog(onDismiss = viewModel::acknowledgeSignOutBlocked)
             }
         }
     }

@@ -10,6 +10,7 @@ import com.folusayo.kobolink.checkout.InitializeRequest
 import com.folusayo.kobolink.checkout.LinkAvailability
 import com.folusayo.kobolink.checkout.PayPhase
 import com.folusayo.kobolink.checkout.PayerField
+import com.folusayo.kobolink.checkout.StorageBlock
 import com.folusayo.kobolink.ui.theme.KobolinkTheme
 import java.time.OffsetDateTime
 
@@ -125,3 +126,27 @@ private fun LoadFailed() = Screen(CheckoutState.LoadFailed("7hK2mQ9x", FailureKi
 @CheckoutPreviews
 @Composable
 private fun PaymentStarted() = Screen(loaded(pay = PayPhase.Started("kbl_7hK2mQ9xAb", 1_850_050)))
+
+private val rememberedRequest = InitializeRequest("7hK2mQ9x", 1_850_050, "Tunde Bello", "tunde@example.com")
+
+/** A remembered attempt: no fields, and nothing of the name or e-mail the attempt holds. */
+@CheckoutPreviews
+@Composable
+private fun RememberedAttempt() = Screen(loaded(pay = PayPhase.Failed(FailureKind.Interrupted, rememberedRequest)))
+
+@CheckoutPreviews
+@Composable
+private fun RememberedAttemptSending() = Screen(loaded(pay = PayPhase.Retrying(1_850_050)))
+
+@CheckoutPreviews
+@Composable
+private fun RememberedAttemptStartOverFailed() =
+    Screen(loaded(pay = PayPhase.Failed(FailureKind.Interrupted, rememberedRequest, startOverFailed = true)))
+
+@CheckoutPreviews
+@Composable
+private fun StorageBlockedUnreadable() = Screen(CheckoutState.StorageBlocked("7hK2mQ9x", StorageBlock.Unreadable))
+
+@CheckoutPreviews
+@Composable
+private fun StorageBlockedObligationUnreadable() = Screen(CheckoutState.StorageBlocked("7hK2mQ9x", StorageBlock.ObligationUnreadable))

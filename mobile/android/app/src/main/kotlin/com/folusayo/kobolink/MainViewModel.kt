@@ -38,23 +38,39 @@ class MainViewModel(
     val sessionState: StateFlow<SessionState> = session.state
 
     /**
+     * What the payer has typed. Outlives the screen's content for the same reason [checkout] does, and is emptied
+     * by [checkout] itself (synchronously) on sign-out, a user change, a different link, and Back.
+     */
+    val checkoutForm = CheckoutFormState()
+
+    /**
      * The payer checkout (M3). Lives here, not in the screen, so a rotation neither drops a loaded
      * link nor re-runs its lookup; all of its logic is in [CheckoutController], which is JVM-tested.
+     * Who an attempt belongs to follows the session ([SessionController.attemptOwner]).
      */
-    val checkout = CheckoutController(checkoutGateway, viewModelScope, pendingCheckouts)
+    val checkout = CheckoutController(
+        gateway = checkoutGateway,
+        scope = viewModelScope,
+        store = pendingCheckouts,
+        ownerNow = { session.attemptOwner },
+        clearForm = checkoutForm::reset,
+    )
 
-    /** What the payer has typed. Outlives the screen's content for the same reason [checkout] does. */
-    val checkoutForm = CheckoutFormState()
+    /** A chosen sign-out was refused because the checkout could not make its clean-up safe (the token is kept). */
+    val signOutBlocked: StateFlow<Boolean> = session.signOutBlocked
+
+    fun acknowledgeSignOutBlocked() = session.acknowledgeSignOutBlocked()
+
+    /** Is there an unfinished payment made under a session on this device, worth a warning before signing out? */
+    fun hasSessionAttempts(): Boolean = checkout.hasSessionAttempts
 
     /** A tapped link: always a fresh lookup, even for the link already on screen (M1 review, item a). */
     fun openLink(code: String) {
-        checkoutForm.bind(code)
         checkout.open(code)
     }
 
     /** A link URL with no readable code: the not-found checkout, not the merchant login. */
     fun openUnreadableLink() {
-        checkoutForm.bind(null)
         checkout.openUnreadable()
     }
 
@@ -81,13 +97,14 @@ class MainViewModel(
     }
 
     init {
+        // The checkout follows the session through two synchronous hooks, set before anything can happen to it: it is
+        // asked BEFORE a chosen sign-out (and can refuse it), and told of every change right after it, so the form and
+        // the unsettled payments of whoever was here are gone before anything can render or the network is touched.
+        session.willSignOut = checkout::prepareSignOut
+        session.onChange = checkout::sessionDidChange
         // Subscribe before resolving so an expiry signalled by the very first
         // request is not missed.
         viewModelScope.launch { session.observeExpiry(sessionExpired) }
-        // Whose pending payments the checkout reads and writes follows the session; leaving a signed-in user clears theirs.
-        viewModelScope.launch {
-            session.state.collect { checkout.bindOwner((it as? SessionState.SignedIn)?.user?.id) }
-        }
         viewModelScope.launch { session.resolve() }
     }
 
@@ -103,9 +120,12 @@ class MainViewModel(
     suspend fun login(email: String, password: String): Result<AuthenticatedUser> =
         viewModelScope.async { session.login(email, password) }.await()
 
+    /**
+     * The person asked to sign out. [SessionController.logout] asks the checkout first ([CheckoutController.prepareSignOut])
+     * and does nothing if the clean-up cannot be made safe ([signOutBlocked]); otherwise the checkout forgets the
+     * unsettled payments and the form before the network is touched. An expired session does neither.
+     */
     fun logout() {
-        // The person asked to sign out: their unsettled payments go with the session. An expired session does not.
-        checkout.explicitSignOut()
         viewModelScope.launch { session.logout() }
     }
 

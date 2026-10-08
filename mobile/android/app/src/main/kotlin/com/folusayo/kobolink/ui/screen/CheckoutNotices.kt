@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -16,8 +18,10 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -45,11 +49,18 @@ import com.folusayo.kobolink.checkout.FailureKind
 import com.folusayo.kobolink.checkout.LinkAvailability
 import com.folusayo.kobolink.checkout.Notice
 import com.folusayo.kobolink.checkout.PayPhase
+import com.folusayo.kobolink.checkout.RESET_MESSAGE
+import com.folusayo.kobolink.checkout.RESET_TITLE
 import com.folusayo.kobolink.checkout.START_OVER_FAILED_MESSAGE
+import com.folusayo.kobolink.checkout.START_OVER_TITLE
+import com.folusayo.kobolink.checkout.StorageBlock
+import com.folusayo.kobolink.checkout.attemptNotice
 import com.folusayo.kobolink.checkout.loadFailedNotice
 import com.folusayo.kobolink.checkout.nonPayableNotice
 import com.folusayo.kobolink.checkout.notFoundNotice
 import com.folusayo.kobolink.checkout.spelledOut
+import com.folusayo.kobolink.checkout.startOverMessage
+import com.folusayo.kobolink.checkout.storageBlockedNotice
 import com.folusayo.kobolink.money.Kobo
 import com.folusayo.kobolink.ui.theme.paymentColors
 
@@ -187,29 +198,191 @@ internal fun PaymentStartedStub(link: CheckoutLink, started: PayPhase.Started, o
     }
 
     if (confirmingStartOver) {
-        AlertDialog(
-            onDismissRequest = { confirmingStartOver = false },
-            title = { Text("Start a new payment?") },
-            text = {
-                Text(
-                    "This forgets payment $reference on this phone and starts again. " +
-                        "If you already paid, check with ${link.merchantName} first.",
-                )
+        ConfirmDialog(
+            title = START_OVER_TITLE,
+            message = startOverMessage(reference, link.merchantName),
+            confirmLabel = "Start a new payment",
+            onConfirm = {
+                confirmingStartOver = false
+                onStartOver()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmingStartOver = false
-                        onStartOver()
-                    },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("Start a new payment") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmingStartOver = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
-            },
+            onDismiss = { confirmingStartOver = false },
         )
     }
+}
+
+/**
+ * A REMEMBERED attempt of unknown outcome (restored from storage, or being sent again from here). It shows the merchant,
+ * the amount and what is known, and offers the same request once more under the same key, or a new payment. It has no
+ * fields and never shows the name or e-mail the attempt holds: whoever is looking may not be who made it (see
+ * [attemptNotice], which is built from the link and the amount alone).
+ */
+@Composable
+internal fun RememberedAttemptNotice(
+    link: CheckoutLink,
+    pay: PayPhase,
+    onRetry: () -> Unit,
+    onStartOver: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val notice = attemptNotice(link, pay)
+    val sending = pay is PayPhase.Retrying
+    val startOverFailed = pay is PayPhase.Failed && pay.startOverFailed
+    var confirmingStartOver by rememberSaveable { mutableStateOf(false) }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        NoticeIcon(Icons.Filled.Warning, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        ) {
+            Text(
+                text = notice.heading,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = notice.amountLine,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { contentDescription = notice.spokenAmountLine },
+            )
+            Text(
+                text = notice.body,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        MoneyLine(notice.moneyLine)
+        Text(
+            text = notice.nextStep,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Button(
+            onClick = onRetry,
+            enabled = !sending,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+        ) {
+            if (sending) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
+                Spacer(Modifier.width(12.dp))
+                Text("Sending", style = MaterialTheme.typography.labelLarge)
+            } else {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                Text("Try again", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        if (startOverFailed) {
+            Text(
+                text = START_OVER_FAILED_MESSAGE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+            )
+        }
+        TextButton(
+            onClick = { confirmingStartOver = true },
+            enabled = !sending,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) { Text("Start a new payment") }
+        TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Close") }
+    }
+
+    if (confirmingStartOver) {
+        ConfirmDialog(
+            title = START_OVER_TITLE,
+            message = startOverMessage(reference = null, merchant = link.merchantName),
+            confirmLabel = "Start a new payment",
+            onConfirm = {
+                confirmingStartOver = false
+                onStartOver()
+            },
+            onDismiss = { confirmingStartOver = false },
+        )
+    }
+}
+
+/**
+ * Secure storage would not tell us, or would not let go of, an earlier attempt (or the record of what a sign-out
+ * owes). The link cannot be paid until it does. "Try again" re-reads; the two exits that forget something are each
+ * behind a confirmation that names what is forgotten.
+ */
+@Composable
+internal fun StorageBlockedNotice(
+    block: StorageBlock,
+    onRetry: () -> Unit,
+    onStartOver: () -> Unit,
+    onResetCheckoutData: () -> Unit,
+    onClose: () -> Unit,
+) {
+    var confirming by rememberSaveable { mutableStateOf(false) }
+    val isReset = block == StorageBlock.ObligationUnreadable || block == StorageBlock.ResetFailed
+    val offersStartOver = block == StorageBlock.Undecodable || block == StorageBlock.UndecodableClearFailed
+    NoticeContent(
+        notice = storageBlockedNotice(block),
+        subject = null,
+        subtitle = null,
+        icon = Icons.Filled.Warning,
+        iconContainer = MaterialTheme.colorScheme.errorContainer,
+        iconTint = MaterialTheme.colorScheme.onErrorContainer,
+        primary = NoticeAction("Try again", Icons.Filled.Refresh, onRetry),
+        primaryIsFilled = true,
+        onClose = onClose,
+        extra = if (isReset || offersStartOver) {
+            {
+                TextButton(onClick = { confirming = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(if (isReset) "Reset checkout data" else "Start a new payment")
+                }
+            }
+        } else {
+            null
+        },
+    )
+    if (confirming) {
+        ConfirmDialog(
+            title = if (isReset) RESET_TITLE else START_OVER_TITLE,
+            message = if (isReset) RESET_MESSAGE else startOverMessage(reference = null, merchant = "the merchant"),
+            confirmLabel = if (isReset) "Reset checkout data" else "Start a new payment",
+            onConfirm = {
+                confirming = false
+                if (isReset) onResetCheckoutData() else onStartOver()
+            },
+            onDismiss = { confirming = false },
+        )
+    }
+}
+
+/** A destructive choice, said out loud: what is forgotten, and that the payer should check with the merchant first. */
+@Composable
+internal fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp)) { Text(confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
+        },
+    )
 }
 
 private class NoticeAction(val label: String, val icon: ImageVector, val onClick: () -> Unit)
@@ -225,6 +398,7 @@ private fun NoticeContent(
     primary: NoticeAction?,
     onClose: () -> Unit,
     primaryIsFilled: Boolean = false,
+    extra: (@Composable () -> Unit)? = null,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -293,6 +467,7 @@ private fun NoticeContent(
             } else {
                 FilledTonalButton(onClick = primary.onClick, modifier = actionModifier) { content() }
             }
+            extra?.invoke()
             TextButton(onClick = onClose, modifier = actionModifier) { Text("Close") }
         } else {
             FilledTonalButton(onClick = onClose, modifier = actionModifier) { Text("Close") }

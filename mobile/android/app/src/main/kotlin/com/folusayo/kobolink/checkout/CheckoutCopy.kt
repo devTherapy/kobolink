@@ -129,8 +129,122 @@ private fun failureSentence(kind: FailureKind): String = when (kind) {
     FailureKind.RateLimited -> "Kobolink is getting too many requests from this device. Wait a moment."
     FailureKind.Server -> "Kobolink had a problem on its side."
     FailureKind.Unreadable -> "Kobolink answered with something this app couldn't read. If this keeps happening, update the app."
-    FailureKind.Interrupted -> "This payment was started earlier and the app never saw how it ended."
+    // Neutral about WHO started it: a different person may have adopted an attempt made before their session was known.
+    FailureKind.Interrupted -> "A payment on this phone was started earlier and Kobolink never saw how it ended."
 }
+
+/**
+ * What a REMEMBERED attempt of unknown outcome says on its own screen. It is built from the link and the attempt's
+ * amount and nothing else: a payer's name and e-mail have no place in it, because the person looking may not be the
+ * person who made the attempt (`CheckoutPrivacyTest` checks every string).
+ */
+data class AttemptNotice(
+    val heading: String,
+    val body: String,
+    val amountLine: String,
+    val spokenAmountLine: String,
+    val moneyLine: String,
+    val nextStep: String,
+)
+
+fun attemptNotice(link: CheckoutLink, pay: PayPhase): AttemptNotice {
+    val amount: Int
+    val heading: String
+    val body: String
+    val nextStep: String
+    when (pay) {
+        is PayPhase.Failed -> {
+            amount = pay.request.amountKobo
+            heading = "We couldn't confirm your payment"
+            body = failureSentence(pay.kind)
+            nextStep = "Try again to send the same payment once more, or start a new one if you'd rather."
+        }
+        is PayPhase.Retrying -> {
+            amount = pay.amountKobo
+            heading = "Sending your payment again"
+            body = "Sending the same payment once more."
+            nextStep = "This takes a moment."
+        }
+        else -> throw IllegalArgumentException("Not a remembered attempt: $pay")
+    }
+    return AttemptNotice(
+        heading = heading,
+        body = body,
+        amountLine = "${Kobo.formatNaira(amount)} to ${link.merchantName}",
+        spokenAmountLine = "${Kobo.spokenNaira(amount)} to ${link.merchantName}",
+        // Initialize never posts to the ledger, so this is a fact; it is the same line the in-form failure carries.
+        moneyLine = NO_MONEY_MOVED,
+        nextStep = nextStep,
+    )
+}
+
+/**
+ * Secure storage would not say, or would not let go. A saved attempt was written BEFORE its request left, so it was
+ * almost certainly SENT: this never says nothing was sent. It says one may have been started, and to check with the
+ * merchant before paying again.
+ */
+fun storageBlockedNotice(block: StorageBlock): Notice {
+    val body: String
+    val nextStep: String
+    when (block) {
+        StorageBlock.Unreadable -> {
+            body = "Kobolink couldn't check this phone's secure storage for a payment you may already have started on this link."
+            nextStep = "Unlock your phone and try again. Check with the merchant before paying again."
+        }
+        StorageBlock.Undecodable -> {
+            body = "A payment on this link was saved by a different version of Kobolink, and this version can't read it."
+            nextStep = "Check with the merchant before paying again. Starting a new payment forgets the saved one."
+        }
+        StorageBlock.UndecodableClearFailed -> {
+            body = "A payment on this link was saved by a different version of Kobolink. This phone wouldn't let Kobolink forget it, so nothing has changed."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
+        }
+        StorageBlock.CannotClear -> {
+            body = "A payment saved on this phone by an earlier sign-in couldn't be removed, so it isn't shown here."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
+        }
+        StorageBlock.ObligationUnreadable -> {
+            body = "Kobolink couldn't read the record of which saved payments to forget on this phone, so it can't tell which ones are safe to show."
+            nextStep = "Check with the merchant before paying again. Resetting checkout data forgets every payment saved on this phone."
+        }
+        StorageBlock.ResetFailed -> {
+            body = "This phone wouldn't let Kobolink finish forgetting the saved checkout data."
+            nextStep = "Try again in a moment. Check with the merchant before paying again."
+        }
+    }
+    return Notice(
+        heading = "Can't open this payment yet",
+        body = body,
+        moneyLine = STORAGE_BLOCKED_MONEY_LINE,
+        nextStep = nextStep,
+    )
+}
+
+const val STORAGE_BLOCKED_MONEY_LINE = "A payment may already have been started on this link."
+
+/** "Start a new payment?": names what is forgotten and sends the person to the merchant first, since it may have been paid. */
+const val START_OVER_TITLE = "Start a new payment?"
+
+fun startOverMessage(reference: String?, merchant: String): String {
+    val what = reference?.let { "payment $it" } ?: "the unfinished payment"
+    return "This forgets $what on this phone and starts again. If you already paid, check with $merchant first."
+}
+
+/**
+ * Said before signing out when a payment was started on this phone and not finished. Neutral about WHO started it: a
+ * different person may have adopted an attempt that was made before their session was known.
+ */
+const val SIGN_OUT_WARNING =
+    "A payment on this phone was started and not finished. Signing out forgets it here. If you already paid, check with the merchant first."
+
+/** The sign-out did not happen: what it must clear could not be written down first, so the person is still signed in. */
+const val SIGN_OUT_BLOCKED_TITLE = "Couldn't sign out safely"
+const val SIGN_OUT_BLOCKED =
+    "Kobolink couldn't prepare this phone to forget the payments saved here, so you're still signed in. Try again in a moment."
+
+const val RESET_TITLE = "Reset checkout data?"
+const val RESET_MESSAGE =
+    "This forgets every payment saved on this phone, and anything a sign-out still owed. If you already paid, check with the merchant first."
 
 /** "Start a new payment" could not clear the record on this phone, so nothing changed: it is still the same payment. */
 const val START_OVER_FAILED_MESSAGE =

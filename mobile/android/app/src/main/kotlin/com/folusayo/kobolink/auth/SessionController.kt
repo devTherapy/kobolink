@@ -1,5 +1,6 @@
 package com.folusayo.kobolink.auth
 
+import com.folusayo.kobolink.checkout.AttemptOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,26 @@ sealed interface SessionState {
 }
 
 /**
+ * A change to who is signed in that per-user state elsewhere in the app must react to (the checkout forgets a
+ * person's payment attempts and form on the first two kinds of sign-out and sign-in, and on none of the involuntary
+ * ones). Reported synchronously, right after [SessionController.state] changed (or, for [SignedOutByChoice], before
+ * the network is touched), so nothing can render in between. The same four events as iOS's `SessionChange`.
+ */
+sealed interface SessionChange {
+    /** The cold-start check (or Try again after offline) confirmed [user] for the token already stored: the same session, now with a name. */
+    data class Resolved(val user: AuthenticatedUser) : SessionChange
+
+    /** A sign-in with credentials produced [user] and a new token. */
+    data class SignedIn(val user: AuthenticatedUser) : SessionChange
+
+    /** The person chose Sign out. Their per-user state must go. */
+    data object SignedOutByChoice : SessionChange
+
+    /** The server ended the session (a 401). Involuntary: it says nothing about who is at the screen, so nothing is forgotten. */
+    data object Ended : SessionChange
+}
+
+/**
  * Every decision about the session — cold-start check, login, logout,
  * mid-session expiry — as plain Kotlin with no Android types, so it runs in
  * JVM unit tests. [MainViewModel][com.folusayo.kobolink.MainViewModel] owns
@@ -34,6 +55,39 @@ class SessionController(private val auth: AuthRepository) {
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
     private var resolveStarted = false
+
+    /** Told about every [SessionChange], once, in order. Set once at startup by the code that owns the per-user state. */
+    var onChange: ((SessionChange) -> Unit)? = null
+
+    /**
+     * Asked BEFORE a chosen sign-out changes anything. False means per-user state could not be made safe to forget
+     * (its clearing could be lost by a restart), so the person stays signed in, the token is kept, and
+     * [signOutBlocked] says so.
+     */
+    var willSignOut: (() -> Boolean)? = null
+
+    private val _signOutBlocked = MutableStateFlow(false)
+
+    /** A chosen sign-out was refused by [willSignOut]. The token is kept and nothing was revoked. */
+    val signOutBlocked: StateFlow<Boolean> = _signOutBlocked.asStateFlow()
+
+    fun acknowledgeSignOutBlocked() {
+        _signOutBlocked.value = false
+    }
+
+    /**
+     * Who a payment attempt started right now belongs to; see [AttemptOwner] for the rule. With no stored session it
+     * is a payer. With one, signed in or not yet confirmed (resolving, offline, or a session whose token could not
+     * be read), it is a session, with the user's id once the server has said who.
+     */
+    val attemptOwner: AttemptOwner
+        get() = when (val current = _state.value) {
+            is SessionState.SignedIn -> AttemptOwner.Session(current.user.id)
+            SessionState.Resolving, is SessionState.Offline -> AttemptOwner.Session(null)
+            // A token may be there that this device could not read: not a payer's device.
+            is SessionState.SignedOut ->
+                if (current.notice == STORAGE_UNREADABLE_NOTICE) AttemptOwner.Session(null) else AttemptOwner.Payer
+        }
 
     /**
      * The cold-start check. One-shot: a second call (the Activity being
@@ -78,14 +132,18 @@ class SessionController(private val auth: AuthRepository) {
             return
         }
         auth.currentUser().fold(
-            onSuccess = { _state.value = SessionState.SignedIn(it) },
+            onSuccess = {
+                _state.value = SessionState.SignedIn(it)
+                onChange?.invoke(SessionChange.Resolved(it))
+            },
             onFailure = { error ->
                 val failure = error as? AuthException
-                _state.value = if (failure?.isUnauthorized == true) {
+                if (failure?.isUnauthorized == true) {
                     discardDeadToken()
-                    SessionState.SignedOut(notice = SESSION_ENDED_NOTICE)
+                    _state.value = SessionState.SignedOut(notice = SESSION_ENDED_NOTICE)
+                    onChange?.invoke(SessionChange.Ended)
                 } else {
-                    SessionState.Offline(offlineMessage(failure?.httpStatus))
+                    _state.value = SessionState.Offline(offlineMessage(failure?.httpStatus))
                 }
             },
         )
@@ -106,9 +164,23 @@ class SessionController(private val auth: AuthRepository) {
     }
 
     suspend fun login(email: String, password: String): Result<AuthenticatedUser> =
-        auth.login(email, password).onSuccess { _state.value = SessionState.SignedIn(it) }
+        auth.login(email, password).onSuccess {
+            _state.value = SessionState.SignedIn(it)
+            onChange?.invoke(SessionChange.SignedIn(it))
+        }
 
+    /**
+     * Explicit sign-out. First [willSignOut] is asked: if the per-user state cannot be made safe to forget, nothing
+     * happens (token kept, no network call) and [signOutBlocked] is set. Then the per-user state is forgotten
+     * ([SessionChange.SignedOutByChoice]) BEFORE the network is touched; the revoke that follows is best effort.
+     */
     suspend fun logout() {
+        if (willSignOut?.invoke() == false) {
+            _signOutBlocked.value = true
+            return
+        }
+        _signOutBlocked.value = false
+        onChange?.invoke(SessionChange.SignedOutByChoice)
         _state.value = try {
             auth.logout()
             SessionState.SignedOut()
@@ -124,6 +196,7 @@ class SessionController(private val auth: AuthRepository) {
     fun onSessionExpired() {
         if (_state.value is SessionState.SignedIn) {
             _state.value = SessionState.SignedOut(notice = SESSION_ENDED_NOTICE)
+            onChange?.invoke(SessionChange.Ended)
         }
     }
 

@@ -9,11 +9,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** A SharedPreferences stand-in whose map is the "disk": a new store over the same instance is a new process. */
-class FakePrefs(var failCommits: Boolean = false) : SharedPreferences {
+class FakePrefs(var failCommits: Boolean = false, var failReads: Boolean = false) : SharedPreferences {
     val disk = HashMap<String, String>()
 
-    override fun getAll(): MutableMap<String, *> = disk
-    override fun getString(key: String?, defValue: String?) = disk[key] ?: defValue
+    override fun getAll(): MutableMap<String, *> {
+        if (failReads) throw IllegalStateException("keystore")
+        return disk
+    }
+
+    override fun getString(key: String?, defValue: String?): String? {
+        if (failReads) throw IllegalStateException("keystore")
+        return disk[key] ?: defValue
+    }
+
     override fun contains(key: String?) = disk.containsKey(key)
     override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
         private val puts = HashMap<String, String>()
@@ -49,115 +57,182 @@ class PendingCheckoutStoreTest {
     private val unknown = PendingCheckout(request, key = "attempt-key-0-0123456789")
     private val started = unknown.copy(reference = "kbl_abcdefghjk", confirmedAmountKobo = 1_500_000)
 
-    @Test
-    fun `the codec round-trips an unknown outcome, a started payment and an owner`() {
-        assertEquals(unknown, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(unknown)))
-        assertEquals(started, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(started)))
-        val owned = started.copy(owner = "u1")
-        assertEquals(owned, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(owned)))
+    private fun stores(): List<PendingCheckoutStore> = listOf(EncryptedPendingCheckoutStore(FakePrefs()), InMemoryPendingCheckoutStore())
+
+    private fun failure(block: () -> Unit): PendingStoreException? = try {
+        block()
+        null
+    } catch (e: PendingStoreException) {
+        e
     }
 
     @Test
-    fun `garbage on disk reads as nothing pending, not a crash`() {
+    fun `the codec round-trips an unknown outcome, a started payment and every kind of owner`() {
+        assertEquals(unknown, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(unknown)))
+        assertEquals(started, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(started)))
+        for (owner in listOf(AttemptOwner.Payer, AttemptOwner.Session(null), AttemptOwner.Session("u1"))) {
+            val owned = started.copy(owner = owner)
+            assertEquals(owned, PendingCheckoutCodec.decode(PendingCheckoutCodec.encode(owned)))
+        }
+    }
+
+    @Test
+    fun `anything this build cannot read decodes to null, never to a guess`() {
         assertNull(PendingCheckoutCodec.decode("not json"))
         assertNull(PendingCheckoutCodec.decode("""{"key":"k"}"""))
         assertNull(PendingCheckoutCodec.decode("[]"))
+        // A version this build does not know, and an owner kind it does not know.
+        val raw = PendingCheckoutCodec.encode(unknown)
+        assertNull(PendingCheckoutCodec.decode(raw.replace("\"version\":1", "\"version\":2")))
+        assertNull(PendingCheckoutCodec.decode(raw.replace("\"payer\"", "\"somebody\"")))
+        assertNull(PendingCheckoutCodec.decodeObligation("""{"version":1}"""))
+        assertNull(PendingCheckoutCodec.decodeObligation("""{"version":9,"entries":[]}"""))
+    }
+
+    @Test
+    fun `the obligation round-trips, including an entry for an unreadable slot that has no key`() {
+        val obligation = SignOutObligation(listOf(SignOutObligation.Entry("aaaaaaaa", "key-a"), SignOutObligation.Entry("bbbbbbbb", null)))
+        assertEquals(obligation, PendingCheckoutCodec.decodeObligation(PendingCheckoutCodec.encodeObligation(obligation)))
+        for (store in stores()) {
+            assertNull(store.loadObligation())
+            store.saveObligation(obligation)
+            assertEquals(obligation, store.loadObligation())
+            store.clearObligation()
+            assertNull(store.loadObligation())
+        }
     }
 
     @Test
     fun `a pending payment survives a new process, key included`() {
         val prefs = FakePrefs()
-        EncryptedPendingCheckoutStore(prefs).save(request.code, started)
+        EncryptedPendingCheckoutStore(prefs).save(started)
 
         assertEquals(started, EncryptedPendingCheckoutStore(prefs).load(request.code))
     }
 
     @Test
     fun `each link has its own slot, found whoever is signed in`() {
-        val store = EncryptedPendingCheckoutStore(FakePrefs())
-        store.save("7hK2mQ9x", unknown.copy(owner = "u1"))
+        for (store in stores()) {
+            store.save(unknown.copy(owner = AttemptOwner.Session("u1")))
 
-        assertNull(store.load("Zz3Yy4Xx"))
-        store.save("Zz3Yy4Xx", started)
-        assertEquals(unknown.copy(owner = "u1"), store.load("7hK2mQ9x"))
+            assertNull(store.load("Zz3Yy4Xx"))
+            store.save(started.copy(request = request.copy(code = "Zz3Yy4Xx")))
+            assertEquals(unknown.copy(owner = AttemptOwner.Session("u1")), store.load("7hK2mQ9x"))
+        }
     }
 
     @Test
-    fun `saving null clears only that slot`() {
-        val store = EncryptedPendingCheckoutStore(FakePrefs())
-        store.save("7hK2mQ9x", unknown)
-        store.save("Zz3Yy4Xx", unknown)
-        store.save("7hK2mQ9x", null)
+    fun `removing clears only that slot, and removing nothing is not an error`() {
+        for (store in stores()) {
+            store.save(unknown)
+            store.save(unknown.copy(request = request.copy(code = "Zz3Yy4Xx")))
+            store.remove("7hK2mQ9x")
+            store.remove("nothing-here")
 
+            assertNull(store.load("7hK2mQ9x"))
+            assertEquals("Zz3Yy4Xx", store.load("Zz3Yy4Xx")?.request?.code)
+        }
+    }
+
+    @Test
+    fun `all lists every slot, the pending ones decoded and the unreadable ones by id, and not the obligation`() {
+        val prefs = FakePrefs()
+        val store = EncryptedPendingCheckoutStore(prefs)
+        store.save(unknown)
+        store.saveObligation(SignOutObligation(emptyList()))
+        prefs.disk["pending/zzzzzzzz"] = "garbage"
+
+        assertEquals(
+            listOf<PendingSlot>(PendingSlot.Pending(unknown), PendingSlot.Unreadable("zzzzzzzz")),
+            store.all(),
+        )
+    }
+
+    @Test
+    fun `an unreadable slot is a failure with the undecodable kind, never nothing, and remove clears it`() {
+        val prefs = FakePrefs()
+        prefs.disk["pending/7hK2mQ9x"] = "not json"
+        val store = EncryptedPendingCheckoutStore(prefs)
+
+        assertEquals(StoreFailureKind.Undecodable, failure { store.load("7hK2mQ9x") }?.kind)
+
+        store.remove("7hK2mQ9x")
         assertNull(store.load("7hK2mQ9x"))
-        assertEquals(unknown, store.load("Zz3Yy4Xx"))
     }
 
     @Test
-    fun `clearing a user's slots removes theirs and nobody else's`() {
-        for (store in listOf<PendingCheckoutStore>(EncryptedPendingCheckoutStore(FakePrefs()), InMemoryPendingCheckoutStore())) {
-            store.save("aaaaaaaa", unknown.copy(owner = "u1"))
-            store.save("bbbbbbbb", unknown.copy(owner = "u10")) // an id that merely starts the same
-            store.save("cccccccc", unknown) // a payer's
+    fun `an obligation this build cannot read is undecodable, not nothing owed`() {
+        val prefs = FakePrefs()
+        prefs.disk["signout-obligation"] = "garbage"
 
-            store.clearOwnedBy("u1")
-
-            assertNull(store.load("aaaaaaaa"))
-            assertEquals(unknown.copy(owner = "u10"), store.load("bbbbbbbb"))
-            assertEquals(unknown, store.load("cccccccc"))
-        }
+        assertEquals(StoreFailureKind.Undecodable, failure { EncryptedPendingCheckoutStore(prefs).loadObligation() }?.kind)
     }
 
     @Test
-    fun `confirming a different user clears every other user's slots, never a payer's and never their own`() {
-        for (store in listOf<PendingCheckoutStore>(EncryptedPendingCheckoutStore(FakePrefs()), InMemoryPendingCheckoutStore())) {
-            store.save("aaaaaaaa", unknown.copy(owner = "u1"))
-            store.save("bbbbbbbb", unknown.copy(owner = "u2"))
-            store.save("cccccccc", unknown)
+    fun `storage that cannot be reached is the unavailable kind on every read, never nothing`() {
+        val prefs = FakePrefs(failReads = true)
+        val store = EncryptedPendingCheckoutStore(prefs)
 
-            store.clearOwnedByOthers("u2")
-
-            assertNull(store.load("aaaaaaaa"))
-            assertEquals(unknown.copy(owner = "u2"), store.load("bbbbbbbb"))
-            assertEquals(unknown, store.load("cccccccc"))
-        }
+        assertEquals(StoreFailureKind.Unavailable, failure { store.load("7hK2mQ9x") }?.kind)
+        assertEquals(StoreFailureKind.Unavailable, failure { store.all() }?.kind)
+        assertEquals(StoreFailureKind.Unavailable, failure { store.loadObligation() }?.kind)
     }
 
     @Test
     fun `a write that does not reach disk is reported, never swallowed`() {
         val prefs = FakePrefs(failCommits = true)
-        for (attempt in listOf<PendingCheckout?>(unknown, null)) {
-            var thrown: Throwable? = null
-            try {
-                EncryptedPendingCheckoutStore(prefs).save(request.code, attempt)
-            } catch (e: IOException) {
-                thrown = e
-            }
-            assertTrue("saving $attempt", thrown != null)
+        val store = EncryptedPendingCheckoutStore(prefs)
+        val writes: Map<StoreOperation, () -> Unit> = mapOf(
+            StoreOperation.Write to { store.save(unknown) },
+            StoreOperation.Remove to { store.remove(request.code) },
+            StoreOperation.Obligation to { store.saveObligation(SignOutObligation(emptyList())) },
+        )
+        for ((operation, write) in writes) {
+            assertEquals("$operation", operation, failure(write)?.operation)
         }
+        assertTrue(failure { store.clearObligation() } is PendingStoreException)
         assertTrue(prefs.disk.isEmpty())
     }
 
     @Test
-    fun `the secure-storage-unavailable store refuses to record, so nothing is sent`() {
+    fun `the secure-storage-unavailable store holds nothing and accepts nothing, and says so on every call`() {
         val store = UnavailablePendingCheckoutStore(IllegalStateException("keystore"))
-        assertNull(store.load(request.code))
-        var thrown = false
-        try {
-            store.save(request.code, unknown)
-        } catch (e: IOException) {
-            thrown = true
+        val calls: List<() -> Unit> = listOf(
+            { store.load(request.code) },
+            { store.save(unknown) },
+            { store.remove(request.code) },
+            { store.all() },
+            { store.loadObligation() },
+            { store.saveObligation(SignOutObligation(emptyList())) },
+            { store.clearObligation() },
+        )
+        for (call in calls) {
+            assertEquals(StoreFailureKind.Unavailable, failure(call)?.kind)
         }
-        assertTrue(thrown)
-        store.save(request.code, null) // clearing is always allowed
+    }
+
+    @Test
+    fun `the in-memory store's failure switches are per operation and can be healed`() {
+        val store = InMemoryPendingCheckoutStore()
+        store.save(unknown)
+        store.fail(StoreOperation.Read)
+        assertEquals(StoreOperation.Read, failure { store.load(request.code) }?.operation)
+        store.save(unknown) // writes are not failing
+        store.heal()
+        assertEquals(unknown, store.load(request.code))
     }
 
     @Test
     fun `the stored text holds the payment's details and nothing like a token`() {
         val prefs = FakePrefs()
-        EncryptedPendingCheckoutStore(prefs).save(request.code, unknown)
+        EncryptedPendingCheckoutStore(prefs).save(unknown)
         val raw = prefs.disk.values.single()
         assertFalse(raw.contains("token", ignoreCase = true))
         assertTrue(raw.contains("attempt-key-0-0123456789"))
+    }
+
+    @Test(expected = IOException::class)
+    fun `a store failure is an IOException, so a caller that only cares that it failed can catch that`() {
+        UnavailablePendingCheckoutStore().save(unknown)
     }
 }

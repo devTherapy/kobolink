@@ -10,7 +10,12 @@ import com.folusayo.kobolink.checkout.PayerField
  *
  * It has to outlive the screen's content: a re-tapped link or a "Check again" swaps the form for a
  * skeleton and back, which would drop plain `remember` state, and a rotation recreates the Activity.
- * Held here it survives both, and is cleared only when a different link is opened ([bind]).
+ * Held here it survives both.
+ *
+ * It is emptied by [reset], and [com.folusayo.kobolink.checkout.CheckoutController] calls that synchronously on
+ * every event that must: a different link is opened, the checkout is closed, the person signs out, a different user
+ * is confirmed or signs in, and "Start a new payment". What one person typed (a name, an e-mail, an amount) is not
+ * for whoever opens the same link next on the same phone.
  *
  * Compose snapshot state, not a `StateFlow`: a text field fed by an asynchronously collected flow can
  * lose or reorder keystrokes; snapshot state is read synchronously in the same frame it is written.
@@ -30,30 +35,15 @@ class CheckoutFormState {
      */
     var editedSinceRefusal by mutableStateOf<Set<PayerField>>(emptySet())
 
-    private var boundCode: String? = null
+    val isEmpty: Boolean get() = amountText.isEmpty() && name.isEmpty() && email.isEmpty()
 
-    /** Called whenever a link is opened. Typed values are kept for the same link and dropped for another. */
-    fun bind(code: String?) {
-        if (code != boundCode) {
-            amountText = ""
-            name = ""
-            email = ""
-            errors = emptyMap()
-            editedSinceRefusal = emptySet()
-            boundCode = code
-        }
-    }
-
-    /**
-     * Puts a remembered attempt's details back into an EMPTY form: after the app was closed and the link re-tapped
-     * the form is blank, and "Try again" has to send the identical request to reuse the attempt's idempotency key.
-     * A form the payer has already started typing in is never overwritten.
-     */
-    fun restoreIfBlank(amountText: String, name: String, email: String) {
-        if (this.amountText.isNotBlank() || this.name.isNotBlank() || this.email.isNotBlank()) return
-        this.amountText = amountText
-        this.name = name
-        this.email = email
+    /** Empties every field and every message about them, in memory, now. */
+    fun reset() {
+        amountText = ""
+        name = ""
+        email = ""
+        errors = emptyMap()
+        editedSinceRefusal = emptySet()
     }
 
     /** The payer edited [field]: whatever was said about its old value (here or by the server) no longer applies. */
