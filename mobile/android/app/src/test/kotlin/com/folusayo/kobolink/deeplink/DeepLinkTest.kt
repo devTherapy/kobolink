@@ -2,7 +2,9 @@ package com.folusayo.kobolink.deeplink
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * Mirrors `packages/contracts/tests/routes.test.ts`'s `parseLinkCode`
@@ -18,10 +20,19 @@ class DeepLinkTest {
             "https://pay.folusayo.com/l/aBcDeFgH",
             "https://pay.folusayo.com/l/aBcDeFgH/",
             "https://pay.folusayo.com/l/aBcDeFgH?utm=whatsapp#x",
-            "http://localhost:3000/l/aBcDeFgH",
             "/l/aBcDeFgH",
             "/l/aBcDeFgH?x=1",
             "kobolink://l/aBcDeFgH",
+            // M1 review (c): a space in the query is legal to WHATWG `new URL`
+            // (contracts accepts it) but throws in java.net.URI.
+            "https://pay.folusayo.com/l/aBcDeFgH?q=a b",
+            "https://pay.folusayo.com/l/aBcDeFgH?q=a b#frag ment",
+            "https://pay.folusayo.com/l/aBcDeFgH/?q=a b",
+            // Hosts are case-insensitive.
+            "https://PAY.FOLUSAYO.COM/l/aBcDeFgH",
+            // Plain http for the same host is still this host (the manifest claims https only,
+            // but an explicit intent may carry either).
+            "http://pay.folusayo.com/l/aBcDeFgH",
         )
         for (input in accepted) {
             assertEquals("expected a code from $input", "aBcDeFgH", parseLinkCode(input))
@@ -40,10 +51,154 @@ class DeepLinkTest {
             "kobolink://dashboard",
             "",
             "not a url",
+            // M1 review (c): contracts reads `url.pathname`, which keeps percent-escapes verbatim,
+            // so '%48' is three characters and the code is 10 long. java.net.URI.getPath() DECODES
+            // it to 'H' and used to accept this.
+            "https://pay.folusayo.com/l/aBcDeFg%48",
+            "https://pay.folusayo.com/l/aBcDeFg%2F",
+            "https://pay.folusayo.com/l/aBcDeFgH%20",
+            "/l/aBcDeFg%48",
+            "/l/./aBcDeFgH", // contracts takes a bare path as written; no dot-segment collapsing
+            "kobolink://l/aBcDeFg%48",
         )
         for (input in rejected) {
             assertNull("expected null for $input", parseLinkCode(input))
         }
+    }
+
+    /**
+     * M1 review (d). `parseLinkCode` is handed whatever an explicit intent carries,
+     * not only what the verified App Link filter let through, so the host is part of
+     * the contract: only `LINK_HOST` owns `/l/{code}`.
+     */
+    @Test
+    fun `rejects an http(s) link on any host other than the link host`() {
+        val rejected = listOf(
+            "https://evil.example/l/aBcDeFgH",
+            "https://pay.folusayo.com.evil.example/l/aBcDeFgH",
+            "https://evilpay.folusayo.com/l/aBcDeFgH",
+            "https://pay.folusayo.com@evil.example/l/aBcDeFgH", // userinfo trick: the host is evil.example
+            "https://evil.example/pay.folusayo.com/l/aBcDeFgH",
+            "https://pay.folusayo.com./l/aBcDeFgH", // trailing dot is a different name
+            "http://localhost:3000/l/aBcDeFgH", // contracts accepts this; the app must not
+            "https:///l/aBcDeFgH", // no host at all
+            "https://sub.pay.folusayo.com/l/aBcDeFgH",
+        )
+        for (input in rejected) {
+            assertNull("expected null for $input", parseLinkCode(input))
+        }
+    }
+
+    /**
+     * M3 review (a). The oracle is `parseLinkCode` in `packages/contracts/src/routes.ts`, run under Node 22 on each of
+     * these inputs (its own test file does not list them; contracts is not this branch's to edit). WHATWG `new URL`
+     * throws on a scheme-less string, so contracts takes it as written and `//evil.example/l/x` fails the `/l/`
+     * prefix; and it never collapses an empty path segment, so `//l/x` and `/l//x` fail too. `java.net.URI` reads a
+     * scheme-less `//host/path` as an authority and `normalize()` collapses `//`, which accepted all of these.
+     */
+    @Test
+    fun `rejects scheme-less authority links and doubled slashes, as contracts does`() {
+        val rejected = listOf(
+            "//evil.example/l/aBcDeFgH",
+            "//pay.folusayo.com/l/aBcDeFgH",
+            "//l/aBcDeFgH",
+            "https://pay.folusayo.com//l/aBcDeFgH",
+            "https://pay.folusayo.com/l//aBcDeFgH",
+            "http://pay.folusayo.com//l/aBcDeFgH",
+            "/l//x",
+            "/l//aBcDeFgH",
+            "kobolink://l//x",
+            "kobolink://l//aBcDeFgH",
+            "kobolink:///l/aBcDeFgH",
+            "kobolink:/l/aBcDeFgH",
+            "kobolink://x/l/aBcDeFgH",
+            "kobolink://L/aBcDeFgH", // a non-special scheme's host keeps its case in WHATWG
+            "kobolink://l:80/aBcDeFgH", // WHATWG `host` keeps the port, so contracts reads "/l:80/aBcDeFgH"
+            "kobolink://l",
+            "kobolink:///aBcDeFgH",
+            "l/aBcDeFgH",
+        )
+        val wronglyAccepted = rejected.filter { parseLinkCode(it) != null }
+        assertEquals("contracts rejects these, the app accepted them", emptyList<String>(), wronglyAccepted)
+    }
+
+    /** Contracts (WHATWG) resolves `%2e` as a dot segment and accepts these; the app does not. Stricter is allowed. */
+    @Test
+    fun `does not resolve percent-encoded dot segments, which is stricter than contracts and never looser`() {
+        for (input in listOf("https://pay.folusayo.com/l/%2e/aBcDeFgH", "https://pay.folusayo.com/x/%2E%2e/l/aBcDeFgH")) {
+            assertNull(input, parseLinkCode(input))
+        }
+    }
+
+    /** The other half of the oracle run: shapes contracts accepts must keep working, or "stricter" becomes "broken". */
+    @Test
+    fun `still accepts the shapes contracts accepts that normalisation used to make work`() {
+        val accepted = listOf(
+            "https://pay.folusayo.com/l/aBcDeFgH//", // trailing slashes are all trimmed
+            "/l/aBcDeFgH//",
+            "kobolink://l/aBcDeFgH/",
+            "kobolink://l/aBcDeFgH?x=1#y",
+            "KOBOLINK://l/aBcDeFgH", // schemes are case-insensitive
+            "HTTPS://pay.folusayo.com/l/aBcDeFgH",
+            "https://pay.folusayo.com/l/./aBcDeFgH", // dot-segments collapse inside a full URL (and only there)
+            "https://pay.folusayo.com/x/../l/aBcDeFgH",
+            "https://pay.folusayo.com/l/aBcDeFgH/./",
+            "kobolink://l/./aBcDeFgH",
+            "https://pay.folusayo.com:443/l/aBcDeFgH",
+        )
+        for (input in accepted) {
+            assertEquals("contracts accepts $input", "aBcDeFgH", parseLinkCode(input))
+        }
+    }
+
+    @Test
+    fun `rejects schemes that are neither http(s) nor the custom scheme, even on the right path`() {
+        for (input in listOf("ftp://pay.folusayo.com/l/aBcDeFgH", "content://pay.folusayo.com/l/aBcDeFgH", "javascript:/l/aBcDeFgH")) {
+            assertNull("expected null for $input", parseLinkCode(input))
+        }
+    }
+
+    @Test
+    fun `the link host is the contracts LINK_DOMAIN and the manifest host`() {
+        assertEquals(contractsConstant("LINK_DOMAIN"), LINK_HOST)
+        assertEquals(contractsConstant("LINK_PATH_PREFIX"), "/l/")
+        assertEquals(contractsConstant("IOS_URL_SCHEME"), "kobolink")
+        assertEquals(8, LinkCode.LENGTH)
+    }
+
+    /**
+     * The strongest form of "mirrors contracts": the accepted/rejected lists are read out of
+     * `packages/contracts/tests/routes.test.ts` itself, so a case added there is exercised here
+     * without anyone remembering to copy it. The ONE deliberate divergence is host: contracts
+     * accepts any http(s) origin (it serves the web app on localhost too), the app accepts only
+     * [LINK_HOST] (M1 review (d)).
+     */
+    @Test
+    fun `agrees with every case in the contracts routes test, apart from the host rule`() {
+        val source = contractsFile("tests/routes.test.ts").readText()
+        val accepted = stringsIn(source, "it.each([", "])('extracts the code from %s'")
+        val rejected = stringsIn(source, "it.each([", "])('returns null for %s'")
+        assertTrue("could not read the accepted cases out of routes.test.ts", accepted.size >= 7)
+        assertTrue("could not read the rejected cases out of routes.test.ts", rejected.size >= 9)
+
+        val divergesOnHost = setOf("http://localhost:3000/l/aBcDeFgH")
+        for (input in accepted) {
+            val expected = if (input in divergesOnHost) null else "aBcDeFgH"
+            assertEquals("contracts accepts $input", expected, parseLinkCode(input))
+        }
+        for (input in rejected) {
+            assertNull("contracts rejects $input", parseLinkCode(input))
+        }
+
+        // M3 review (a), derived from the same lists so a case added to contracts is covered without a copy: a
+        // doubled slash before the code's path is never a link (contracts keeps the empty segment, so the path no
+        // longer starts "/l/"), and nor is any accepted URL turned into a scheme-less "//authority/..." one.
+        val derived = accepted.flatMap { input ->
+            val pathOnward = "/" + input.substringAfter("//").substringAfter('/') // from the first "/" after any authority
+            listOf(input.replaceFirst("/l/", "//l/"), "//evil.example$pathOnward")
+        }
+        val wronglyAccepted = derived.filter { parseLinkCode(it) != null }
+        assertEquals("contracts rejects these variants, the app accepted them", emptyList<String>(), wronglyAccepted)
     }
 
     @Test
@@ -73,5 +228,27 @@ class DeepLinkTest {
             // The assertion is simply that this doesn't throw.
             parseLinkCode(input)
         }
+    }
+
+    private fun contractsFile(relative: String): File {
+        // Gradle runs JVM tests with the module (`app/`) as the working directory: the repo root is three levels up.
+        val file = File("../../../packages/contracts/$relative")
+        check(file.exists()) { "expected ${file.absolutePath} to exist; this test reads the contracts package straight off disk" }
+        return file
+    }
+
+    private fun contractsConstant(name: String): String {
+        val source = contractsFile("src/routes.ts").readText()
+        val match = Regex("""export const $name = '([^']+)'""").find(source)
+        return checkNotNull(match) { "no `export const $name = '…'` in routes.ts" }.groupValues[1]
+    }
+
+    /** The single-quoted string literals between [start] and [end]. */
+    private fun stringsIn(source: String, start: String, end: String): List<String> {
+        val endIndex = source.indexOf(end)
+        check(endIndex >= 0) { "marker not found: $end" }
+        val startIndex = source.lastIndexOf(start, endIndex)
+        check(startIndex >= 0) { "marker not found: $start" }
+        return Regex("""'((?:[^'\\]|\\.)*)'""").findAll(source.substring(startIndex, endIndex)).map { it.groupValues[1] }.toList()
     }
 }

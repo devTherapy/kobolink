@@ -6,6 +6,7 @@ import com.folusayo.kobolink.generated.api.models.AuthResponseUser
 import com.folusayo.kobolink.generated.api.models.LoginRequest
 import com.folusayo.kobolink.generated.api.models.MeResponseUser
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
@@ -22,6 +23,12 @@ class AuthRepository(
     private val authApi: AuthApi,
     private val tokenStore: TokenStore,
     private val json: Json,
+    /**
+     * Tells the server to end the session behind [token], which has ALREADY been removed from [tokenStore] (so the
+     * ordinary request path, which attaches the stored token, cannot carry it). Null falls back to [AuthApi.logout],
+     * which sends whatever token is stored at that moment: nothing, by then. See [SessionRevoker].
+     */
+    private val revoke: (suspend (token: String) -> Unit)? = null,
 ) {
     /** Whether a session token is currently stored — does not confirm the server still honors it; see [currentUser]. */
     val isSignedIn: Boolean
@@ -102,28 +109,42 @@ class AuthRepository(
     }
 
     /**
-     * Best-effort server-side revoke, then an unconditional local clear.
-     * Even when `POST /api/auth/logout` never reaches the server (airplane
-     * mode, a dropped connection), the credential still comes out of
-     * [tokenStore]: "sign out" is a promise about what THIS device does
-     * next, not about how fast the server's own record catches up, and the
-     * done-when this feature ships against is specifically that the token is
-     * actually removed from encrypted storage, not merely forgotten in
-     * memory.
+     * Local clear FIRST, then a best-effort server-side revoke with the token value read before clearing.
      *
-     * Throws if the local clear itself fails; see [TokenStore.clear].
+     * "Sign out" is a promise about what THIS device does, not about how fast the server's own record catches up, and
+     * the revoke can take as long as the connection timeout. If the token were cleared after the round trip, a process
+     * killed meanwhile would sign the previous user back in on the next launch, and a sign-in as someone else during the
+     * round trip would be wiped by the late clear. Cleared first, neither can happen; the revoke that follows cannot
+     * touch the store.
+     *
+     * Throws (after the revoke attempt) if the local clear itself failed; see [TokenStore.clear].
      */
     suspend fun logout() {
-        try {
-            authApi.logout()
-        } catch (_: IOException) {
-            // Network failure — the local clear below still happens.
-        } catch (_: SerializationException) {
-            // Logout's 204 has no body; an unexpected body that fails to
-            // parse is not a reason to leave the local credential in place.
-        } finally {
-            tokenStore.clear()
+        val token = try {
+            tokenStore.token()
+        } catch (e: Exception) {
+            null
         }
+        val clearFailure = try {
+            tokenStore.clear()
+            null
+        } catch (e: Exception) {
+            e
+        }
+        try {
+            when {
+                token == null -> Unit // nothing was stored, so there is nothing to revoke
+                revoke != null -> revoke.invoke(token)
+                else -> authApi.logout()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: IOException) {
+            // Network failure: the local clear above already happened.
+        } catch (_: SerializationException) {
+            // Logout's 204 has no body; an unexpected body that fails to parse changes nothing locally.
+        }
+        if (clearFailure != null) throw clearFailure
     }
 
     /** Drops a stale local token (e.g. the server answered 401) without calling the API — there is nothing valid left to revoke. */

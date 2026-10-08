@@ -68,8 +68,12 @@ internal class FakeAuthApi(
     override suspend fun login(loginRequest: LoginRequest): Response<AuthResponse> =
         loginResponse ?: error("no login() stub configured")
 
+    /** Runs while the revoke request is "in the air", to look at what the app is doing meanwhile. */
+    var onLogout: () -> Unit = {}
+
     override suspend fun logout(): Response<Unit> {
         logoutCalled = true
+        onLogout()
         logoutThrows?.let { throw it }
         return Response.success(204, Unit)
     }

@@ -14,18 +14,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.folusayo.kobolink.api.ApiClientProvider
+import com.folusayo.kobolink.auth.SessionState
+import com.folusayo.kobolink.checkout.isOpen
 import com.folusayo.kobolink.deeplink.parseLinkCode
 import com.folusayo.kobolink.generated.api.models.ApiError
-import com.folusayo.kobolink.generated.api.models.PublicLinkResponse
 import com.folusayo.kobolink.generated.api.models.Wallet
+import com.folusayo.kobolink.ui.screen.CheckoutScreen
 import com.folusayo.kobolink.ui.screen.HomeScreen
-import com.folusayo.kobolink.ui.screen.LinkLookupScreen
 import com.folusayo.kobolink.ui.screen.LoginScreen
 import com.folusayo.kobolink.ui.screen.OfflineScreen
+import com.folusayo.kobolink.ui.screen.SignOutBlockedDialog
+import com.folusayo.kobolink.ui.screen.SignOutWarningDialog
 import com.folusayo.kobolink.ui.screen.toDisplayMessage
 import com.folusayo.kobolink.ui.theme.KobolinkTheme
 import java.io.IOException
@@ -34,53 +38,56 @@ import kotlinx.serialization.SerializationException
 /**
  * Entry point. Two separate flows (docs/DESIGN-SPEC.md 4.3 and 11):
  *
- * - The payer's deep-link landing ([LinkLookupScreen]; M3 builds the checkout
- *   there) is public. A link code, when present, shows it whether the session
- *   is signed in, signed out, resolving or offline: [route] is the rule.
+ * - The payer's deep-link landing, the checkout ([CheckoutScreen], M3), is public. An open link shows
+ *   whether the session is signed in, signed out, resolving or offline: [route] is the rule.
  * - Merchant sign-in (M2) gates only [HomeScreen] and the wallet.
  *
- * `launchMode="singleTask"` (see AndroidManifest.xml) means a link tapped
- * while this activity is already on top delivers here via [onNewIntent]
- * rather than spawning a second instance — without it, opening the same
- * payment link twice from a chat app would stack two activities that both
- * think they're the current screen.
+ * `launchMode="singleTask"` (see AndroidManifest.xml) means a link tapped while this activity is already
+ * running delivers here via [onNewIntent] rather than spawning a second instance — without it, opening the
+ * same payment link twice from a chat app would stack two activities that both think they're the current
+ * screen. Every delivered link starts a fresh lookup, including a re-tap of the link already on screen.
  *
- * [deepLinkCode] is independent of the session. Back from the link screen
- * clears it, landing on Home if signed in, otherwise on login.
+ * Which link is open, and what happened to it, is [MainViewModel.checkout]'s state, not this class's. Back
+ * from a checkout is [backFromLink]: to Home for a signed-in merchant, out of the app for everyone else.
  */
 class MainActivity : ComponentActivity() {
 
-    // Survives rotation: owns the session (so the cold-start /me check runs once
-    // per process, not once per Activity instance) and the dismissed-link marker.
+    // Survives rotation: owns the session (so the cold-start /me check runs once per process, not once per
+    // Activity instance) and the checkout (so a rotation neither reloads the link nor drops what was typed).
     private val viewModel: MainViewModel by viewModels { MainViewModel.Factory }
-
-    // A plain mutableStateOf, not a StateFlow/ViewModel: read as Compose state
-    // so onNewIntent's update recomposes the screen already on screen instead
-    // of requiring a restart.
-    private var deepLinkCode by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Edge-to-edge, insets applied by Scaffold inside the Compose tree —
-        // this app never draws its own status bar or gesture pill.
+        // Edge-to-edge, insets applied by Scaffold inside the Compose tree — this app never draws its own
+        // status bar or gesture pill.
         enableEdgeToEdge()
 
-        // Re-parsed on every onCreate, including a configuration change
-        // (e.g. rotation) that recreates this Activity with the same Intent
-        // under singleTask's default configChanges handling. Skipping the
-        // assignment whenever savedInstanceState was non-null looked like a way
-        // to avoid re-triggering LinkLookupScreen's lookup, but it wiped the
-        // deep-linked code on rotation; the redundant-lookup problem is solved
-        // one layer down instead (LinkLookupScreen's rememberSaveable state
-        // plus its LaunchedEffect skipping a code it already has a terminal
-        // result for).
-        deepLinkCode = codeFrom(intent)?.takeUnless { it == viewModel.dismissedLinkCode }
+        // Which link to open, decided by linkToOpenOnCreate: not on a rotation (the ViewModel has the
+        // checkout), the SAVED link after process death (the launch Intent is the original one, not the
+        // latest), and never a stale link when started from Recents.
+        val link = linkToOpenOnCreate(
+            restoredFromSavedState = savedInstanceState != null,
+            checkoutIsOpen = viewModel.checkout.state.value.isOpen,
+            savedLink = linkRefFromSaved(savedInstanceState?.getString(KEY_OPEN_LINK)),
+            fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0,
+            intentLink = linkRefFrom(intent),
+            hasMerchantSession = viewModel::hasStoredSession,
+        )
+        viewModel.open(link)
 
         setContent {
             KobolinkTheme {
                 val session by viewModel.sessionState.collectAsState()
+                val checkout by viewModel.checkout.state.collectAsState()
+                val signOutBlocked by viewModel.signOutBlocked.collectAsState()
+                var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
 
-                when (val destination = route(session, deepLinkCode)) {
+                val destination = route(session, linkOpen = checkout.isOpen)
+
+                // Back from a checkout, and the checkout's close button: see backFromLink.
+                BackHandler(enabled = destination is Destination.Link) { leaveLink(session) }
+
+                when (destination) {
                     is Destination.Resolving -> ResolvingScreen()
                     is Destination.Offline -> OfflineScreen(message = destination.message, onRetry = viewModel::retry)
                     is Destination.Login -> LoginScreen(
@@ -92,46 +99,74 @@ class MainActivity : ComponentActivity() {
                     is Destination.Home -> HomeScreen(
                         user = destination.user,
                         fetchWallet = ::fetchWallet,
-                        onLogout = viewModel::logout,
+                        // An unfinished payment made under this session goes with it: say so first.
+                        onLogout = { if (viewModel.hasSessionAttempts()) confirmingSignOut = true else viewModel.logout() },
                     )
-                    is Destination.Link -> {
-                        // Back leaves the link: to Home if signed in, otherwise to the login screen.
-                        BackHandler {
-                            viewModel.dismissedLinkCode = destination.code
-                            deepLinkCode = null
-                        }
-                        LinkLookupScreen(resolveLink = ::resolvePublicLink, initialCode = destination.code)
-                    }
+                    is Destination.Link -> CheckoutScreen(
+                        state = checkout,
+                        form = viewModel.checkoutForm,
+                        onPay = viewModel.checkout::pay,
+                        onReload = viewModel.checkout::reload,
+                        onStartOver = viewModel.checkout::startOver,
+                        onClose = { leaveLink(session) },
+                        onRetry = viewModel.checkout::retry,
+                        onResetCheckoutData = viewModel.checkout::resetCheckoutData,
+                    )
                 }
+
+                if (confirmingSignOut) {
+                    SignOutWarningDialog(
+                        onConfirm = {
+                            confirmingSignOut = false
+                            viewModel.logout()
+                        },
+                        onDismiss = { confirmingSignOut = false },
+                    )
+                }
+                // The sign-out did not happen: what it must clear could not be written down first.
+                if (signOutBlocked) SignOutBlockedDialog(onDismiss = viewModel::acknowledgeSignOutBlocked)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_OPEN_LINK, viewModel.currentLink().toSaved())
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        viewModel.dismissedLinkCode = null
-        deepLinkCode = codeFrom(intent)
+        viewModel.open(linkRefFrom(intent))
     }
 
     /**
-     * Extracts and validates the link code from an incoming `VIEW` intent's
-     * data URI, via [parseLinkCode] — the tested, contracts-mirroring parser
-     * in `deeplink/DeepLink.kt`. Returns null for the ordinary launcher
-     * intent (no `data`) and for anything [parseLinkCode] itself rejects.
-     *
-     * `M3` (PLAN.md) replaces the lookup stand-in this routes to with a real
-     * checkout screen; see `LinkLookupScreen`'s doc comment.
+     * The link an Intent carries. An Intent with no data (the launcher bringing an already-running app
+     * forward) carries none ([LinkRef.None]) and leaves the screen as it is. Data that
+     * [parseLinkCode] rejects is still a link attempt, since the manifest only claims `https` +
+     * `pay.folusayo.com` + every path under /l/: it is [LinkRef.Unreadable], the not-found checkout, rather than falling through to the
+     * merchant login a payer never asked for.
      */
-    private fun codeFrom(intent: Intent?): String? =
-        intent?.data?.toString()?.let(::parseLinkCode)
+    private fun linkRefFrom(intent: Intent?): LinkRef {
+        if (intent?.action != Intent.ACTION_VIEW) return LinkRef.None
+        val data = intent.data?.toString() ?: return LinkRef.None
+        return parseLinkCode(data)?.let { LinkRef.Code(it) } ?: LinkRef.Unreadable
+    }
+
+    private fun leaveLink(session: SessionState) {
+        when (backFromLink(session)) {
+            BackAction.DismissLink -> viewModel.closeLink()
+            // Not closed first: clearing the checkout would let the merchant login draw for a frame
+            // on its way out.
+            BackAction.LeaveApp -> finish()
+        }
+    }
 
     /**
      * `GET /api/wallet` — the authenticated call [HomeScreen] uses as its
-     * proof-of-session. Reaches [ApiClientProvider.wallet] the same way
-     * [resolvePublicLink] below reaches [ApiClientProvider.links]; the only
-     * difference is this one only succeeds when [com.folusayo.kobolink.auth.AuthInterceptor]
-     * actually had a token to attach.
+     * proof-of-session. Reaches [ApiClientProvider.wallet] the same way the checkout reaches
+     * [ApiClientProvider.links]; the only difference is this one only succeeds when
+     * [com.folusayo.kobolink.auth.AuthInterceptor] actually had a token to attach.
      */
     private suspend fun fetchWallet(): Result<Wallet> = try {
         val response = ApiClientProvider.wallet.getWallet()
@@ -150,21 +185,8 @@ class MainActivity : ComponentActivity() {
         Result.failure(RuntimeException("The API returned something this app couldn't parse.", e))
     }
 
-    private suspend fun resolvePublicLink(code: String): Result<PublicLinkResponse> = try {
-        val response = ApiClientProvider.links.resolvePublicLink(code)
-        val body = response.body()
-        if (response.isSuccessful && body != null) {
-            Result.success(body)
-        } else {
-            val apiError = response.errorBody()?.string()?.let { raw ->
-                runCatching { ApiClientProvider.json.decodeFromString(ApiError.serializer(), raw) }.getOrNull()
-            }
-            Result.failure(RuntimeException(apiError?.toDisplayMessage() ?: "Link lookup failed (HTTP ${response.code()})."))
-        }
-    } catch (e: IOException) {
-        Result.failure(RuntimeException("Couldn't reach the API. Check the connection and API_BASE_URL.", e))
-    } catch (e: SerializationException) {
-        Result.failure(RuntimeException("The API returned something this app couldn't parse.", e))
+    private companion object {
+        const val KEY_OPEN_LINK = "openLink"
     }
 }
 

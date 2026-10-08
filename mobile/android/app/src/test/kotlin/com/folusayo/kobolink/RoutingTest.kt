@@ -21,32 +21,162 @@ class RoutingTest {
     )
 
     @Test
-    fun `a deep link reaches the link screen in every session state`() {
+    fun `a deep link reaches the checkout in every session state`() {
         for ((name, session) in sessions) {
-            assertEquals("session: $name", Destination.Link("abc12345"), route(session, "abc12345"))
+            assertEquals("session: $name", Destination.Link, route(session, linkOpen = true))
         }
     }
 
     @Test
     fun `without a link the session decides`() {
-        assertEquals(Destination.Resolving, route(SessionState.Resolving, null))
-        assertEquals(Destination.Offline("no connection"), route(SessionState.Offline("no connection"), null))
-        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), null))
-        assertEquals(Destination.Login("Your session ended."), route(SessionState.SignedOut("Your session ended."), null))
-        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), null))
+        assertEquals(Destination.Resolving, route(SessionState.Resolving, linkOpen = false))
+        assertEquals(Destination.Offline("no connection"), route(SessionState.Offline("no connection"), linkOpen = false))
+        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), linkOpen = false))
+        assertEquals(Destination.Login("Your session ended."), route(SessionState.SignedOut("Your session ended."), linkOpen = false))
+        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), linkOpen = false))
     }
 
     @Test
-    fun `backing out of a link while signed out lands on login, while signed in on home`() {
-        // MainActivity clears the link code on Back; the next route() call is with null.
-        assertEquals(Destination.Login(null), route(SessionState.SignedOut(), null))
-        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), null))
+    fun `an open link survives the session changing underneath it`() {
+        // Signed out with a link, then the user signs in: still the checkout.
+        assertEquals(Destination.Link, route(SessionState.SignedOut(), linkOpen = true))
+        assertEquals(Destination.Link, route(SessionState.SignedIn(ngozi), linkOpen = true))
     }
 
     @Test
-    fun `a link survives the session changing underneath it`() {
-        // Signed out with a link, then the user signs in: still the same link.
-        assertEquals(Destination.Link("abc12345"), route(SessionState.SignedOut(), "abc12345"))
-        assertEquals(Destination.Link("abc12345"), route(SessionState.SignedIn(ngozi), "abc12345"))
+    fun `dismissing the link falls through to home when signed in`() {
+        // backFromLink says DismissLink; the checkout closes and the next route() call has no link.
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.SignedIn(ngozi)))
+        assertEquals(Destination.Home(ngozi), route(SessionState.SignedIn(ngozi), linkOpen = false))
+    }
+
+    // linkToOpenOnCreate: the onCreate decision the M1 review found untested.
+
+    private val a = LinkRef.Code("AAAAAAAA")
+    private val b = LinkRef.Code("BBBBBBBB")
+
+    private fun open(
+        restored: Boolean = false,
+        checkoutIsOpen: Boolean = false,
+        saved: LinkRef = LinkRef.None,
+        fromHistory: Boolean = false,
+        intent: LinkRef = LinkRef.None,
+        merchantSession: Boolean = false,
+        sessionReads: MutableList<Unit> = mutableListOf(),
+    ) = linkToOpenOnCreate(
+        restored, checkoutIsOpen, saved, fromHistory, intent,
+        hasMerchantSession = { sessionReads += Unit; merchantSession },
+    )
+
+    /** The token is decrypted on the main thread: only a start from Recents may ask for it. */
+    @Test
+    fun `the stored session is read only for a fresh start from Recents`() {
+        fun reads(restored: Boolean = false, checkoutIsOpen: Boolean = false, fromHistory: Boolean = false): Int {
+            val log = mutableListOf<Unit>()
+            open(restored = restored, checkoutIsOpen = checkoutIsOpen, fromHistory = fromHistory, intent = a, sessionReads = log)
+            return log.size
+        }
+        assertEquals(0, reads())
+        assertEquals(0, reads(checkoutIsOpen = true, fromHistory = true))
+        assertEquals(0, reads(restored = true, fromHistory = true))
+        assertEquals(1, reads(fromHistory = true))
+    }
+
+    @Test
+    fun `a first launch opens the link in the intent`() {
+        assertEquals(a, open(intent = a))
+        assertEquals(LinkRef.Unreadable, open(intent = LinkRef.Unreadable))
+        assertEquals(LinkRef.None, open(intent = LinkRef.None))
+    }
+
+    @Test
+    fun `rotation opens nothing, the view model already has the checkout`() {
+        assertEquals(LinkRef.None, open(restored = true, checkoutIsOpen = true, saved = a, intent = b))
+    }
+
+    @Test
+    fun `after process death the link that was on screen reopens, not the one in the launch intent`() {
+        // Cold-started on link B's tap after link A: Android rebuilds with the ORIGINAL intent (A), but B was on screen.
+        assertEquals(b, open(restored = true, saved = b, intent = a))
+        // Started from the launcher, then a link was tapped: the rebuilt intent is a launcher intent.
+        assertEquals(a, open(restored = true, saved = a, intent = LinkRef.None))
+        assertEquals(LinkRef.Unreadable, open(restored = true, saved = LinkRef.Unreadable, intent = a))
+    }
+
+    @Test
+    fun `after process death a link the user had closed stays closed`() {
+        assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, intent = a))
+    }
+
+    @Test
+    fun `a merchant's start from Recents does not reopen a stale link`() {
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = a, merchantSession = true))
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.Unreadable, merchantSession = true))
+    }
+
+    /**
+     * M3 review (D3). A payer has no merchant session, so the merchant login is the one screen they have no
+     * business on. Reopening the app from Recents (the task's launch Intent is the link they opened) used to
+     * find "stale link, ignore it" and fall through to that login. The link is what they came for.
+     */
+    @Test
+    fun `a payer's start from Recents opens the checkout, not the merchant login`() {
+        assertEquals(a, open(fromHistory = true, intent = a, merchantSession = false))
+        assertEquals(LinkRef.Unreadable, open(fromHistory = true, intent = LinkRef.Unreadable, merchantSession = false))
+        // Routed, the open link is the checkout whatever the (signed-out) session says.
+        assertEquals(Destination.Link, route(SessionState.SignedOut(), linkOpen = true))
+    }
+
+    @Test
+    fun `a start from Recents with no link in the intent has nothing to open`() {
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.None, merchantSession = false))
+        assertEquals(LinkRef.None, open(fromHistory = true, intent = LinkRef.None, merchantSession = true))
+    }
+
+    @Test
+    fun `the merchant session only matters for a start from Recents`() {
+        // Rotation, process death and a plain first launch decide as before, with or without a merchant session.
+        for (merchant in listOf(true, false)) {
+            assertEquals(LinkRef.None, open(restored = true, checkoutIsOpen = true, saved = a, intent = b, merchantSession = merchant))
+            assertEquals(b, open(restored = true, saved = b, intent = a, merchantSession = merchant))
+            assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, intent = a, merchantSession = merchant))
+            assertEquals(a, open(intent = a, merchantSession = merchant))
+        }
+        // Restored from saved state wins over Recents even for a payer: what was on screen is what comes back.
+        assertEquals(LinkRef.None, open(restored = true, saved = LinkRef.None, fromHistory = true, intent = a, merchantSession = false))
+        assertEquals(b, open(restored = true, saved = b, fromHistory = true, intent = a, merchantSession = false))
+    }
+
+    @Test
+    fun `the saved form round-trips every kind of link`() {
+        for (ref in listOf(LinkRef.None, a, LinkRef.Unreadable)) {
+            assertEquals(ref, linkRefFromSaved(ref.toSaved()))
+        }
+        assertEquals(null, LinkRef.None.toSaved())
+    }
+
+    /**
+     * M1 review (e). A payer who taps a shared link, is not a merchant and presses Back must
+     * leave the app, not land on the merchant login screen they never asked for. Only a device
+     * that actually holds a merchant session has somewhere to go back to.
+     */
+    @Test
+    fun `back from a link with no merchant session leaves the app`() {
+        assertEquals(BackAction.LeaveApp, backFromLink(SessionState.SignedOut()))
+        assertEquals(BackAction.LeaveApp, backFromLink(SessionState.SignedOut("Your session ended.")))
+    }
+
+    @Test
+    fun `back from a link while signed in returns to home`() {
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.SignedIn(ngozi)))
+    }
+
+    @Test
+    fun `back from a link while a stored session is unconfirmed returns to that session, not out of the app`() {
+        // Resolving and Offline both mean a token is stored: this is a merchant's device,
+        // and dropping the app would strand them mid-check. The next screen is the one
+        // that confirms (or fails to confirm) the session.
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.Resolving))
+        assertEquals(BackAction.DismissLink, backFromLink(SessionState.Offline("no connection")))
     }
 }

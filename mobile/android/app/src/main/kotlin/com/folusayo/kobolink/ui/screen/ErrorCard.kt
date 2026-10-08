@@ -14,8 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.folusayo.kobolink.generated.api.models.ApiError
 
-/** The one error surface shared by the login, home and link-lookup screens: M3 error-container card with a warning glyph. */
+/** The one error surface shared by the login and home screens: M3 error-container card with a warning glyph. */
 @Composable
 internal fun ErrorCard(message: String) {
     Card(
@@ -40,3 +41,6 @@ internal fun ErrorCard(message: String) {
         }
     }
 }
+
+/** Turns the generated `ApiError` model into the message [ErrorCard] shows. */
+fun ApiError.toDisplayMessage(): String = message
