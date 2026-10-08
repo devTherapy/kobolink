@@ -96,7 +96,9 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A healthy run is about 3 minutes (browser install ~1, suite ~1). 30 let a
+    # hung install burn the whole budget twice; 15 still leaves headroom.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -105,17 +107,39 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install Playwright browsers (only once a workspace depends on it)
+        # Backstop for the loop below: two 4-minute attempts fit inside it.
+        timeout-minutes: 10
         run: |
           if [ -d node_modules/@playwright/test ]; then
-            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+            # The install is apt plus a ~190 MB download from cdn.playwright.dev
+            # and has hung with no output. `timeout` turns a hang into a failed
+            # attempt; one retry, then the step fails loudly (no third try, no
+            # `continue-on-error`).
+            for attempt in 1 2; do
+              if PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= timeout 240 npx playwright install --with-deps chromium; then
+                exit 0
+              fi
+              echo "::warning::playwright install attempt $attempt failed or timed out"
+            done
+            echo "::error::playwright install failed twice"
+            exit 1
           else
             echo "no @playwright/test in the tree yet; skipping browser install"
           fi
       - run: npm run test:e2e
+      # `always()`, not `failure()`: a cancelled run (the hang case) still gets
+      # its logs, and the stack logs (migrate, build-api, build-web, api, web)
+      # are what explain a failure that happens before any test runs.
+      # Diagnostics must never decide the job's result: `continue-on-error`
+      # keeps an artifact-service blip from turning a green run red, and
+      # `overwrite` stops a re-run attempt of the same run from a 409 on the
+      # name the first attempt already took.
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
+        continue-on-error: true
         with:
-          name: playwright-report
+          name: e2e-diagnostics
+          overwrite: true
           path: |
             apps/web/playwright-report
             apps/web/test-results

@@ -7,6 +7,7 @@ import { ANDROID_PACKAGE_NAME } from '@kobolink/contracts'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { assertPortsFree } from './assert-ports-free'
 import { E2E_API_PORT, E2E_WEB_PORT } from './ports'
+import { describeLogExcerpt } from './tail-log'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDir = path.resolve(here, '../..')
@@ -44,6 +45,24 @@ const E2E_DIST_DIR = '.next/e2e'
  * `next start`.
  */
 const NO_MOCKING = { NEXT_PUBLIC_API_MOCKING: '' }
+
+/**
+ * Next's anonymous telemetry is on by default in CI. It never fails a build,
+ * but it is one more outbound connection from a step that has to be
+ * deterministic, and the Docker build already turns it off. Passed to
+ * `next build` AND `next start`.
+ */
+const NO_TELEMETRY = { NEXT_TELEMETRY_DISABLED: '1' }
+
+/**
+ * How much of a failed step's log is echoed to the console. Both ends: a failed
+ * Turbopack build (883 lines in the failures seen in CI) has its `build failed
+ * with N errors` header on line 19 and the first `Module not found` on line 21,
+ * then repeats a ~35-line error block per error. The last 60 lines start
+ * mid-block and miss both, so the head is what names the failure.
+ */
+const LOG_HEAD_LINES = 30
+const LOG_TAIL_LINES = 60
 
 export interface RunningStack {
   stop: () => Promise<void>
@@ -92,7 +111,7 @@ export async function startStack(): Promise<RunningStack> {
       run('build-api', 'npm', ['run', 'build'], { cwd: apiDir })
       run('build-web', 'npx', ['next', 'build'], {
         cwd: webDir,
-        env: { API_ORIGIN: `http://localhost:${E2E_API_PORT}`, NEXT_DIST_DIR: E2E_DIST_DIR, ...NO_MOCKING },
+        env: { API_ORIGIN: `http://localhost:${E2E_API_PORT}`, NEXT_DIST_DIR: E2E_DIST_DIR, ...NO_MOCKING, ...NO_TELEMETRY },
       })
     }
 
@@ -109,6 +128,7 @@ export async function startStack(): Promise<RunningStack> {
         API_ORIGIN: `http://localhost:${E2E_API_PORT}`,
         NEXT_DIST_DIR: E2E_DIST_DIR,
         ...NO_MOCKING,
+        ...NO_TELEMETRY,
         APPLE_APP_ID: E2E_APPLE_APP_ID,
         ANDROID_PACKAGE_NAME,
         ANDROID_SHA256_FINGERPRINTS: E2E_ANDROID_FINGERPRINT,
@@ -137,7 +157,12 @@ export async function startStack(): Promise<RunningStack> {
       stdio: ['ignore', fd, fd],
     })
     if (result.status !== 0) {
-      throw new Error(`e2e stack: "${name}" exited with ${String(result.status)}; see ${path.join(logDir, `${name}.log`)}`)
+      const logPath = path.join(logDir, `${name}.log`)
+      // The log is also uploaded as a CI artifact, but the reason belongs in
+      // the job log where the failure is read first.
+      console.error(describeLogExcerpt(logPath, LOG_HEAD_LINES, LOG_TAIL_LINES))
+      const how = result.error ? `could not start (${result.error.message})` : result.signal ? `was killed by ${result.signal}` : `exited with ${String(result.status)}`
+      throw new Error(`e2e stack: "${name}" ${how}; see ${logPath}`)
     }
   }
 
